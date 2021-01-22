@@ -6,4 +6,7 @@ mod tests {
 	}
 }
 
-mod skeleton;
+pub mod skeleton;
+mod dag;
+mod nodes;
+mod traits;
