@@ -2,13 +2,13 @@ use crate::{nodes::NodeMap, traits::Environment};
 use std::{collections::HashMap, sync::Arc};
 
 #[derive(Clone)]
-pub(crate) struct Vertex<E: Environment> {
+pub(crate) struct Vertex<'a, E: Environment + 'static> {
 	creator: usize,
-	parents: NodeMap<Option<Arc<Vertex<E>>>>,
+	parents: NodeMap<Option<&'a Vertex<'a, E>>>,
 	hash: E::Hash,
 }
 
-impl<E: Environment> Vertex<E> {
+impl<E: Environment + 'static> Vertex<'_, E> {
 	pub(crate) fn creator(&self) -> usize {
 		self.creator
 	}

@@ -87,11 +87,7 @@ impl<E: Environment + 'static> Consensus<E> {
 
 		let terminal = Terminal::<E>::new(
 			conf.n_members,
-<<<<<<< HEAD
 			incoming_units_rx,
-=======
-			incomming_units_rx,
->>>>>>> 6fb6f5a (more complete skeleton)
 			requests_tx,
 			added_rx,
 			ready,
@@ -103,11 +99,7 @@ impl<E: Environment + 'static> Consensus<E> {
 		let terminal = rt.spawn(terminal);
 		let extender = rt.spawn(extender);
 		let adders = adders.into_iter().map(|adder| rt.spawn(adder)).collect();
-<<<<<<< HEAD
 		let syncer = rt.spawn(syncer);
-=======
-		let mcast_sender = rt.spawn(mcast_sender);
->>>>>>> 6fb6f5a (more complete skeleton)
 
 		Consensus {
 			_conf: conf,
@@ -118,11 +110,7 @@ impl<E: Environment + 'static> Consensus<E> {
 			_adders: adders,
 			_extender: extender,
 			_creator: creator,
-<<<<<<< HEAD
 			_syncer: syncer,
-=======
-			_mcast_sender: mcast_sender,
->>>>>>> 6fb6f5a (more complete skeleton)
 		}
 	}
 }
@@ -175,11 +163,7 @@ impl<E: Environment> Terminal<E> {
 		// self.ready[v.creator].send(u);
 	}
 
-<<<<<<< HEAD
 	fn process_incoming(&mut self, cx: &mut task::Context) -> Result<(), Error> {
-=======
-	fn process_incomming(&mut self, cx: &mut task::Context) -> Result<(), Error> {
->>>>>>> 6fb6f5a (more complete skeleton)
 		while let Poll::Ready(Some(u)) = self.added.poll_recv(cx) {
 			self.notify_waiting(u);
 		}
@@ -197,11 +181,7 @@ impl<E: Environment> Future for Terminal<E> {
 	type Output = Result<(), Error>;
 
 	fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
-<<<<<<< HEAD
 		self.process_incoming(cx)?;
-=======
-		self.process_incomming(cx)?;
->>>>>>> 6fb6f5a (more complete skeleton)
 		Poll::Pending
 	}
 }
@@ -222,11 +202,7 @@ impl<H: HashT> Unit<H> {
 struct Adder<E: Environment> {
 	pid: usize,
 	added_tx: Sender<Unit<E::Hash>>,
-<<<<<<< HEAD
 	incoming: Receiver<Unit<E::Hash>>,
-=======
-	incomming: Receiver<Unit<E::Hash>>,
->>>>>>> 6fb6f5a (more complete skeleton)
 	dag: Arc<RwLock<Dag<E>>>,
 }
 
@@ -241,11 +217,7 @@ impl<E: Environment> Adder<E> {
 			Adder {
 				pid,
 				added_tx,
-<<<<<<< HEAD
 				incoming: ready_rx,
-=======
-				incomming: ready_rx,
->>>>>>> 6fb6f5a (more complete skeleton)
 				dag,
 			},
 			ready_tx,
@@ -257,11 +229,7 @@ impl<E: Environment> Future for Adder<E> {
 	type Output = Result<(), Error>;
 
 	fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-<<<<<<< HEAD
 		while let Poll::Ready(Some(u)) = self.incoming.poll_recv(cx) {
-=======
-		while let Poll::Ready(Some(u)) = self.incomming.poll_recv(cx) {
->>>>>>> 6fb6f5a (more complete skeleton)
 			// process u and if it is successfully added to dag, notify the terminal
 			let _ = self.added_tx.send(u.clone());
 			self.dag
@@ -339,11 +307,7 @@ impl<E: Environment> Future for Extender<E> {
 struct Syncer<E: Environment> {
 	// outgoing messages
 	messages_tx: Box<E::Out>,
-<<<<<<< HEAD
 	// incoming messages
-=======
-	// incomming messages
->>>>>>> 6fb6f5a (more complete skeleton)
 	messages_rx: Box<E::In>,
 	// channel for sending units to the terminal
 	units_tx: Sender<Unit<E::Hash>>,
