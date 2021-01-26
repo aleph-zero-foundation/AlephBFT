@@ -5,6 +5,12 @@ use std::{
 };
 use tokio::runtime::Runtime;
 
+use crate::{
+	dag::Dag,
+	traits::Context as ContextT,
+};
+
+
 pub enum Error {}
 
 pub trait Syncer {
@@ -17,19 +23,19 @@ pub trait Syncer {
 	fn fetch_io(&self) -> (Self::FIn, Self::FOut);
 }
 
-pub trait Environment<B, C>: Syncer {
-	fn finalize_block(&self, _: B);
-	fn best_block(&self) -> B;
+pub trait Environment<C: ContextT>: Syncer {
+	fn finalize_block(&self, _: C::Hash);
+	fn best_block(&self) -> C::Hash;
 	// sth needed in the future for randomness
-	fn crypto(&self) -> C;
+	//fn crypto(&self) -> C;
 }
 
 pub struct ConsensusConfig {}
 
-pub struct Consensus<B, C> {
+pub struct Consensus<C: ContextT> {
 	_conf: ConsensusConfig,
-	_env: Box<dyn Environment<B, C, MOut = (), MIn = (), FOut = (), FIn = ()>>,
-	_dag: Dag,
+	_env: Box<dyn Environment<C, MOut = (), MIn = (), FOut = (), FIn = ()>>,
+	_dag: Dag<C>,
 	_creator_sink: CreatorSink,
 	_creator_stream: CreatorStream,
 	_adder: Adder,
@@ -38,17 +44,17 @@ pub struct Consensus<B, C> {
 	_runtime: Runtime,
 }
 
-impl<B, C> Consensus<B, C> {
+impl<C> Consensus<C> where C:ContextT {
 	pub fn new(
 		conf: ConsensusConfig,
-		env: Box<dyn Environment<B, C, MOut = (), MIn = (), FOut = (), FIn = ()>>,
+		env: Box<dyn Environment<C, MOut = (), MIn = (), FOut = (), FIn = ()>>,
 	) -> Self {
 		let (creator_sink, creator_stream) = new_creator_channel();
 		let (extender_sink, extender_stream) = new_extender_channel();
 		Consensus {
 			_conf: conf,
 			_env: env,
-			_dag: Dag {},
+			_dag: Dag::<C>::new(),
 			_creator_sink: creator_sink,
 			_creator_stream: creator_stream,
 			_adder: Adder {},
@@ -59,7 +65,7 @@ impl<B, C> Consensus<B, C> {
 	}
 }
 
-impl<B, C> Future for Consensus<B, C> {
+impl<C> Future for Consensus<C> where C:ContextT {
 	type Output = Result<(), Error>;
 
 	fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
@@ -69,7 +75,7 @@ impl<B, C> Future for Consensus<B, C> {
 
 pub struct Unit {}
 
-struct Dag {}
+
 
 fn new_creator_channel() -> (CreatorSink, CreatorStream) {
 	(CreatorSink {}, CreatorStream {})
