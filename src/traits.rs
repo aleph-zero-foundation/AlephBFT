@@ -28,12 +28,6 @@ impl<H> HashT for H where
 }
 
 
-pub trait UnitT<H: HashT>: Clone + Debug + Eq + Ord + Hash {
-	fn parent_hashes(&self) -> NodeMap<Option<H>>;
-	fn hash(&self) -> H;
-}
-
-
 
 pub trait Context: Clone + Debug + Eq + Ord + Hash {
 	/// Unique identifiers for nodes
@@ -43,7 +37,6 @@ pub trait Context: Clone + Debug + Eq + Ord + Hash {
 	/// The ID of a consensus protocol instance.
 	type InstanceId: HashT;
 
-	type Unit: UnitT<Self::Hash>;
 
 	fn hash(data: &[u8]) -> Self::Hash;
 
