@@ -30,6 +30,7 @@ pub trait HashT:
 	+ DeserializeOwned
 {
 }
+
 impl<H> HashT for H where
 	H: Eq
 		+ Ord
@@ -45,6 +46,7 @@ impl<H> HashT for H where
 		+ DeserializeOwned
 {
 }
+
 pub trait Environment {
 	/// Unique identifiers for nodes
 	type NodeId: NodeIdT;

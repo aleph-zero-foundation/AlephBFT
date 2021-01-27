@@ -7,8 +7,10 @@ use std::{
 };
 
 /// The index of a node
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
-pub(crate) struct NodeIndex(pub(crate) u32);
+#[derive(
+	Copy, Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize,
+)]
+pub struct NodeIndex(pub(crate) u32);
 
 impl From<u32> for NodeIndex {
 	fn from(idx: u32) -> Self {
@@ -16,7 +18,7 @@ impl From<u32> for NodeIndex {
 	}
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, AsRef, From, Hash)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, AsRef, From, Hash)]
 pub struct NodeMap<T>(Vec<T>);
 
 impl<T> NodeMap<T> {

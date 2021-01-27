@@ -1,8 +1,7 @@
 use futures::prelude::*;
-use parking_lot::RwLock;
 use std::{
+	collections::HashMap,
 	pin::Pin,
-	sync::Arc,
 	task::{self, Poll},
 };
 use tokio::runtime::Runtime;
@@ -10,6 +9,7 @@ use tokio::sync::mpsc;
 
 use crate::{
 	dag::{Dag, Vertex},
+	nodes::{NodeIndex, NodeMap},
 	traits::{Environment, HashT},
 };
 
@@ -18,28 +18,26 @@ pub enum Error {}
 pub enum Message<H: HashT> {
 	Multicast(Unit<H>),
 	// request of a given id of units of given hashes
-	FetchMessage(Vec<H>, u32),
+	FetchRequest(Vec<NodeIndex>, NodeIndex),
 	// requested units by a given request id
-	FetchResponse(Vec<Unit<H>>, u32),
+	FetchResponse(Vec<Unit<H>>, NodeIndex),
 	SyncMessage,
 	SyncResponse,
 	Alert,
 }
 
 pub struct ConsensusConfig {
-	pid: usize,
-	n_members: usize,
+	ix: NodeIndex,
+	n_members: u32,
 }
 
 type JoinHandle = tokio::task::JoinHandle<Result<(), Error>>;
 pub struct Consensus<E: Environment + 'static> {
 	_conf: ConsensusConfig,
 	_env: E,
-	_dag: Arc<RwLock<Dag<E>>>,
 	_runtime: Runtime,
 	_creator: JoinHandle,
 	_terminal: JoinHandle,
-	_adders: Vec<JoinHandle>,
 	_extender: JoinHandle,
 	_syncer: JoinHandle,
 }
@@ -49,65 +47,49 @@ type Sender<T> = mpsc::UnboundedSender<T>;
 
 impl<E: Environment + 'static> Consensus<E> {
 	pub fn new(conf: ConsensusConfig, env: E) -> Self {
-		let dag = Arc::new(RwLock::new(Dag::new()));
-
 		let (electors_tx, electors_rx) = mpsc::unbounded_channel();
-		let extender = Extender::new(electors_rx);
-		{
-			// try to extend the partial order after adding a unit to the dag
-			let mut dag = dag.write();
-			dag.register_post_insert_hook(Box::new(move |v| if electors_tx.send(v).is_err() {}));
-		}
+		let extender = Extender::<E>::new(electors_rx);
 
 		let (o, i) = env.consensus_data();
-		let (syncer, requests_tx, incoming_units_rx) = Syncer::<E>::new(Box::new(o), Box::new(i));
+		let (syncer, requests_tx, incoming_units_rx, created_units_tx) = Syncer::<E>::new(o, i);
 
-		let mcast_request_tx = requests_tx.clone();
 		let (parents_tx, parents_rx) = mpsc::unbounded_channel();
-		let creator = Creator::new(parents_rx, Arc::clone(&dag), mcast_request_tx);
-		let my_pid = conf.pid.clone();
-		{
-			// send a new parent candidate to the creator
-			let mut dag = dag.write();
-			dag.register_post_insert_hook(Box::new(move |v| {
-				if my_pid != v.creator() {
-					let _ = parents_tx.send(v);
-				}
-			}));
-		}
+		let creator = Creator::<E>::new(parents_rx, created_units_tx);
+		let my_ix = conf.ix.clone();
 
-		let mut adders = vec![];
-		let mut ready = vec![];
-		let (added_tx, added_rx) = mpsc::unbounded_channel();
-		for pid in 0..conf.n_members {
-			let (adder, ready_tx) = Adder::new(pid, added_tx.clone(), Arc::clone(&dag));
-			ready.push(ready_tx);
-			adders.push(adder);
-		}
-
-		let terminal = Terminal::<E>::new(
+		let mut terminal = Terminal::<E>::new(
+			conf.ix,
 			conf.n_members,
 			incoming_units_rx,
-			requests_tx,
-			added_rx,
-			ready,
+			requests_tx.clone(),
 		);
+		// send a multicast request
+		terminal.register_post_insert_hook(Box::new(move |u| {
+			if my_ix == u.creator() {
+				// send unit u corresponding to v
+				let _ = requests_tx.send(Message::Multicast(u));
+			}
+		}));
+		// send a new parent candidate to the creator
+		terminal.register_post_insert_hook(Box::new(move |u| {
+			let _ = parents_tx.send(u.into());
+		}));
+		// try to extend the partial order after adding a unit to the dag
+		terminal.register_post_insert_hook(Box::new(
+			move |u| if electors_tx.send(u.into()).is_err() {},
+		));
 
-		// NOTE: it's possible to run adders as one future and see if spawning them in parallel gives us anything
 		let rt = Runtime::new().unwrap();
 		let creator = rt.spawn(creator);
 		let terminal = rt.spawn(terminal);
 		let extender = rt.spawn(extender);
-		let adders = adders.into_iter().map(|adder| rt.spawn(adder)).collect();
 		let syncer = rt.spawn(syncer);
 
 		Consensus {
 			_conf: conf,
 			_env: env,
-			_dag: dag,
 			_runtime: rt,
 			_terminal: terminal,
-			_adders: adders,
 			_extender: extender,
 			_creator: creator,
 			_syncer: syncer,
@@ -124,54 +106,87 @@ impl<E: Environment> Future for Consensus<E> {
 	}
 }
 
-// Terminal is responsible for managing units that cannot be added to the dag yet
-struct Terminal<E: Environment> {
-	n_members: usize,
+// Terminal is responsible for:
+// - managing units that cannot be added to the dag yet, i.e fetching missing parents
+// - checking control hashes
+// - TODO checking for potential forks and raising alarms
+// - TODO updating randomness source
+struct Terminal<E: Environment + 'static> {
+	ix: NodeIndex,
+	n_members: u32,
+	// common channel for units from outside world and the ones we create, possibly split into two so that we prioritize ours
 	new_units_rx: Receiver<Unit<E::Hash>>,
 	requests_tx: Sender<Message<E::Hash>>,
-	added: Receiver<Unit<E::Hash>>,
-	_waiting_list: Vec<Unit<E::Hash>>,
-	ready: Vec<Sender<Unit<E::Hash>>>,
+	waiting_list: Vec<Unit<E::Hash>>,
+	post_insert: Vec<Box<dyn Fn(Unit<E::Hash>) + Send + Sync + 'static>>,
+	dag: Dag<E>,
+	unit_bag: HashMap<E::Hash, Unit<E::Hash>>,
 }
 
-impl<E: Environment> Terminal<E> {
+enum ConvertError {
+	WrongControlHash,
+	MissingParents(Vec<NodeIndex>),
+}
+
+impl<E: Environment + 'static> Terminal<E> {
 	fn new(
-		n_members: usize,
+		ix: NodeIndex,
+		n_members: u32,
 		new_units_rx: Receiver<Unit<E::Hash>>,
 		requests_tx: Sender<Message<E::Hash>>,
-		added: Receiver<Unit<E::Hash>>,
-		ready: Vec<Sender<Unit<E::Hash>>>,
 	) -> Self {
 		Terminal {
+			ix,
 			n_members,
 			new_units_rx,
 			requests_tx,
-			added,
-			_waiting_list: vec![],
-			ready,
+			waiting_list: vec![],
+			post_insert: vec![],
+			dag: Dag::<E>::new(),
+			unit_bag: HashMap::new(),
 		}
 	}
 
-	fn add_to_waiting(&mut self, u: Unit<E::Hash>) {
-		// if u has all its parents in dag, we send it to the corresponding adder to try to add it to the dag
-		let _ = self.ready[u.creator].send(u);
-	}
-
-	fn notify_waiting(&mut self, _u: Unit<E::Hash>) {
-		// we may mark ready all units that has u as last waiting parrent
-		// for all such units v we do
-		// self.ready[v.creator].send(u);
+	// try to convert unit to vertex which may fail if a parent is missing or all parents are there but the control hash is wrong
+	fn unit_to_vertex(&self, _u: &Unit<E::Hash>) -> Result<Vertex<E::Hash>, ConvertError> {
+		Ok(Vertex::default())
 	}
 
 	fn process_incoming(&mut self, cx: &mut task::Context) -> Result<(), Error> {
-		while let Poll::Ready(Some(u)) = self.added.poll_recv(cx) {
-			self.notify_waiting(u);
-		}
-
 		while let Poll::Ready(Some(u)) = self.new_units_rx.poll_recv(cx) {
-			self.add_to_waiting(u);
+			if self.unit_bag.contains_key(&u.hash()) {
+				continue;
+			}
+
+			match self.unit_to_vertex(&u) {
+				Ok(v) => {
+					// TODO check for forks
+					self.unit_bag.insert(u.hash, u.clone());
+					// TODO update waiting_list and check if we may now add units from there
+					self.dag.add_vertex(v);
+					// send v to Extender, Syncer, and Creator
+					self.post_insert.iter().for_each(|f| f(u.clone()));
+				}
+				Err(ConvertError::WrongControlHash) => {
+					// TODO probably fork, act mericilessly
+				}
+				Err(ConvertError::MissingParents(list)) => {
+					// TODO decide on a policy for choosing to should we call for missing parents,
+					let _ = self
+						.requests_tx
+						.send(Message::FetchRequest(list, u.creator()));
+					self.waiting_list.push(u);
+				}
+			}
 		}
 		Ok(())
+	}
+
+	pub(crate) fn register_post_insert_hook(
+		&mut self,
+		hook: Box<dyn Fn(Unit<E::Hash>) + Send + Sync + 'static>,
+	) {
+		self.post_insert.push(hook);
 	}
 }
 
@@ -187,76 +202,48 @@ impl<E: Environment> Future for Terminal<E> {
 }
 
 #[derive(Clone, Default)]
-pub struct Unit<H: HashT> {
-	creator: usize,
+pub struct ControlHash<H: HashT> {
+	parents: NodeMap<Option<NodeIndex>>,
 	hash: H,
+}
+
+#[derive(Clone, Default)]
+pub struct Unit<H: HashT> {
+	creator: NodeIndex,
+	hash: H,
+	control_hash: ControlHash<H>,
+	parents: NodeMap<Option<H>>,
+}
+
+impl<H: HashT> Into<Vertex<H>> for Unit<H> {
+	fn into(self) -> Vertex<H> {
+		Vertex::new(self.creator, self.hash, self.parents)
+	}
 }
 
 impl<H: HashT> Unit<H> {
 	fn hash(&self) -> H {
 		self.hash.clone()
 	}
-}
-
-// a queue for units that has all parents in the dag an possible may be added to the dag
-struct Adder<E: Environment> {
-	pid: usize,
-	added_tx: Sender<Unit<E::Hash>>,
-	incoming: Receiver<Unit<E::Hash>>,
-	dag: Arc<RwLock<Dag<E>>>,
-}
-
-impl<E: Environment> Adder<E> {
-	fn new(
-		pid: usize,
-		added_tx: Sender<Unit<E::Hash>>,
-		dag: Arc<RwLock<Dag<E>>>,
-	) -> (Self, Sender<Unit<E::Hash>>) {
-		let (ready_tx, ready_rx) = mpsc::unbounded_channel();
-		(
-			Adder {
-				pid,
-				added_tx,
-				incoming: ready_rx,
-				dag,
-			},
-			ready_tx,
-		)
+	fn creator(&self) -> NodeIndex {
+		self.creator
 	}
-}
-
-impl<E: Environment> Future for Adder<E> {
-	type Output = Result<(), Error>;
-
-	fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-		while let Poll::Ready(Some(u)) = self.incoming.poll_recv(cx) {
-			// process u and if it is successfully added to dag, notify the terminal
-			let _ = self.added_tx.send(u.clone());
-			self.dag
-				.write()
-				.add_vertex(u.hash(), u.creator, vec![None].into())
-		}
-		Poll::Pending
+	fn control_hash(&self) -> ControlHash<H> {
+		self.control_hash.clone()
 	}
 }
 
 // a process responsible for creating new units
 struct Creator<E: Environment> {
-	parents_rx: Receiver<Arc<Vertex<E>>>,
-	mcast_request_tx: Sender<Message<E::Hash>>,
-	dag: Arc<RwLock<Dag<E>>>,
+	parents_rx: Receiver<Vertex<E::Hash>>,
+	new_units_tx: Sender<Unit<E::Hash>>,
 }
 
 impl<E: Environment> Creator<E> {
-	fn new(
-		parents_rx: Receiver<Arc<Vertex<E>>>,
-		dag: Arc<RwLock<Dag<E>>>,
-		mcast_request_tx: Sender<Message<E::Hash>>,
-	) -> Self {
+	fn new(parents_rx: Receiver<Vertex<E::Hash>>, new_units_tx: Sender<Unit<E::Hash>>) -> Self {
 		Creator {
 			parents_rx,
-			mcast_request_tx,
-			dag,
+			new_units_tx,
 		}
 	}
 }
@@ -266,11 +253,9 @@ impl<E: Environment> Future for Creator<E> {
 
 	fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
 		while let Poll::Ready(Some(_v)) = self.parents_rx.poll_recv(cx) {
-			// check if u may be a parent and if yes check if we are ready to produce a new unit
-			// if so, send it to dag
-			let _ = self
-				.mcast_request_tx
-				.send(Message::Multicast(Unit::<E::Hash>::default()));
+			// check if v may be a parent and if yes check if we are ready to produce a new unit
+			// if so, send it to the terminal
+			let _ = self.new_units_tx.send(Unit::<E::Hash>::default());
 		}
 		Poll::Pending
 	}
@@ -278,14 +263,14 @@ impl<E: Environment> Future for Creator<E> {
 
 // a process responsible for extending the partial order
 struct Extender<E: Environment> {
-	electors: Receiver<Arc<Vertex<E>>>,
+	electors: Receiver<Vertex<E::Hash>>,
 }
 
 impl<E: Environment> Extender<E> {
-	fn new(electors: Receiver<Arc<Vertex<E>>>) -> Self {
+	fn new(electors: Receiver<Vertex<E::Hash>>) -> Self {
 		Extender { electors }
 	}
-	fn new_head(&mut self, _v: Arc<Vertex<E>>) -> bool {
+	fn new_head(&mut self, _v: Vertex<E::Hash>) -> bool {
 		false
 	}
 	fn finalize_next_batch(&self) {}
@@ -306,33 +291,37 @@ impl<E: Environment> Future for Extender<E> {
 
 struct Syncer<E: Environment> {
 	// outgoing messages
-	messages_tx: Box<E::Out>,
+	messages_tx: E::Out,
 	// incoming messages
-	messages_rx: Box<E::In>,
+	messages_rx: E::In,
 	// channel for sending units to the terminal
 	units_tx: Sender<Unit<E::Hash>>,
 	// channel for receiving messages to the outside world
 	requests_rx: Receiver<Message<E::Hash>>,
-	to_send: Option<Unit<E::Hash>>,
 }
 
 impl<E: Environment> Syncer<E> {
 	fn new(
-		messages_tx: Box<E::Out>,
-		messages_rx: Box<E::In>,
-	) -> (Self, Sender<Message<E::Hash>>, Receiver<Unit<E::Hash>>) {
+		messages_tx: E::Out,
+		messages_rx: E::In,
+	) -> (
+		Self,
+		Sender<Message<E::Hash>>,
+		Receiver<Unit<E::Hash>>,
+		Sender<Unit<E::Hash>>,
+	) {
 		let (units_tx, units_rx) = mpsc::unbounded_channel();
 		let (requests_tx, requests_rx) = mpsc::unbounded_channel();
 		(
 			Syncer {
 				messages_tx,
 				messages_rx,
-				units_tx,
+				units_tx: units_tx.clone(),
 				requests_rx,
-				to_send: None,
 			},
 			requests_tx,
 			units_rx,
+			units_tx,
 		)
 	}
 }
