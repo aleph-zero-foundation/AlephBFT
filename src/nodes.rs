@@ -1,13 +1,16 @@
 use derive_more::{AsRef, From};
 use serde::{Deserialize, Serialize};
-use std::{slice, vec,
+use std::{
 	iter::FromIterator,
-    ops::{Index, IndexMut}
+	ops::{Index, IndexMut},
+	slice, vec,
 };
 
 /// The index of a node
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
-pub(crate) struct NodeIndex(pub(crate) u32);
+#[derive(
+	Copy, Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize,
+)]
+pub struct NodeIndex(pub(crate) u32);
 
 impl From<u32> for NodeIndex {
 	fn from(idx: u32) -> Self {
@@ -15,9 +18,7 @@ impl From<u32> for NodeIndex {
 	}
 }
 
-
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, AsRef, From, Hash)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, AsRef, From, Hash)]
 pub struct NodeMap<T>(Vec<T>);
 
 impl<T> NodeMap<T> {
@@ -28,7 +29,7 @@ impl<T> NodeMap<T> {
 
 	/// Returns the number of values. This must equal the number of nodes.
 	pub(crate) fn len(&self) -> usize {
-	    self.0.len()
+		self.0.len()
 	}
 
 	/// Returns an iterator over all values.
@@ -50,42 +51,41 @@ impl<T> NodeMap<T> {
 }
 
 impl<T> IntoIterator for NodeMap<T> {
-    type Item = T;
-    type IntoIter = vec::IntoIter<T>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
-    }
+	type Item = T;
+	type IntoIter = vec::IntoIter<T>;
+	fn into_iter(self) -> Self::IntoIter {
+		self.0.into_iter()
+	}
 }
 
 impl<T> FromIterator<T> for NodeMap<T> {
-    fn from_iter<I: IntoIterator<Item = T>>(ii: I) -> NodeMap<T> {
-        NodeMap(ii.into_iter().collect())
-    }
+	fn from_iter<I: IntoIterator<Item = T>>(ii: I) -> NodeMap<T> {
+		NodeMap(ii.into_iter().collect())
+	}
 }
 
 impl<T> Index<NodeIndex> for NodeMap<T> {
-    type Output = T;
+	type Output = T;
 
-    fn index(&self, vidx: NodeIndex) -> &T {
-        &self.0[vidx.0 as usize]
-    }
+	fn index(&self, vidx: NodeIndex) -> &T {
+		&self.0[vidx.0 as usize]
+	}
 }
 
 impl<T> IndexMut<NodeIndex> for NodeMap<T> {
-    fn index_mut(&mut self, vidx: NodeIndex) -> &mut T {
-        &mut self.0[vidx.0 as usize]
-    }
+	fn index_mut(&mut self, vidx: NodeIndex) -> &mut T {
+		&mut self.0[vidx.0 as usize]
+	}
 }
 
 impl<'a, T> IntoIterator for &'a NodeMap<T> {
-    type Item = &'a T;
-    type IntoIter = slice::Iter<'a, T>;
+	type Item = &'a T;
+	type IntoIter = slice::Iter<'a, T>;
 
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.iter()
-    }
+	fn into_iter(self) -> Self::IntoIter {
+		self.0.iter()
+	}
 }
-
 
 // impl<T> NodeMap<Option<T>> {
 // 	/// Returns the keys of all validators whose value is `Some`.
@@ -99,4 +99,3 @@ impl<'a, T> IntoIterator for &'a NodeMap<T> {
 // 			.filter_map(|(vidx, opt)| opt.as_ref().map(|val| (vidx, val)))
 // 	}
 // }
-
