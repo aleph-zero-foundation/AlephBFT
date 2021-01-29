@@ -15,6 +15,7 @@ use crate::{
 
 pub enum Error {}
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum Message<H: HashT> {
 	Multicast(Unit<H>),
 	// request of a given id of units of given hashes
@@ -31,15 +32,15 @@ pub struct ConsensusConfig {
 	n_members: u32,
 }
 
-type JoinHandle = tokio::task::JoinHandle<Result<(), Error>>;
+type JoinHandle<E: Environment> = tokio::task::JoinHandle<Result<(), E::Error>>;
 pub struct Consensus<E: Environment + 'static> {
 	_conf: ConsensusConfig,
 	_env: E,
 	_runtime: Runtime,
-	_creator: JoinHandle,
-	_terminal: JoinHandle,
-	_extender: JoinHandle,
-	_syncer: JoinHandle,
+	_creator: JoinHandle<E>,
+	_terminal: JoinHandle<E>,
+	_extender: JoinHandle<E>,
+	_syncer: JoinHandle<E>,
 }
 
 type Receiver<T> = mpsc::UnboundedReceiver<T>;
@@ -99,7 +100,7 @@ impl<E: Environment + 'static> Consensus<E> {
 
 // This is to be called from within substrate
 impl<E: Environment> Future for Consensus<E> {
-	type Output = Result<(), Error>;
+	type Output = Result<(), E::Error>;
 
 	fn poll(self: Pin<&mut Self>, _: &mut task::Context<'_>) -> Poll<Self::Output> {
 		Poll::Pending
@@ -152,7 +153,7 @@ impl<E: Environment + 'static> Terminal<E> {
 		Ok(Vertex::default())
 	}
 
-	fn process_incoming(&mut self, cx: &mut task::Context) -> Result<(), Error> {
+	fn process_incoming(&mut self, cx: &mut task::Context) -> Result<(), E::Error> {
 		while let Poll::Ready(Some(u)) = self.new_units_rx.poll_recv(cx) {
 			if self.unit_bag.contains_key(&u.hash()) {
 				continue;
@@ -193,7 +194,7 @@ impl<E: Environment + 'static> Terminal<E> {
 impl<E: Environment> Unpin for Terminal<E> {}
 
 impl<E: Environment> Future for Terminal<E> {
-	type Output = Result<(), Error>;
+	type Output = Result<(), E::Error>;
 
 	fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
 		self.process_incoming(cx)?;
@@ -201,13 +202,13 @@ impl<E: Environment> Future for Terminal<E> {
 	}
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ControlHash<H: HashT> {
 	parents: NodeMap<Option<NodeIndex>>,
 	hash: H,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Unit<H: HashT> {
 	creator: NodeIndex,
 	hash: H,
@@ -249,7 +250,7 @@ impl<E: Environment> Creator<E> {
 }
 
 impl<E: Environment> Future for Creator<E> {
-	type Output = Result<(), Error>;
+	type Output = Result<(), E::Error>;
 
 	fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
 		while let Poll::Ready(Some(_v)) = self.parents_rx.poll_recv(cx) {
@@ -277,7 +278,7 @@ impl<E: Environment> Extender<E> {
 }
 
 impl<E: Environment> Future for Extender<E> {
-	type Output = Result<(), Error>;
+	type Output = Result<(), E::Error>;
 
 	fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
 		while let Poll::Ready(Some(v)) = self.electors.poll_recv(cx) {
@@ -327,7 +328,7 @@ impl<E: Environment> Syncer<E> {
 }
 
 impl<E: Environment> Future for Syncer<E> {
-	type Output = Result<(), Error>;
+	type Output = Result<(), E::Error>;
 
 	// TODO there is a theoretical possibility of starving the sender part by the receiver (very unlikely)
 	fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
