@@ -57,7 +57,9 @@ pub trait Environment {
 
 	type Crypto;
 	type In: Stream<Item = Message<Self::Hash>> + Send + Unpin;
-	type Out: Sink<Message<Self::Hash>, Error = Error> + Send + Unpin;
+	type Out: Sink<Message<Self::Hash>, Error = Self::Error> + Send + Unpin;
+	type Error: Send + Sync;
+
 	fn finalize_block(&self, _: Self::Hash);
 	fn best_block(&self) -> Self::Hash;
 	// sth needed in the future for randomness
