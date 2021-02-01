@@ -4,7 +4,7 @@ use std::{
 	hash::Hash,
 };
 
-use crate::skeleton::{Error, Message};
+use crate::skeleton::{Message};
 
 //use datasize::DataSize;
 use serde::{de::DeserializeOwned, Serialize};
