@@ -19,10 +19,10 @@ impl<H: HashT> Vertex<H> {
 			parents,
 		}
 	}
-	pub(crate) fn creator(&self) -> NodeIndex {
+	pub(crate) fn _creator(&self) -> NodeIndex {
 		self.creator
 	}
-	pub(crate) fn hash(&self) -> H {
+	pub(crate) fn _hash(&self) -> H {
 		self.hash.clone()
 	}
 }
@@ -38,7 +38,7 @@ impl<E: Environment> Dag<E> {
 		}
 	}
 
-	pub(crate) fn contains_hash(&self, hash: &E::Hash) -> bool {
+	pub(crate) fn _contains_hash(&self, hash: &E::Hash) -> bool {
 		self.vertex_by_hash.contains_key(hash)
 	}
 
