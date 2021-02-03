@@ -22,6 +22,7 @@ pub(crate) struct Creator<E: Environment> {
     current_round: usize,
     candidates_by_round: Vec<NodeMap<Option<E::Hash>>>,
     n_candidates_by_round: Vec<NodeCount>,
+    best_block: Box<dyn Fn() -> E::Hash + Send + Sync + 'static>,
 }
 
 impl<E: Environment> Unpin for Creator<E> {}
@@ -33,6 +34,7 @@ impl<E: Environment> Creator<E> {
         epoch_id: u32,
         pid: NodeIndex,
         n_members: NodeCount,
+        best_block: Box<dyn Fn() -> E::Hash + Send + Sync + 'static>,
     ) -> Self {
         Creator {
             parents_rx,
@@ -43,6 +45,7 @@ impl<E: Environment> Creator<E> {
             current_round: 0,
             candidates_by_round: vec![NodeMap::new_with_len(n_members)],
             n_candidates_by_round: vec![NodeCount(0)],
+            best_block,
         }
     }
 
@@ -66,6 +69,7 @@ impl<E: Environment> Creator<E> {
             round as u32,
             self.epoch_id,
             self.candidates_by_round[round].clone(),
+            (self.best_block)(),
         );
         let _ = self.new_units_tx.send(new_unit);
         self.current_round += 1;

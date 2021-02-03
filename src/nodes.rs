@@ -1,9 +1,8 @@
 use derive_more::{Add, AddAssign, AsRef, From, Sub, SubAssign, Sum};
 use serde::{Deserialize, Serialize};
-use std::ops::{Div, Mul};
 use std::{
     iter::FromIterator,
-    ops::{Index, IndexMut},
+    ops::{Div, Index, IndexMut, Mul},
     slice, vec,
 };
 
