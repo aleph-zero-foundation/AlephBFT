@@ -189,29 +189,29 @@ pub mod environment {
 
         fn is_descendant(&self, child: &Hash, parent: &Hash) -> bool {
             let mut child = match self.tree.get(child) {
-                Some(block) => block.clone(),
+                Some(block) => block,
                 None => return false,
             };
             let parent = match self.tree.get(parent) {
-                Some(block) => block.clone(),
+                Some(block) => block,
                 None => return false,
             };
             if child.number < parent.number {
                 return true;
             }
             while child.number > parent.number {
-                child = self.tree.get(&child.parent.unwrap()).unwrap().clone();
+                child = &*self.tree.get(&child.parent.unwrap()).unwrap();
             }
 
-            return child.hash == parent.hash;
+            child.hash == parent.hash
         }
 
         fn block(&self, h: &Hash) -> Option<Block> {
-            self.tree.get(h).map(|b| b.clone())
+            self.tree.get(h).copied()
         }
 
         fn best_block(&self) -> Hash {
-            self.leaves.last().unwrap().clone()
+            *self.leaves.last().unwrap()
         }
 
         fn best_finalized(&self) -> Hash {
@@ -271,7 +271,7 @@ pub mod environment {
         }
 
         fn start_send(self: Pin<&mut Self>, m: Message<Hash>) -> Result<(), Self::Error> {
-            self.0.send(m).map(|_r| ()).map_err(|_e| return ())
+            self.0.send(m).map(|_r| ()).map_err(|_e| {})
         }
     }
 

@@ -56,7 +56,7 @@ impl Mul<u32> for NodeCount {
 impl Div<u32> for NodeCount {
     type Output = Self;
     fn div(self, rhs: u32) -> Self::Output {
-        NodeCount(self.0 * rhs)
+        NodeCount(self.0 / rhs)
     }
 }
 
@@ -102,7 +102,7 @@ impl<T> NodeMap<T> {
         T: Default + Clone,
     {
         let v: Vec<T> = vec![T::default(); len.into()];
-        return NodeMap(v);
+        NodeMap(v)
     }
 }
 

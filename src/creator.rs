@@ -95,12 +95,9 @@ impl<E: Environment> Creator<E> {
         // Additionally, our unit from previous round must be available.
         let prev_round: usize = self.current_round - 1;
         let threshold = (self.n_members * 2) / 3;
-        if self.n_candidates_by_round[prev_round] > threshold {
-            if self.candidates_by_round[prev_round][self.pid].is_some() {
-                return true;
-            }
-        }
-        false
+
+        self.n_candidates_by_round[prev_round] > threshold
+            && self.candidates_by_round[prev_round][self.pid].is_some()
     }
 }
 

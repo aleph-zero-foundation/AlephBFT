@@ -30,10 +30,10 @@ impl<H: HashT> Vertex<H> {
         self.creator
     }
     pub(crate) fn _hash(&self) -> H {
-        self.hash.clone()
+        self.hash
     }
     pub(crate) fn best_block(&self) -> H {
-        self.best_block.clone()
+        self.best_block
     }
 }
 

@@ -75,8 +75,8 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
         let (syncer, requests_tx, incoming_units_rx, created_units_tx) = Syncer::<E>::new(o, i);
 
         let (parents_tx, parents_rx) = mpsc::unbounded_channel();
-        let my_ix = conf.ix.clone();
-        let n_members = conf.n_members.clone();
+        let my_ix = conf.ix;
+        let n_members = conf.n_members;
         let epoch_id = conf.epoch_id;
         let e = env.clone();
         let best_block = Box::new(move || e.lock().best_block());
@@ -197,7 +197,7 @@ impl<E: Environment + 'static> Terminal<E> {
         } else {
             self.ready_list.push(u)
         }
-        return true;
+        true
     }
 
     fn process_incoming(&mut self, cx: &mut task::Context) {
@@ -267,7 +267,7 @@ impl<H: HashT> ControlHash<H> {
     }
 
     fn n_members(&self) -> NodeCount {
-        return NodeCount(self.parents.len() as u32);
+        NodeCount(self.parents.len() as u32)
     }
 }
 
@@ -292,21 +292,21 @@ pub struct Unit<H: HashT> {
     best_block: H,
 }
 
-impl<H: HashT> Into<Vertex<H>> for Unit<H> {
-    fn into(self) -> Vertex<H> {
-        Vertex::new(self.creator, self.hash, self.parents, self.best_block)
+impl<H: HashT> From<Unit<H>> for Vertex<H> {
+    fn from(u: Unit<H>) -> Self {
+        Vertex::new(u.creator, u.hash, u.parents, u.best_block)
     }
 }
 
-impl<H: HashT> Into<CHUnit<H>> for Unit<H> {
-    fn into(self) -> CHUnit<H> {
+impl<H: HashT> From<Unit<H>> for CHUnit<H> {
+    fn from(u: Unit<H>) -> Self {
         CHUnit {
-            creator: self.creator,
-            round: self.round,
-            epoch_id: self.epoch_id,
-            hash: self.hash,
-            control_hash: self.control_hash,
-            best_block: self.best_block,
+            creator: u.creator,
+            round: u.round,
+            epoch_id: u.epoch_id,
+            hash: u.hash,
+            control_hash: u.control_hash,
+            best_block: u.best_block,
         }
     }
 }
@@ -328,16 +328,16 @@ impl<H: HashT> Unit<H> {
         self.creator
     }
     fn _best_block(&self) -> H {
-        self.best_block.clone()
+        self.best_block
     }
     fn _hash(&self) -> H {
-        self.hash.clone()
+        self.hash
     }
 }
 
 impl<H: HashT> CHUnit<H> {
     pub(crate) fn hash(&self) -> H {
-        self.hash.clone()
+        self.hash
     }
     pub(crate) fn creator(&self) -> NodeIndex {
         self.creator
