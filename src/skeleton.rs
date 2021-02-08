@@ -1,7 +1,6 @@
 use futures::prelude::*;
 use parking_lot::Mutex;
 use std::{
-    collections::HashMap,
     pin::Pin,
     sync::Arc,
     task::{self, Poll},
@@ -10,8 +9,9 @@ use tokio::sync::mpsc;
 
 use crate::{
     creator::Creator,
-    dag::{Dag, Vertex},
+    dag::Vertex,
     nodes::{NodeCount, NodeIndex, NodeMap},
+    terminal::Terminal,
     traits::{Environment, HashT},
 };
 
@@ -20,8 +20,8 @@ pub enum Error {}
 #[derive(Clone, Debug, PartialEq)]
 pub enum Message<H: HashT> {
     Multicast(CHUnit<H>),
-    // request of a given id of units of given hashes
-    FetchRequest(Vec<NodeIndex>, NodeIndex),
+    // request for a particular list of units (specified by (round, creator)) to a particular node
+    FetchRequest(Vec<(u32, NodeIndex)>, NodeIndex),
     // requested units by a given request id
     FetchResponse(Vec<CHUnit<H>>, NodeIndex),
     SyncMessage,
@@ -89,12 +89,7 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
             best_block,
         );
 
-        let mut terminal = Terminal::<E>::new(
-            conf.ix,
-            conf.n_members,
-            incoming_units_rx,
-            requests_tx.clone(),
-        );
+        let mut terminal = Terminal::<E>::new(conf.ix, incoming_units_rx, requests_tx.clone());
         // send a multicast request
         terminal.register_post_insert_hook(Box::new(move |u| {
             if my_ix == u.creator() {
@@ -138,116 +133,10 @@ impl<E: Environment> Future for Consensus<E> {
     }
 }
 
-// Terminal is responsible for:
-// - managing units that cannot be added to the dag yet, i.e fetching missing parents
-// - checking control hashes
-// - TODO checking for potential forks and raising alarms
-// - TODO updating randomness source
-struct Terminal<E: Environment + 'static> {
-    _ix: NodeIndex,
-    _n_members: NodeCount,
-    // common channel for units from outside world and the ones we create, possibly split into two so that we prioritize ours
-    new_units_rx: Receiver<CHUnit<E::Hash>>,
-    _requests_tx: Sender<Message<E::Hash>>,
-    pending_list: Vec<Unit<E::Hash>>,
-    ready_list: Vec<Unit<E::Hash>>,
-    post_insert: Vec<Box<dyn Fn(Unit<E::Hash>) + Send + Sync + 'static>>,
-    dag: Dag<E>,
-    unit_bag: HashMap<E::Hash, Unit<E::Hash>>,
-}
-
-impl<E: Environment + 'static> Terminal<E> {
-    fn new(
-        _ix: NodeIndex,
-        _n_members: NodeCount,
-        new_units_rx: Receiver<CHUnit<E::Hash>>,
-        _requests_tx: Sender<Message<E::Hash>>,
-    ) -> Self {
-        Terminal {
-            _ix,
-            _n_members,
-            new_units_rx,
-            _requests_tx,
-            pending_list: vec![],
-            ready_list: vec![],
-            post_insert: vec![],
-            dag: Dag::<E>::new(),
-            unit_bag: HashMap::new(),
-        }
-    }
-
-    fn fetch_missing_parents(&mut self, _unit: &Unit<E::Hash>) -> bool {
-        //TODO: this looks at unit's parents and adds to an internal (to be added) priority queue
-        //      requests for fetching parents. Priority queue is necessary because we might need
-        //      to occasionally repeat requests. The queue is sorted by the time at which the request
-        //      should be made.
-        // returns whether some parents are missing
-        false
-    }
-
-    // returns true if the unit is new
-    fn register_new_chunit(&mut self, chu: &CHUnit<E::Hash>) -> bool {
-        if self.unit_bag.contains_key(&chu.hash()) {
-            return false;
-        }
-        let u = Unit::<E::Hash>::blank_from_chunit(&chu);
-        self.unit_bag.insert(chu.hash(), u.clone());
-        if self.fetch_missing_parents(&u) {
-            self.pending_list.push(u);
-        } else {
-            self.ready_list.push(u)
-        }
-        true
-    }
-
-    fn process_incoming(&mut self, cx: &mut task::Context) {
-        while let Poll::Ready(Some(chu)) = self.new_units_rx.poll_recv(cx) {
-            let _ = self.register_new_chunit(&chu);
-        }
-    }
-
-    fn make_requests(&mut self, _cx: &mut task::Context) {
-        // this drains the request priority queue from request with timestamp that has passed
-    }
-
-    fn update_post_insert(&mut self, unit: Unit<E::Hash>) {
-        // TODO (Damian): this .clone() below brings me pain
-        self.post_insert.iter().for_each(|f| f(unit.clone()));
-        // TODO: need to update units in the pending list that wait for their parents added to DAG
-    }
-
-    fn add_ready_units(&mut self) {
-        while let Some(u) = self.ready_list.pop() {
-            self.dag.add_vertex(u.clone().into());
-            self.update_post_insert(u);
-        }
-    }
-
-    pub(crate) fn register_post_insert_hook(
-        &mut self,
-        hook: Box<dyn Fn(Unit<E::Hash>) + Send + Sync + 'static>,
-    ) {
-        self.post_insert.push(hook);
-    }
-}
-
-impl<E: Environment> Unpin for Terminal<E> {}
-
-impl<E: Environment> Future for Terminal<E> {
-    type Output = Result<(), E::Error>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
-        self.process_incoming(cx);
-        self.add_ready_units();
-        self.make_requests(cx);
-        Poll::Pending
-    }
-}
-
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ControlHash<H: HashT> {
-    parents: NodeMap<bool>,
-    hash: H,
+    pub parents: NodeMap<bool>,
+    pub hash: H,
 }
 
 impl<H: HashT> ControlHash<H> {
@@ -266,73 +155,23 @@ impl<H: HashT> ControlHash<H> {
         ControlHash { parents, hash }
     }
 
-    fn n_members(&self) -> NodeCount {
+    pub(crate) fn n_parents(&self) -> NodeCount {
+        NodeCount(self.parents.iter().filter(|&b| *b).count() as u32)
+    }
+
+    pub(crate) fn n_members(&self) -> NodeCount {
         NodeCount(self.parents.len() as u32)
     }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CHUnit<H: HashT> {
-    creator: NodeIndex,
-    round: u32,
-    epoch_id: u32, //we probably want a custom type for that
-    hash: H,
-    control_hash: ControlHash<H>,
-    best_block: H,
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Unit<H: HashT> {
-    creator: NodeIndex,
-    round: u32,
-    epoch_id: u32,
-    hash: H,
-    control_hash: ControlHash<H>, // this is convenient to have in the terminal, but we might get rid of it at some point
-    parents: NodeMap<Option<H>>,
-    best_block: H,
-}
-
-impl<H: HashT> From<Unit<H>> for Vertex<H> {
-    fn from(u: Unit<H>) -> Self {
-        Vertex::new(u.creator, u.hash, u.parents, u.best_block)
-    }
-}
-
-impl<H: HashT> From<Unit<H>> for CHUnit<H> {
-    fn from(u: Unit<H>) -> Self {
-        CHUnit {
-            creator: u.creator,
-            round: u.round,
-            epoch_id: u.epoch_id,
-            hash: u.hash,
-            control_hash: u.control_hash,
-            best_block: u.best_block,
-        }
-    }
-}
-
-impl<H: HashT> Unit<H> {
-    // creates a unit from a Control Hash Unit, that has no parents reconstructed yet
-    fn blank_from_chunit(unit: &CHUnit<H>) -> Self {
-        Unit {
-            creator: unit.creator,
-            round: unit.round,
-            epoch_id: unit.epoch_id,
-            hash: unit.hash,
-            control_hash: unit.control_hash.clone(),
-            parents: NodeMap::new_with_len(unit.control_hash.n_members()),
-            best_block: unit.best_block,
-        }
-    }
-    fn creator(&self) -> NodeIndex {
-        self.creator
-    }
-    fn _best_block(&self) -> H {
-        self.best_block
-    }
-    fn _hash(&self) -> H {
-        self.hash
-    }
+    pub(crate) creator: NodeIndex,
+    pub(crate) round: u32,
+    pub(crate) epoch_id: u32, //we probably want a custom type for that
+    pub(crate) hash: H,
+    pub(crate) control_hash: ControlHash<H>,
+    pub(crate) best_block: H,
 }
 
 impl<H: HashT> CHUnit<H> {
@@ -356,7 +195,7 @@ impl<H: HashT> CHUnit<H> {
         H::default()
     }
 
-    pub(crate) fn new(
+    pub(crate) fn new_from_parents(
         creator: NodeIndex,
         round: u32,
         epoch_id: u32,
@@ -369,6 +208,24 @@ impl<H: HashT> CHUnit<H> {
             epoch_id,
             hash: Self::compute_hash(creator, round, epoch_id, parents.clone()),
             control_hash: ControlHash::new(parents),
+            best_block,
+        }
+    }
+
+    pub(crate) fn _new(
+        creator: NodeIndex,
+        round: u32,
+        epoch_id: u32,
+        hash: H,
+        control_hash: ControlHash<H>,
+        best_block: H,
+    ) -> Self {
+        CHUnit {
+            creator,
+            round,
+            epoch_id,
+            hash,
+            control_hash,
             best_block,
         }
     }
