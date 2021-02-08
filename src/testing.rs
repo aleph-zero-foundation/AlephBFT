@@ -311,22 +311,22 @@ mod tests {
         let h0 = tokio::spawn(async move {
             assert_eq!(
                 in0.next().await.unwrap(),
-                Message::FetchRequest(vec![], 0.into())
+                Message::FetchRequest(vec![], 0.into()),
             );
             assert_eq!(
                 in0.next().await.unwrap(),
-                Message::FetchRequest(vec![], 1.into())
+                Message::FetchRequest(vec![], 1.into()),
             );
         });
 
         let h1 = tokio::spawn(async move {
             assert_eq!(
                 in1.next().await.unwrap(),
-                Message::FetchRequest(vec![], 0.into())
+                Message::FetchRequest(vec![], 0.into()),
             );
             assert_eq!(
                 in1.next().await.unwrap(),
-                Message::FetchRequest(vec![], 1.into())
+                Message::FetchRequest(vec![], 1.into()),
             );
         });
 

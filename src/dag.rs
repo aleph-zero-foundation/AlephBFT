@@ -1,8 +1,7 @@
 use crate::{
     nodes::{NodeIndex, NodeMap},
-    traits::{Environment, HashT},
+    traits::HashT,
 };
-use std::collections::HashMap;
 
 #[derive(Clone, Default)]
 pub(crate) struct Vertex<H: HashT> {
@@ -34,25 +33,5 @@ impl<H: HashT> Vertex<H> {
     }
     pub(crate) fn best_block(&self) -> H {
         self.best_block
-    }
-}
-
-pub(crate) struct Dag<E: Environment + 'static> {
-    vertex_by_hash: HashMap<E::Hash, Vertex<E::Hash>>,
-}
-
-impl<E: Environment> Dag<E> {
-    pub(crate) fn new() -> Dag<E> {
-        Dag {
-            vertex_by_hash: HashMap::new(),
-        }
-    }
-
-    pub(crate) fn _contains_hash(&self, hash: &E::Hash) -> bool {
-        self.vertex_by_hash.contains_key(hash)
-    }
-
-    pub(crate) fn add_vertex(&mut self, vertex: Vertex<E::Hash>) {
-        self.vertex_by_hash.insert(vertex.hash, vertex);
     }
 }

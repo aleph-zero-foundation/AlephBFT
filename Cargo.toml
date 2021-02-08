@@ -13,3 +13,4 @@ tokio = { version = "1", features = ["rt", "sync", "macros"] }
 mini-redis = "0.4"
 derive_more = "0.99.7"
 serde = { version = "1.0.110", features = ["derive"] }
+futures-timer = "3.0.2"

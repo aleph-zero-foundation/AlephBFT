@@ -64,7 +64,7 @@ impl<E: Environment> Creator<E> {
 
     fn create_unit(&mut self) {
         let round = self.current_round;
-        let new_unit = CHUnit::new(
+        let new_unit = CHUnit::new_from_parents(
             self.pid,
             round as u32,
             self.epoch_id,
