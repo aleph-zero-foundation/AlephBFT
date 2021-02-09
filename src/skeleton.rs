@@ -17,11 +17,13 @@ use crate::{
 
 pub enum Error {}
 
+pub type UnitCoord = (u32, NodeIndex);
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Message<H: HashT> {
     Multicast(CHUnit<H>),
     // request for a particular list of units (specified by (round, creator)) to a particular node
-    FetchRequest(Vec<(u32, NodeIndex)>, NodeIndex),
+    FetchRequest(Vec<UnitCoord>, NodeIndex),
     // requested units by a given request id
     FetchResponse(Vec<CHUnit<H>>, NodeIndex),
     SyncMessage,
