@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     nodes::{NodeCount, NodeIndex, NodeMap},
-    skeleton::{CHUnit, Receiver, Sender},
+    skeleton::{Receiver, Sender, Unit},
     traits::Environment,
 };
 
@@ -13,8 +13,8 @@ use futures::prelude::*;
 
 // a process responsible for creating new units
 pub(crate) struct Creator<E: Environment> {
-    parents_rx: Receiver<CHUnit<E::Hash>>,
-    new_units_tx: Sender<CHUnit<E::Hash>>,
+    parents_rx: Receiver<Unit<E::Hash>>,
+    new_units_tx: Sender<Unit<E::Hash>>,
     epoch_id: u32,
     pid: NodeIndex,
     n_members: NodeCount,
@@ -29,8 +29,8 @@ impl<E: Environment> Unpin for Creator<E> {}
 
 impl<E: Environment> Creator<E> {
     pub(crate) fn new(
-        parents_rx: Receiver<CHUnit<E::Hash>>,
-        new_units_tx: Sender<CHUnit<E::Hash>>,
+        parents_rx: Receiver<Unit<E::Hash>>,
+        new_units_tx: Sender<Unit<E::Hash>>,
         epoch_id: u32,
         pid: NodeIndex,
         n_members: NodeCount,
@@ -64,7 +64,7 @@ impl<E: Environment> Creator<E> {
 
     fn create_unit(&mut self) {
         let round = self.current_round;
-        let new_unit = CHUnit::new_from_parents(
+        let new_unit = Unit::new_from_parents(
             self.pid,
             round as u32,
             self.epoch_id,

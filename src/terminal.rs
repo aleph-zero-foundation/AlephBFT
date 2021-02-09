@@ -8,7 +8,7 @@ use std::{
 use crate::{
     dag::Vertex,
     nodes::{NodeCount, NodeIndex, NodeMap},
-    skeleton::{CHUnit, Message, Receiver, Sender},
+    skeleton::{Message, Receiver, Sender, Unit},
     traits::{Environment, HashT},
 };
 
@@ -32,16 +32,16 @@ impl Default for UnitStatus {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct TUnit<H: HashT> {
-    chunit: CHUnit<H>,
+pub struct TerminalUnit<H: HashT> {
+    chunit: Unit<H>,
     parents: NodeMap<Option<H>>,
     n_miss_par_store: NodeCount,
     n_miss_par_dag: NodeCount,
     status: UnitStatus,
 }
 
-impl<H: HashT> From<TUnit<H>> for Vertex<H> {
-    fn from(u: TUnit<H>) -> Vertex<H> {
+impl<H: HashT> From<TerminalUnit<H>> for Vertex<H> {
+    fn from(u: TerminalUnit<H>) -> Vertex<H> {
         Vertex::new(
             u.chunit.creator,
             u.chunit.hash,
@@ -51,18 +51,18 @@ impl<H: HashT> From<TUnit<H>> for Vertex<H> {
     }
 }
 
-impl<H: HashT> From<TUnit<H>> for CHUnit<H> {
-    fn from(u: TUnit<H>) -> CHUnit<H> {
+impl<H: HashT> From<TerminalUnit<H>> for Unit<H> {
+    fn from(u: TerminalUnit<H>) -> Unit<H> {
         u.chunit
     }
 }
 
-impl<H: HashT> TUnit<H> {
+impl<H: HashT> TerminalUnit<H> {
     // creates a unit from a Control Hash Unit, that has no parents reconstructed yet
-    pub(crate) fn blank_from_chunit(unit: &CHUnit<H>) -> Self {
+    pub(crate) fn blank_from_chunit(unit: &Unit<H>) -> Self {
         let n_members = unit.control_hash.n_members();
         let n_parents = unit.control_hash.n_parents();
-        TUnit {
+        TerminalUnit {
             chunit: unit.clone(),
             parents: NodeMap::new_with_len(n_members),
             n_miss_par_store: n_parents,
@@ -114,16 +114,16 @@ impl<H: HashT> RequestNote<H> {
 pub(crate) struct Terminal<E: Environment + 'static> {
     _ix: NodeIndex,
     // common channel for units from outside world and the ones we create
-    new_units_rx: Receiver<CHUnit<E::Hash>>,
+    new_units_rx: Receiver<Unit<E::Hash>>,
     requests_tx: Sender<Message<E::Hash>>,
     // Queue that is necessary to deal with cascading updates to the Dag/Store
     event_queue: VecDeque<TerminalEvent<E::Hash>>,
     // This queue contains "notes" that remind us to check on a particular unit, whether it already
     // has all the parents. If not then repeat a request.
     note_queue: VecDeque<RequestNote<E::Hash>>,
-    post_insert: Vec<Box<dyn Fn(TUnit<E::Hash>) + Send + Sync + 'static>>,
+    post_insert: Vec<Box<dyn Fn(TerminalUnit<E::Hash>) + Send + Sync + 'static>>,
     // Here we store all the units -- the one in Dag and the ones "hanging".
-    unit_store: HashMap<E::Hash, TUnit<E::Hash>>,
+    unit_store: HashMap<E::Hash, TerminalUnit<E::Hash>>,
 
     // TODO: custom type for round number?
     // TODO: get rid of HashMaps below and just use Vec<Vec<E::Hash>> for efficiency
@@ -144,7 +144,7 @@ pub(crate) struct Terminal<E: Environment + 'static> {
 impl<E: Environment + 'static> Terminal<E> {
     pub(crate) fn new(
         _ix: NodeIndex,
-        new_units_rx: Receiver<CHUnit<E::Hash>>,
+        new_units_rx: Receiver<Unit<E::Hash>>,
         requests_tx: Sender<Message<E::Hash>>,
     ) -> Self {
         Terminal {
@@ -210,7 +210,7 @@ impl<E: Environment + 'static> Terminal<E> {
         wait_list.push(*u_hash);
     }
 
-    fn update_on_store_add(&mut self, chu: CHUnit<E::Hash>) {
+    fn update_on_store_add(&mut self, chu: Unit<E::Hash>) {
         let u_hash = chu.hash;
         let (u_round, pid) = (chu.round, chu.creator);
         //TODO: should check for forks at this very place and possibly trigger Alarm
@@ -249,9 +249,9 @@ impl<E: Environment + 'static> Terminal<E> {
         self.post_insert.iter().for_each(|f| f(u.clone()));
     }
 
-    fn add_to_store(&mut self, chu: CHUnit<E::Hash>) {
+    fn add_to_store(&mut self, chu: Unit<E::Hash>) {
         if let Entry::Vacant(entry) = self.unit_store.entry(chu.hash()) {
-            entry.insert(TUnit::<E::Hash>::blank_from_chunit(&chu));
+            entry.insert(TerminalUnit::<E::Hash>::blank_from_chunit(&chu));
             // below we push to the front of the queue because we want these requests (if applicable) to be
             // performed right away. This is perhaps not super clean, but the invariant of events in queue
             // being sorted by time is still (pretty much) preserved.
@@ -342,7 +342,7 @@ impl<E: Environment + 'static> Terminal<E> {
 
     pub(crate) fn register_post_insert_hook(
         &mut self,
-        hook: Box<dyn Fn(TUnit<E::Hash>) + Send + Sync + 'static>,
+        hook: Box<dyn Fn(TerminalUnit<E::Hash>) + Send + Sync + 'static>,
     ) {
         self.post_insert.push(hook);
     }

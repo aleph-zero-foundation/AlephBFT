@@ -21,11 +21,11 @@ pub type UnitCoord = (u32, NodeIndex);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Message<H: HashT> {
-    Multicast(CHUnit<H>),
+    Multicast(Unit<H>),
     // request for a particular list of units (specified by (round, creator)) to a particular node
     FetchRequest(Vec<UnitCoord>, NodeIndex),
     // requested units by a given request id
-    FetchResponse(Vec<CHUnit<H>>, NodeIndex),
+    FetchResponse(Vec<Unit<H>>, NodeIndex),
     SyncMessage,
     SyncResponse,
     Alert,
@@ -167,7 +167,7 @@ impl<H: HashT> ControlHash<H> {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct CHUnit<H: HashT> {
+pub struct Unit<H: HashT> {
     pub(crate) creator: NodeIndex,
     pub(crate) round: u32,
     pub(crate) epoch_id: u32, //we probably want a custom type for that
@@ -176,7 +176,7 @@ pub struct CHUnit<H: HashT> {
     pub(crate) best_block: H,
 }
 
-impl<H: HashT> CHUnit<H> {
+impl<H: HashT> Unit<H> {
     pub(crate) fn hash(&self) -> H {
         self.hash
     }
@@ -204,7 +204,7 @@ impl<H: HashT> CHUnit<H> {
         parents: NodeMap<Option<H>>,
         best_block: H,
     ) -> Self {
-        CHUnit {
+        Unit {
             creator,
             round,
             epoch_id,
@@ -222,7 +222,7 @@ impl<H: HashT> CHUnit<H> {
         control_hash: ControlHash<H>,
         best_block: H,
     ) -> Self {
-        CHUnit {
+        Unit {
             creator,
             round,
             epoch_id,
@@ -305,7 +305,7 @@ struct Syncer<E: Environment> {
     // incoming messages
     messages_rx: E::In,
     // channel for sending units to the terminal
-    units_tx: Sender<CHUnit<E::Hash>>,
+    units_tx: Sender<Unit<E::Hash>>,
     // channel for receiving messages to the outside world
     requests_rx: Receiver<Message<E::Hash>>,
 }
@@ -317,8 +317,8 @@ impl<E: Environment> Syncer<E> {
     ) -> (
         Self,
         Sender<Message<E::Hash>>,
-        Receiver<CHUnit<E::Hash>>,
-        Sender<CHUnit<E::Hash>>,
+        Receiver<Unit<E::Hash>>,
+        Sender<Unit<E::Hash>>,
     ) {
         let (units_tx, units_rx) = mpsc::unbounded_channel();
         let (requests_tx, requests_rx) = mpsc::unbounded_channel();
