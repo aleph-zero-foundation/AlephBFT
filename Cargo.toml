@@ -9,7 +9,7 @@ edition = "2018"
 [dependencies]
 parking_lot = "0.11.1"
 futures = "0.3.9"
-tokio = { version = "1", features = ["rt", "sync", "macros"] }
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
 mini-redis = "0.4"
 derive_more = "0.99.7"
 serde = { version = "1.0.110", features = ["derive"] }
