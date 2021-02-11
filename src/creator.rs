@@ -1,17 +1,11 @@
-use std::{
-    pin::Pin,
-    task::{self, Poll},
-};
-
 use crate::{
     nodes::{NodeCount, NodeIndex, NodeMap},
     skeleton::{Receiver, Sender, Unit},
     traits::Environment,
 };
 
-use futures::prelude::*;
-
 // a process responsible for creating new units
+
 pub(crate) struct Creator<E: Environment> {
     parents_rx: Receiver<Unit<E::Hash>>,
     new_units_tx: Sender<Unit<E::Hash>>,
@@ -24,8 +18,6 @@ pub(crate) struct Creator<E: Environment> {
     n_candidates_by_round: Vec<NodeCount>,
     best_block: Box<dyn Fn() -> E::Hash + Send + Sync + 'static>,
 }
-
-impl<E: Environment> Unpin for Creator<E> {}
 
 impl<E: Environment> Creator<E> {
     pub(crate) fn new(
@@ -99,18 +91,16 @@ impl<E: Environment> Creator<E> {
         self.n_candidates_by_round[prev_round] > threshold
             && self.candidates_by_round[prev_round][self.pid].is_some()
     }
-}
 
-impl<E: Environment> Future for Creator<E> {
-    type Output = Result<(), E::Error>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        while let Poll::Ready(Some(u)) = self.parents_rx.poll_recv(cx) {
-            self.add_unit(u.round() as usize, u.creator(), u.hash());
+    pub(crate) async fn create(&mut self) {
+        self.create_unit();
+        loop {
+            while let Some(u) = self.parents_rx.recv().await {
+                self.add_unit(u.round() as usize, u.creator(), u.hash());
+                if self.check_ready() {
+                    self.create_unit();
+                }
+            }
         }
-        while self.check_ready() {
-            self.create_unit();
-        }
-        Poll::Pending
     }
 }

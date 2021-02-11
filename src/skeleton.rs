@@ -1,10 +1,6 @@
-use futures::prelude::*;
+use futures::{SinkExt, StreamExt};
 use parking_lot::Mutex;
-use std::{
-    pin::Pin,
-    sync::Arc,
-    task::{self, Poll},
-};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::{
@@ -47,16 +43,14 @@ impl ConsensusConfig {
     }
 }
 
-type JoinHandle<E> = tokio::task::JoinHandle<Result<(), <E as Environment>::Error>>;
-
 pub struct Consensus<E: Environment + 'static> {
     _conf: ConsensusConfig,
     _env: Arc<Mutex<E>>,
-    _creator: JoinHandle<E>,
-    _terminal: JoinHandle<E>,
-    _extender: JoinHandle<E>,
-    _syncer: JoinHandle<E>,
-    _finalizer: JoinHandle<E>,
+    creator: Option<Creator<E>>,
+    terminal: Option<Terminal<E>>,
+    extender: Option<Extender<E>>,
+    syncer: Option<Syncer<E>>,
+    finalizer: Option<Finalizer<E>>,
 }
 
 pub(crate) type Receiver<T> = mpsc::UnboundedReceiver<T>;
@@ -72,7 +66,7 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
             Finalizer::<E>::new(Box::new(move |h| e.lock().finalize_block(h)));
 
         let (electors_tx, electors_rx) = mpsc::unbounded_channel();
-        let extender = Extender::<E>::new(electors_rx, batch_tx);
+        let extender = Some(Extender::<E>::new(electors_rx, batch_tx));
 
         let (syncer, requests_tx, incoming_units_rx, created_units_tx) = Syncer::<E>::new(o, i);
 
@@ -82,14 +76,14 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
         let epoch_id = conf.epoch_id;
         let e = env.clone();
         let best_block = Box::new(move || e.lock().best_block());
-        let creator = Creator::<E>::new(
+        let creator = Some(Creator::<E>::new(
             parents_rx,
             created_units_tx,
             epoch_id,
             my_ix,
             n_members,
             best_block,
-        );
+        ));
 
         let mut terminal = Terminal::<E>::new(conf.ix, incoming_units_rx, requests_tx.clone());
         // send a multicast request
@@ -107,31 +101,37 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
         terminal.register_post_insert_hook(Box::new(
             move |u| if electors_tx.send(u.into()).is_err() {},
         ));
-
-        let creator = tokio::spawn(creator);
-        let terminal = tokio::spawn(terminal);
-        let extender = tokio::spawn(extender);
-        let syncer = tokio::spawn(syncer);
-        let finalizer = tokio::spawn(finalizer);
+        let finalizer = Some(finalizer);
+        let syncer = Some(syncer);
+        let terminal = Some(terminal);
 
         Consensus {
             _conf: conf,
             _env: env,
-            _terminal: terminal,
-            _extender: extender,
-            _creator: creator,
-            _syncer: syncer,
-            _finalizer: finalizer,
+            terminal,
+            extender,
+            creator,
+            syncer,
+            finalizer,
         }
     }
 }
 
 // This is to be called from within substrate
-impl<E: Environment> Future for Consensus<E> {
-    type Output = Result<(), E::Error>;
+impl<E: Environment> Consensus<E> {
+    pub async fn run(mut self) {
+        let mut creator = self.creator.take().unwrap();
+        let _creator_handle = tokio::spawn(async move { creator.create().await });
+        let mut terminal = self.terminal.take().unwrap();
+        let _terminal_handle = tokio::spawn(async move { terminal.run().await });
+        let mut extender = self.extender.take().unwrap();
+        let _extender_handle = tokio::spawn(async move { extender.extend().await });
+        let mut syncer = self.syncer.take().unwrap();
+        let _syncer_handle = tokio::spawn(async move { syncer.sync().await });
+        let mut finalizer = self.finalizer.take().unwrap();
+        let _finalizer_handle = tokio::spawn(async move { finalizer.finalize().await });
 
-    fn poll(self: Pin<&mut Self>, _: &mut task::Context<'_>) -> Poll<Self::Output> {
-        Poll::Pending
+        //join all the above
     }
 }
 
@@ -250,19 +250,16 @@ impl<E: Environment> Extender<E> {
         false
     }
     fn next_batch(&self) {}
-}
 
-impl<E: Environment> Future for Extender<E> {
-    type Output = Result<(), E::Error>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        while let Poll::Ready(Some(v)) = self.electors.poll_recv(cx) {
-            let _ = (*self).finalizer_tx.send(vec![v.best_block()]); // just for tests; remove at the earliest convenience
-            while self.new_head(v.clone()) {
-                self.next_batch();
+    async fn extend(&mut self) {
+        loop {
+            if let Some(v) = self.electors.recv().await {
+                let _ = (*self).finalizer_tx.send(vec![v.best_block()]); // just for tests; remove at the earliest convenience
+                while self.new_head(v.clone()) {
+                    self.next_batch();
+                }
             }
         }
-        Poll::Pending
     }
 }
 
@@ -284,18 +281,14 @@ impl<E: Environment> Finalizer<E> {
             batch_tx,
         )
     }
-}
-
-impl<E: Environment> Future for Finalizer<E> {
-    type Output = Result<(), E::Error>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        while let Poll::Ready(Some(batch)) = self.batch_rx.poll_recv(cx) {
-            for h in batch {
-                ((*self).finalizer)(h);
+    async fn finalize(&mut self) {
+        loop {
+            if let Some(batch) = self.batch_rx.recv().await {
+                for h in batch {
+                    ((*self).finalizer)(h);
+                }
             }
         }
-        Poll::Pending
     }
 }
 
@@ -334,29 +327,23 @@ impl<E: Environment> Syncer<E> {
             units_tx,
         )
     }
-}
-
-impl<E: Environment> Future for Syncer<E> {
-    type Output = Result<(), E::Error>;
-
-    // TODO there is a theoretical possibility of starving the sender part by the receiver (very unlikely)
-    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
-        futures::ready!(Sink::poll_ready(Pin::new(&mut self.messages_tx), cx))?;
-        while let Poll::Ready(Some(m)) = self.requests_rx.poll_recv(cx) {
-            Sink::start_send(Pin::new(&mut self.messages_tx), m)?;
-        }
-        let _ = Sink::poll_flush(Pin::new(&mut self.messages_tx), cx)?;
-
-        while let Poll::Ready(Some(m)) = Stream::poll_next(Pin::new(&mut self.messages_rx), cx) {
-            match m {
-                Message::Multicast(u) => if self.units_tx.send(u).is_err() {},
-                Message::FetchResponse(units, _) => units
-                    .into_iter()
-                    .for_each(|u| if self.units_tx.send(u).is_err() {}),
-                _ => {}
+    async fn sync(&mut self) {
+        loop {
+            tokio::select! {
+                Some(m) = self.requests_rx.recv() => {
+                    let _ = self.messages_tx.send(m).await;
+                }
+                Some(m) = self.messages_rx.next() => {
+                match m {
+                    Message::Multicast(u) => if self.units_tx.send(u).is_err() {},
+                    Message::FetchResponse(units, _) => units
+                        .into_iter()
+                        .for_each(|u| if self.units_tx.send(u).is_err() {}),
+                    _ => {}
+                }
+                }
             }
         }
-        Poll::Pending
     }
 }
 
@@ -371,9 +358,9 @@ mod tests {
         let (env, mut finalized_blocks) = environment::Environment::new(net);
         env.gen_chain(vec![(0.into(), vec![1.into()])]);
         let conf = ConsensusConfig::new(0.into(), 1.into(), 0);
-        let c = Consensus::new(conf, env);
-        let _ = tokio::spawn(c);
+        let h = tokio::spawn(Consensus::new(conf, env).run());
 
         assert_eq!(finalized_blocks.recv().await.unwrap().hash(), Hash(1));
+        let _ = h.await;
     }
 }

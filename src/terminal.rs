@@ -1,9 +1,4 @@
-use std::{
-    collections::{hash_map::Entry, HashMap, VecDeque},
-    pin::Pin,
-    task::{self, Poll},
-    time,
-};
+use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
 use crate::{
     dag::Vertex,
@@ -11,8 +6,7 @@ use crate::{
     skeleton::{Message, Receiver, Sender, Unit},
     traits::{Environment, HashT},
 };
-
-use futures::prelude::*;
+use tokio::time;
 
 pub const REPEAT_INTERVAL: time::Duration = time::Duration::from_secs(4);
 pub const TICK_INTERVAL: time::Duration = time::Duration::from_millis(100);
@@ -33,7 +27,7 @@ impl Default for UnitStatus {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TerminalUnit<H: HashT> {
-    chunit: Unit<H>,
+    unit: Unit<H>,
     parents: NodeMap<Option<H>>,
     n_miss_par_store: NodeCount,
     n_miss_par_dag: NodeCount,
@@ -42,28 +36,23 @@ pub struct TerminalUnit<H: HashT> {
 
 impl<H: HashT> From<TerminalUnit<H>> for Vertex<H> {
     fn from(u: TerminalUnit<H>) -> Vertex<H> {
-        Vertex::new(
-            u.chunit.creator,
-            u.chunit.hash,
-            u.parents,
-            u.chunit.best_block,
-        )
+        Vertex::new(u.unit.creator, u.unit.hash, u.parents, u.unit.best_block)
     }
 }
 
 impl<H: HashT> From<TerminalUnit<H>> for Unit<H> {
     fn from(u: TerminalUnit<H>) -> Unit<H> {
-        u.chunit
+        u.unit
     }
 }
 
 impl<H: HashT> TerminalUnit<H> {
     // creates a unit from a Control Hash Unit, that has no parents reconstructed yet
-    pub(crate) fn blank_from_chunit(unit: &Unit<H>) -> Self {
+    pub(crate) fn blank_from_unit(unit: &Unit<H>) -> Self {
         let n_members = unit.control_hash.n_members();
         let n_parents = unit.control_hash.n_parents();
         TerminalUnit {
-            chunit: unit.clone(),
+            unit: unit.clone(),
             parents: NodeMap::new_with_len(n_members),
             n_miss_par_store: n_parents,
             n_miss_par_dag: n_parents,
@@ -71,11 +60,11 @@ impl<H: HashT> TerminalUnit<H> {
         }
     }
     pub(crate) fn creator(&self) -> NodeIndex {
-        self.chunit.creator
+        self.unit.creator
     }
 
     pub(crate) fn round(&self) -> u32 {
-        self.chunit.round
+        self.unit.round
     }
 
     pub(crate) fn verify_control_hash(&self) -> bool {
@@ -94,11 +83,11 @@ pub enum TerminalEvent<H: HashT> {
 
 struct RequestNote<H: HashT> {
     unit: H,
-    scheduled_time: time::SystemTime,
+    scheduled_time: time::Instant,
 }
 
 impl<H: HashT> RequestNote<H> {
-    fn new(unit: H, scheduled_time: time::SystemTime) -> Self {
+    fn new(unit: H, scheduled_time: time::Instant) -> Self {
         RequestNote {
             unit,
             scheduled_time,
@@ -138,7 +127,7 @@ pub(crate) struct Terminal<E: Environment + 'static> {
     // Once this happens, we notify all the children.
     children_hash: HashMap<E::Hash, Vec<E::Hash>>,
     /// This is a ticker that is useful in forcing to fire "poll" at least every 100ms.
-    request_ticker: futures_timer::Delay,
+    request_ticker: time::Interval,
 }
 
 impl<E: Environment + 'static> Terminal<E> {
@@ -158,7 +147,7 @@ impl<E: Environment + 'static> Terminal<E> {
             unit_by_coord: HashMap::new(),
             children_coord: HashMap::new(),
             children_hash: HashMap::new(),
-            request_ticker: futures_timer::Delay::new(time::Duration::from_secs(0)),
+            request_ticker: time::interval(TICK_INTERVAL),
         }
     }
 
@@ -210,9 +199,9 @@ impl<E: Environment + 'static> Terminal<E> {
         wait_list.push(*u_hash);
     }
 
-    fn update_on_store_add(&mut self, chu: Unit<E::Hash>) {
-        let u_hash = chu.hash;
-        let (u_round, pid) = (chu.round, chu.creator);
+    fn update_on_store_add(&mut self, u: Unit<E::Hash>) {
+        let u_hash = u.hash;
+        let (u_round, pid) = (u.round, u.creator);
         //TODO: should check for forks at this very place and possibly trigger Alarm
         self.unit_by_coord.insert((u_round, pid), u_hash);
         if let Some(children) = self.children_coord.remove(&(u_round, pid)) {
@@ -224,7 +213,7 @@ impl<E: Environment + 'static> Terminal<E> {
             self.event_queue
                 .push_back(TerminalEvent::ParentsReconstructed(u_hash));
         } else {
-            for (i, b) in chu.control_hash.parents.enumerate() {
+            for (i, b) in u.control_hash.parents.enumerate() {
                 if *b {
                     let coord = (u_round - 1, i);
                     let maybe_hash = self.unit_by_coord.get(&coord).cloned();
@@ -249,16 +238,16 @@ impl<E: Environment + 'static> Terminal<E> {
         self.post_insert.iter().for_each(|f| f(u.clone()));
     }
 
-    fn add_to_store(&mut self, chu: Unit<E::Hash>) {
-        if let Entry::Vacant(entry) = self.unit_store.entry(chu.hash()) {
-            entry.insert(TerminalUnit::<E::Hash>::blank_from_chunit(&chu));
+    fn add_to_store(&mut self, u: Unit<E::Hash>) {
+        if let Entry::Vacant(entry) = self.unit_store.entry(u.hash()) {
+            entry.insert(TerminalUnit::<E::Hash>::blank_from_unit(&u));
             // below we push to the front of the queue because we want these requests (if applicable) to be
             // performed right away. This is perhaps not super clean, but the invariant of events in queue
             // being sorted by time is still (pretty much) preserved.
-            let curr_time = time::SystemTime::now();
+            let curr_time = time::Instant::now();
             self.note_queue
-                .push_front(RequestNote::new(chu.hash(), curr_time));
-            self.update_on_store_add(chu);
+                .push_front(RequestNote::new(u.hash(), curr_time));
+            self.update_on_store_add(u);
         }
     }
 
@@ -266,12 +255,6 @@ impl<E: Environment + 'static> Terminal<E> {
         let u = self.unit_store.get_mut(u_hash).unwrap();
         u.status = UnitStatus::InDag;
         self.update_on_dag_add(u_hash);
-    }
-
-    fn process_incoming(&mut self, cx: &mut task::Context) {
-        while let Poll::Ready(Some(chu)) = self.new_units_rx.poll_recv(cx) {
-            self.add_to_store(chu);
-        }
     }
 
     /// This drains the event queue. Note that new events might be added to the queue as the result of
@@ -298,7 +281,7 @@ impl<E: Environment + 'static> Terminal<E> {
     }
 
     fn process_hanging_units(&mut self) {
-        let curr_time = time::SystemTime::now();
+        let curr_time = time::Instant::now();
         while !self.note_queue.is_empty() {
             if self.note_queue.front().unwrap().scheduled_time > curr_time {
                 // if there is a more rustic version of this loop control -- let me know :)
@@ -312,7 +295,7 @@ impl<E: Environment + 'static> Terminal<E> {
             match u.status {
                 UnitStatus::ReconstructingParents => {
                     // This means there are some unavailable parents for this units...
-                    for (i, b) in u.chunit.control_hash.parents.enumerate() {
+                    for (i, b) in u.unit.control_hash.parents.enumerate() {
                         if *b && u.parents[i].is_none() {
                             let _ = self
                                 .requests_tx
@@ -346,22 +329,17 @@ impl<E: Environment + 'static> Terminal<E> {
     ) {
         self.post_insert.push(hook);
     }
-}
 
-impl<E: Environment> Unpin for Terminal<E> {}
-
-impl<E: Environment> Future for Terminal<E> {
-    type Output = Result<(), E::Error>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
-        self.process_incoming(cx);
-        self.handle_events();
-        // The point of the ticker is to make sure that this future is polled at least every 100ms
-        // to make sure we do not stop fetching missing units if nothing else is happening.
-        if let Poll::Ready(()) = self.request_ticker.poll_unpin(cx) {
-            self.request_ticker.reset(TICK_INTERVAL);
+    pub(crate) async fn run(&mut self) {
+        loop {
+            tokio::select! {
+                Some(u) = self.new_units_rx.recv() => {
+                    self.add_to_store(u);
+                    self.handle_events();
+                }
+                _ = self.request_ticker.tick() =>
+                    self.process_hanging_units(),
+            };
         }
-        self.process_hanging_units();
-        Poll::Pending
     }
 }
