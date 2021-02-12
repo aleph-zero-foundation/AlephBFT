@@ -29,6 +29,7 @@ pub trait HashT:
     + Hash
     + Serialize
     + DeserializeOwned
+    + From<u32> // TODO remove after adding proper hash impl
 {
 }
 
@@ -46,6 +47,7 @@ impl<H> HashT for H where
         + Hash
         + Serialize
         + DeserializeOwned
+        + From<u32> // TODO remove after adding proper hash impl
 {
 }
 

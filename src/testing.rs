@@ -65,6 +65,7 @@ pub mod environment {
     type Out = Box<dyn Sink<Message<BlockHash, Hash>, Error = Error> + Send + Unpin>;
     type In = Box<dyn Stream<Item = Message<BlockHash, Hash>> + Send + Unpin>;
 
+    #[derive(Clone)]
     pub(crate) struct Environment {
         chain: Arc<Mutex<Chain>>,
         network: Network,
@@ -162,6 +163,7 @@ pub mod environment {
         }
     }
 
+    #[derive(Clone)]
     struct Chain {
         tree: BTreeMap<BlockHash, Block>,
         leaves: Vec<BlockHash>,
@@ -332,6 +334,30 @@ pub mod environment {
                 Poll::Ready(Err(_)) => Poll::Ready(None),
                 Poll::Pending => Poll::Pending,
             }
+        }
+    }
+
+    use crate::skeleton::{Consensus, ConsensusConfig};
+    pub(crate) async fn dispatch_nodes(
+        n_nodes: u32,
+        conf: ConsensusConfig,
+        env: Environment,
+        check: Box<dyn FnOnce() + Send + Sync + 'static>,
+    ) {
+        let mut handles = vec![];
+        for ix in 0..n_nodes {
+            let mut conf = conf.clone();
+            conf.ix = ix.into();
+            handles.push(tokio::spawn(
+                Consensus::new(conf.clone(), env.clone()).run(),
+            ));
+        }
+
+        check();
+
+        // TODO this returns immediately since we don't join in consensus, add exit signal
+        for h in handles {
+            let _ = h.await;
         }
     }
 }

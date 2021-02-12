@@ -28,8 +28,9 @@ pub enum Message<B: HashT, H: HashT> {
     Alert,
 }
 
+#[derive(Clone)]
 pub struct ConsensusConfig {
-    ix: NodeIndex,
+    pub(crate) ix: NodeIndex,
     n_members: NodeCount,
     epoch_id: u32,
 }
@@ -92,6 +93,7 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
         ));
 
         let mut terminal = Terminal::<E>::new(conf.ix, incoming_units_rx, requests_tx.clone());
+
         // send a multicast request
         terminal.register_post_insert_hook(Box::new(move |u| {
             if my_ix == u.creator() {
@@ -187,13 +189,16 @@ impl<B: HashT, H: HashT> Unit<B, H> {
     }
 
     pub(crate) fn compute_hash(
-        _creator: NodeIndex,
-        _round: u32,
+        creator: NodeIndex,
+        round: u32,
         _epoch_id: u32,
-        _parents: NodeMap<Option<H>>,
+        control_hash: &ControlHash<H>,
     ) -> H {
         //TODO: need to write actual hashing here
-        H::default()
+
+        let n_parents = control_hash.n_parents().0;
+
+        (round * n_parents + creator.0).into()
     }
 
     pub(crate) fn new_from_parents(
@@ -203,12 +208,13 @@ impl<B: HashT, H: HashT> Unit<B, H> {
         parents: NodeMap<Option<H>>,
         best_block: B,
     ) -> Self {
+        let control_hash = ControlHash::new(parents);
         Unit {
             creator,
             round,
             epoch_id,
-            hash: Self::compute_hash(creator, round, epoch_id, parents.clone()),
-            control_hash: ControlHash::new(parents),
+            hash: Self::compute_hash(creator, round, epoch_id, &control_hash),
+            control_hash,
             best_block,
         }
     }
@@ -268,19 +274,24 @@ impl<E: Environment> Syncer<E> {
         )
     }
     async fn sync(&mut self) {
+        let mut t = tokio::time::interval(tokio::time::Duration::from_millis(10));
         loop {
             tokio::select! {
                 Some(m) = self.requests_rx.recv() => {
                     let _ = self.messages_tx.send(m).await;
                 }
                 Some(m) = self.messages_rx.next() => {
-                match m {
-                    Message::Multicast(u) => if self.units_tx.send(u).is_err() {},
-                    Message::FetchResponse(units, _) => units
-                        .into_iter()
-                        .for_each(|u| if self.units_tx.send(u).is_err() {}),
-                    _ => {}
+                    match m {
+                        Message::Multicast(u) => if self.units_tx.send(u).is_err() {},
+                        Message::FetchResponse(units, _) => units
+                            .into_iter()
+                            .for_each(|u| if self.units_tx.send(u).is_err() {}),
+                        _ => {}
+                    }
                 }
+                _ = t.tick() => {
+                    // TODO it seems that the tests hang in this loop, i.e. self.messages_rx.next() is not being wake up
+                    // when sth was send to corresponding messages_tx and somehow this tick solves the issue. Fix the true cause
                 }
             }
         }
@@ -289,19 +300,26 @@ impl<E: Environment> Syncer<E> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::testing::environment::{self, BlockHash, Network};
 
-    #[ignore]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+    use super::*;
+    use crate::testing::environment::{self, dispatch_nodes, BlockHash, Network};
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn dummy() {
-        let net = Network::new(1);
+        let n_rounds = 40;
+        let net = Network::new(n_rounds);
         let (env, mut finalized_blocks) = environment::Environment::new(net);
         env.gen_chain(vec![(0.into(), vec![1.into()])]);
-        let conf = ConsensusConfig::new(0.into(), 1.into(), 0);
-        let h = tokio::spawn(Consensus::new(conf, env).run());
+        let n_nodes = 2;
+        let conf = ConsensusConfig::new(0.into(), n_nodes.into(), 0);
 
-        assert_eq!(finalized_blocks.recv().await.unwrap().hash(), BlockHash(1));
-        let _ = h.await;
+        let check = Box::new(move || {
+            let h = futures::executor::block_on(finalized_blocks.recv())
+                .unwrap()
+                .hash();
+            assert_eq!(h, BlockHash(1));
+        });
+
+        dispatch_nodes(n_nodes, conf, env, check).await;
     }
 }
