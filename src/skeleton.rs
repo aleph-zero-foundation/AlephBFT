@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     creator::Creator,
-    dag::Vertex,
+    extender::Extender,
     nodes::{NodeCount, NodeIndex, NodeMap},
     terminal::Terminal,
     traits::{Environment, HashT},
@@ -65,15 +65,17 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
         let (finalizer, batch_tx) =
             Finalizer::<E>::new(Box::new(move |h| e.lock().finalize_block(h)));
 
+        let my_ix = conf.ix;
+        let n_members = conf.n_members;
+        let epoch_id = conf.epoch_id;
+
         let (electors_tx, electors_rx) = mpsc::unbounded_channel();
-        let extender = Some(Extender::<E>::new(electors_rx, batch_tx));
+        let extender = Some(Extender::<E>::new(electors_rx, batch_tx, n_members));
 
         let (syncer, requests_tx, incoming_units_rx, created_units_tx) = Syncer::<E>::new(o, i);
 
         let (parents_tx, parents_rx) = mpsc::unbounded_channel();
-        let my_ix = conf.ix;
-        let n_members = conf.n_members;
-        let epoch_id = conf.epoch_id;
+
         let e = env.clone();
         let best_block = Box::new(move || e.lock().best_block());
         let creator = Some(Creator::<E>::new(
@@ -233,36 +235,6 @@ impl<H: HashT> Unit<H> {
     }
 }
 
-// a process responsible for extending the partial order
-struct Extender<E: Environment> {
-    electors: Receiver<Vertex<E::Hash>>,
-    finalizer_tx: Sender<Vec<E::Hash>>,
-}
-
-impl<E: Environment> Extender<E> {
-    fn new(electors: Receiver<Vertex<E::Hash>>, finalizer_tx: Sender<Vec<E::Hash>>) -> Self {
-        Extender {
-            electors,
-            finalizer_tx,
-        }
-    }
-    fn new_head(&mut self, _v: Vertex<E::Hash>) -> bool {
-        false
-    }
-    fn next_batch(&self) {}
-
-    async fn extend(&mut self) {
-        loop {
-            if let Some(v) = self.electors.recv().await {
-                let _ = (*self).finalizer_tx.send(vec![v.best_block()]); // just for tests; remove at the earliest convenience
-                while self.new_head(v.clone()) {
-                    self.next_batch();
-                }
-            }
-        }
-    }
-}
-
 struct Finalizer<E: Environment> {
     batch_rx: Receiver<Vec<E::Hash>>,
     finalizer: Box<dyn Fn(E::Hash) + Sync + Send + 'static>,
@@ -352,6 +324,7 @@ mod tests {
     use super::*;
     use crate::testing::environment::{self, Hash, Network};
 
+    #[ignore]
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
     async fn dummy() {
         let net = Network::new(1);

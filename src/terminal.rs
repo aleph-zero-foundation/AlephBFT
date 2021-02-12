@@ -1,7 +1,7 @@
 use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
 use crate::{
-    dag::Vertex,
+    extender::ExtenderUnit,
     nodes::{NodeCount, NodeIndex, NodeMap},
     skeleton::{Message, Receiver, Sender, Unit},
     traits::{Environment, HashT},
@@ -34,9 +34,15 @@ pub struct TerminalUnit<H: HashT> {
     status: UnitStatus,
 }
 
-impl<H: HashT> From<TerminalUnit<H>> for Vertex<H> {
-    fn from(u: TerminalUnit<H>) -> Vertex<H> {
-        Vertex::new(u.unit.creator, u.unit.hash, u.parents, u.unit.best_block)
+impl<H: HashT> From<TerminalUnit<H>> for ExtenderUnit<H> {
+    fn from(u: TerminalUnit<H>) -> ExtenderUnit<H> {
+        ExtenderUnit::new(
+            u.unit.creator,
+            u.unit.round,
+            u.unit.hash,
+            u.parents,
+            u.unit.best_block,
+        )
     }
 }
 
