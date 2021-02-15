@@ -56,11 +56,18 @@ impl<E: Environment> Creator<E> {
 
     fn create_unit(&mut self) {
         let round = self.current_round;
+        let parents = {
+            if round == 0 {
+                NodeMap::new_with_len(self.n_members)
+            } else {
+                self.candidates_by_round[round - 1].clone()
+            }
+        };
         let new_unit = Unit::new_from_parents(
             self.pid,
             round as u32,
             self.epoch_id,
-            self.candidates_by_round[round].clone(),
+            parents,
             (self.best_block)(),
         );
         let _ = self.new_units_tx.send(new_unit);

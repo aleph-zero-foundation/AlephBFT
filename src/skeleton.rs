@@ -147,15 +147,8 @@ impl<H: HashT> ControlHash<H> {
     //TODO need to actually compute the hash instead of return default
     fn new(parent_map: NodeMap<Option<H>>) -> Self {
         let hash = H::default();
-        let mut parents = NodeMap::new_with_len(NodeCount(parent_map.len() as u32));
-        for (i, maybe_hash) in parent_map.enumerate() {
-            if let Some(_h) = maybe_hash {
-                parents[i] = true;
-            // hash = H(hash || _h);
-            } else {
-                parents[i] = false;
-            }
-        }
+        let parents = parent_map.iter().map(|h| h.is_some()).collect();
+
         ControlHash { parents, hash }
     }
 
