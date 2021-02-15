@@ -280,3 +280,66 @@ impl<E: Environment> Extender<E> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        nodes::NodeCount,
+        testing::environment::{self, Hash},
+    };
+    use tokio::sync::mpsc;
+
+    fn coord_to_number(creator: u32, round: u32, n_members: u32) -> u32 {
+        round * n_members + creator
+    }
+
+    fn construct_unit(
+        creator: u32,
+        round: u32,
+        n_members: u32,
+        best_block: Hash,
+    ) -> ExtenderUnit<Hash> {
+        let mut parents = NodeMap::new_with_len(NodeCount(n_members));
+        if round > 0 {
+            for i in 0..n_members {
+                parents[NodeIndex(i)] = Some(Hash(coord_to_number(i, round - 1, n_members)));
+            }
+        }
+
+        ExtenderUnit::new(
+            NodeIndex(creator),
+            round,
+            Hash(coord_to_number(creator, round, n_members)),
+            parents,
+            best_block,
+        )
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+    async fn finalize_rounds_01() {
+        let n_members = 4;
+        let rounds = 6;
+        let (batch_tx, mut batch_rx) = mpsc::unbounded_channel();
+        let (electors_tx, electors_rx) = mpsc::unbounded_channel();
+        let mut extender =
+            Extender::<environment::Environment>::new(electors_rx, batch_tx, NodeCount(n_members));
+        let _extender_handle = tokio::spawn(async move { extender.extend().await });
+
+        for round in 0..rounds {
+            for creator in 0..n_members {
+                let block = Hash(coord_to_number(creator, round, n_members) + 1000);
+                let unit = construct_unit(creator, round, n_members, block);
+                let _ = electors_tx.send(unit);
+            }
+        }
+        let batch_round_0 = batch_rx.recv().await.unwrap();
+        assert_eq!(batch_round_0, vec![Hash(1000)]);
+
+        let batch_round_1 = batch_rx.recv().await.unwrap();
+        assert_eq!(
+            batch_round_1,
+            vec![Hash(1003), Hash(1002), Hash(1001), Hash(1004)]
+        );
+    }
+}
