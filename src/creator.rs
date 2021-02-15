@@ -7,8 +7,8 @@ use crate::{
 // a process responsible for creating new units
 
 pub(crate) struct Creator<E: Environment> {
-    parents_rx: Receiver<Unit<E::Hash>>,
-    new_units_tx: Sender<Unit<E::Hash>>,
+    parents_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
+    new_units_tx: Sender<Unit<E::BlockHash, E::Hash>>,
     epoch_id: u32,
     pid: NodeIndex,
     n_members: NodeCount,
@@ -16,17 +16,17 @@ pub(crate) struct Creator<E: Environment> {
     current_round: usize,
     candidates_by_round: Vec<NodeMap<Option<E::Hash>>>,
     n_candidates_by_round: Vec<NodeCount>,
-    best_block: Box<dyn Fn() -> E::Hash + Send + Sync + 'static>,
+    best_block: Box<dyn Fn() -> E::BlockHash + Send + Sync + 'static>,
 }
 
 impl<E: Environment> Creator<E> {
     pub(crate) fn new(
-        parents_rx: Receiver<Unit<E::Hash>>,
-        new_units_tx: Sender<Unit<E::Hash>>,
+        parents_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
+        new_units_tx: Sender<Unit<E::BlockHash, E::Hash>>,
         epoch_id: u32,
         pid: NodeIndex,
         n_members: NodeCount,
-        best_block: Box<dyn Fn() -> E::Hash + Send + Sync + 'static>,
+        best_block: Box<dyn Fn() -> E::BlockHash + Send + Sync + 'static>,
     ) -> Self {
         Creator {
             parents_rx,
