@@ -274,7 +274,6 @@ impl<E: Environment> Syncer<E> {
         )
     }
     async fn sync(&mut self) {
-        let mut t = tokio::time::interval(tokio::time::Duration::from_millis(10));
         loop {
             tokio::select! {
                 Some(m) = self.requests_rx.recv() => {
@@ -289,10 +288,6 @@ impl<E: Environment> Syncer<E> {
                         _ => {}
                     }
                 }
-                _ = t.tick() => {
-                    // TODO it seems that the tests hang in this loop, i.e. self.messages_rx.next() is not being wake up
-                    // when sth was send to corresponding messages_tx and somehow this tick solves the issue. Fix the true cause
-                }
             }
         }
     }
@@ -306,8 +301,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn dummy() {
-        let n_rounds = 40;
-        let net = Network::new(n_rounds);
+        let net = Network::new();
         let (env, mut finalized_blocks) = environment::Environment::new(net);
         env.gen_chain(vec![(0.into(), vec![1.into()])]);
         let n_nodes = 2;

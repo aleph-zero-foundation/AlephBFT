@@ -11,7 +11,7 @@ pub mod environment {
         sync::Arc,
         task::{Context, Poll},
     };
-    use tokio::sync::{broadcast::*, mpsc};
+    use tokio::sync::mpsc::*;
 
     type Error = ();
 
@@ -69,13 +69,13 @@ pub mod environment {
     pub(crate) struct Environment {
         chain: Arc<Mutex<Chain>>,
         network: Network,
-        finalized_notifier: mpsc::UnboundedSender<Block>,
+        finalized_notifier: UnboundedSender<Block>,
         calls_to_finalize: Vec<BlockHash>,
     }
 
     impl Environment {
-        pub(crate) fn new(network: Network) -> (Self, mpsc::UnboundedReceiver<Block>) {
-            let (finalized_tx, finalized_rx) = mpsc::unbounded_channel();
+        pub(crate) fn new(network: Network) -> (Self, UnboundedReceiver<Block>) {
+            let (finalized_tx, finalized_rx) = unbounded_channel();
 
             (
                 Environment {
@@ -279,26 +279,32 @@ pub mod environment {
 
     #[derive(Clone)]
     pub(crate) struct Network {
-        sender: Sender<Message<BlockHash, Hash>>,
+        senders: BcastSink,
     }
 
     impl Network {
-        pub(crate) fn new(capacity: usize) -> Self {
-            let (sender, _) = channel(capacity);
-
-            Network { sender }
+        pub(crate) fn new() -> Self {
+            Network {
+                senders: BcastSink(Arc::new(Mutex::new(vec![]))),
+            }
         }
         pub(crate) fn consensus_data(&self) -> (Out, In) {
-            let sink = Box::new(BSink(self.sender.clone()));
-            let stream = Box::new(BStream(self.sender.subscribe()));
+            let stream;
+            {
+                let (tx, rx) = unbounded_channel();
+                stream = BcastStream(rx);
+                self.senders.0.lock().push(tx);
+            }
+            let sink = Box::new(BcastSink(self.senders.0.clone()));
 
-            (sink, stream)
+            (sink, Box::new(stream))
         }
     }
 
-    struct BSink(Sender<Message<BlockHash, Hash>>);
+    #[derive(Clone)]
+    struct BcastSink(Arc<Mutex<Vec<UnboundedSender<Message<BlockHash, Hash>>>>>);
 
-    impl Sink<Message<BlockHash, Hash>> for BSink {
+    impl Sink<Message<BlockHash, Hash>> for BcastSink {
         type Error = Error;
         fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
             Poll::Ready(Ok(()))
@@ -316,24 +322,20 @@ pub mod environment {
             self: Pin<&mut Self>,
             m: Message<BlockHash, Hash>,
         ) -> Result<(), Self::Error> {
-            self.0.send(m).map(|_r| ()).map_err(|_e| {})
+            for tx in self.0.lock().iter() {
+                let _ = tx.send(m.clone());
+            }
+            Ok(())
         }
     }
 
-    struct BStream(Receiver<Message<BlockHash, Hash>>);
+    struct BcastStream(UnboundedReceiver<Message<BlockHash, Hash>>);
 
-    impl BStream {}
-
-    impl Stream for BStream {
+    impl Stream for BcastStream {
         type Item = Message<BlockHash, Hash>;
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-            let mut f = Box::pin(self.0.recv());
-            match futures::Future::poll(Pin::as_mut(&mut f), cx) {
-                // here we may add custom logic for dropping/changing messages
-                Poll::Ready(Ok(m)) => Poll::Ready(Some(m)),
-                Poll::Ready(Err(_)) => Poll::Ready(None),
-                Poll::Pending => Poll::Pending,
-            }
+            // here we may add custom logic for dropping/changing messages
+            self.0.poll_recv(cx)
         }
     }
 
@@ -370,10 +372,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
     async fn comm() {
-        let n_members = 2;
-        let rounds = 1;
-        let capacity = n_members * rounds;
-        let n = Network::new(capacity);
+        let n = Network::new();
         let (mut out0, mut in0) = n.consensus_data();
         let (mut out1, mut in1) = n.consensus_data();
 
