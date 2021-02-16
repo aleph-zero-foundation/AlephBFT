@@ -40,13 +40,36 @@ pub mod environment {
         }
     }
 
-    type Out = Box<dyn Sink<Message<Hash>, Error = Error> + Send + Unpin>;
-    type In = Box<dyn Stream<Item = Message<Hash>> + Send + Unpin>;
+    #[derive(
+        Hash,
+        Debug,
+        Default,
+        Display,
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        Ord,
+        PartialOrd,
+        Serialize,
+        Deserialize,
+    )]
+    pub struct BlockHash(pub u32);
+
+    impl From<u32> for BlockHash {
+        fn from(h: u32) -> Self {
+            BlockHash(h)
+        }
+    }
+
+    type Out = Box<dyn Sink<Message<BlockHash, Hash>, Error = Error> + Send + Unpin>;
+    type In = Box<dyn Stream<Item = Message<BlockHash, Hash>> + Send + Unpin>;
 
     pub(crate) struct Environment {
         chain: Arc<Mutex<Chain>>,
         network: Network,
-        finlized_notifier: mpsc::UnboundedSender<Block>,
+        finalized_notifier: mpsc::UnboundedSender<Block>,
+        calls_to_finalize: Vec<BlockHash>,
     }
 
     impl Environment {
@@ -57,29 +80,40 @@ pub mod environment {
                 Environment {
                     chain: Arc::new(Mutex::new(Chain::new())),
                     network,
-                    finlized_notifier: finalized_tx,
+                    finalized_notifier: finalized_tx,
+                    calls_to_finalize: Vec::new(),
                 },
                 finalized_rx,
             )
         }
 
-        pub(crate) fn gen_chain(&self, branches: Vec<(Hash, Vec<Hash>)>) {
+        pub(crate) fn get_log_finalize_calls(&self) -> Vec<BlockHash> {
+            self.calls_to_finalize.clone()
+        }
+
+        pub(crate) fn gen_chain(&self, branches: Vec<(BlockHash, Vec<BlockHash>)>) {
             for (h, branch) in branches {
                 self.chain.lock().import_blocks(h, branch);
             }
+        }
+
+        pub(crate) fn import_block(&self, block: BlockHash, parent: BlockHash) {
+            self.chain.lock().import_blocks(parent, vec![block]);
         }
     }
 
     impl crate::traits::Environment for Environment {
         type NodeId = Id;
         type Hash = Hash;
+        type BlockHash = BlockHash;
         type InstanceId = u32;
         type Crypto = ();
         type Error = Error;
         type Out = Out;
         type In = In;
 
-        fn finalize_block(&self, h: Self::Hash) {
+        fn finalize_block(&mut self, h: Self::BlockHash) {
+            self.calls_to_finalize.push(h);
             let mut chain = self.chain.lock();
             let last_finalized = chain.best_finalized();
             if !chain.is_descendant(&h, &last_finalized) {
@@ -90,11 +124,17 @@ pub mod environment {
             while new_finalized != last_finalized {
                 let block = chain.block(&new_finalized).unwrap();
                 new_finalized = block.parent.unwrap();
-                let _ = self.finlized_notifier.send(block);
+                let _ = self.finalized_notifier.send(block);
             }
         }
 
-        fn best_block(&self) -> Self::Hash {
+        fn check_extends_finalized(&self, h: Self::BlockHash) -> bool {
+            let chain = self.chain.lock();
+            let last_finalized = chain.best_finalized();
+            h != last_finalized && chain.is_descendant(&h, &last_finalized)
+        }
+
+        fn best_block(&self) -> Self::BlockHash {
             self.chain.lock().best_block()
         }
 
@@ -112,20 +152,20 @@ pub mod environment {
     #[derive(Copy, Clone)]
     pub(crate) struct Block {
         number: usize,
-        parent: Option<Hash>,
-        hash: Hash,
+        parent: Option<BlockHash>,
+        hash: BlockHash,
     }
 
     impl Block {
-        pub(crate) fn hash(&self) -> Hash {
+        pub(crate) fn hash(&self) -> BlockHash {
             self.hash
         }
     }
 
     struct Chain {
-        tree: BTreeMap<Hash, Block>,
-        leaves: Vec<Hash>,
-        best_finalized: Hash,
+        tree: BTreeMap<BlockHash, Block>,
+        leaves: Vec<BlockHash>,
+        best_finalized: BlockHash,
     }
 
     impl Chain {
@@ -133,7 +173,7 @@ pub mod environment {
             let genesis = Block {
                 number: 0,
                 parent: None,
-                hash: Hash::default(),
+                hash: BlockHash::default(),
             };
             let genesis_hash = genesis.hash;
             let mut tree = BTreeMap::new();
@@ -147,7 +187,7 @@ pub mod environment {
             }
         }
 
-        fn import_blocks(&mut self, base: Hash, branch: Vec<Hash>) {
+        fn import_blocks(&mut self, base: BlockHash, branch: Vec<BlockHash>) {
             if branch.is_empty() || !self.tree.contains_key(&base) {
                 return;
             }
@@ -187,7 +227,7 @@ pub mod environment {
             self.leaves.insert(pos, new_leaf_hash);
         }
 
-        fn is_descendant(&self, child: &Hash, parent: &Hash) -> bool {
+        fn is_descendant(&self, child: &BlockHash, parent: &BlockHash) -> bool {
             let mut child = match self.tree.get(child) {
                 Some(block) => block,
                 None => return false,
@@ -206,19 +246,19 @@ pub mod environment {
             child.hash == parent.hash
         }
 
-        fn block(&self, h: &Hash) -> Option<Block> {
+        fn block(&self, h: &BlockHash) -> Option<Block> {
             self.tree.get(h).copied()
         }
 
-        fn best_block(&self) -> Hash {
+        fn best_block(&self) -> BlockHash {
             *self.leaves.last().unwrap()
         }
 
-        fn best_finalized(&self) -> Hash {
+        fn best_finalized(&self) -> BlockHash {
             self.best_finalized
         }
 
-        fn finalize(&mut self, h: Hash) -> bool {
+        fn finalize(&mut self, h: BlockHash) -> bool {
             if !self.tree.contains_key(&h) {
                 return false;
             }
@@ -237,7 +277,7 @@ pub mod environment {
 
     #[derive(Clone)]
     pub(crate) struct Network {
-        sender: Sender<Message<Hash>>,
+        sender: Sender<Message<BlockHash, Hash>>,
     }
 
     impl Network {
@@ -254,9 +294,9 @@ pub mod environment {
         }
     }
 
-    struct BSink(Sender<Message<Hash>>);
+    struct BSink(Sender<Message<BlockHash, Hash>>);
 
-    impl Sink<Message<Hash>> for BSink {
+    impl Sink<Message<BlockHash, Hash>> for BSink {
         type Error = Error;
         fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
             Poll::Ready(Ok(()))
@@ -270,17 +310,20 @@ pub mod environment {
             Poll::Ready(Ok(()))
         }
 
-        fn start_send(self: Pin<&mut Self>, m: Message<Hash>) -> Result<(), Self::Error> {
+        fn start_send(
+            self: Pin<&mut Self>,
+            m: Message<BlockHash, Hash>,
+        ) -> Result<(), Self::Error> {
             self.0.send(m).map(|_r| ()).map_err(|_e| {})
         }
     }
 
-    struct BStream(Receiver<Message<Hash>>);
+    struct BStream(Receiver<Message<BlockHash, Hash>>);
 
     impl BStream {}
 
     impl Stream for BStream {
-        type Item = Message<Hash>;
+        type Item = Message<BlockHash, Hash>;
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
             let mut f = Box::pin(self.0.recv());
             match futures::Future::poll(Pin::as_mut(&mut f), cx) {

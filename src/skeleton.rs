@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 use crate::{
     creator::Creator,
     extender::Extender,
+    finalizer::Finalizer,
     nodes::{NodeCount, NodeIndex, NodeMap},
     terminal::Terminal,
     traits::{Environment, HashT},
@@ -16,12 +17,12 @@ pub enum Error {}
 pub type UnitCoord = (u32, NodeIndex);
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Message<H: HashT> {
-    Multicast(Unit<H>),
+pub enum Message<B: HashT, H: HashT> {
+    Multicast(Unit<B, H>),
     // request for a particular list of units (specified by (round, creator)) to a particular node
     FetchRequest(Vec<UnitCoord>, NodeIndex),
     // requested units by a given request id
-    FetchResponse(Vec<Unit<H>>, NodeIndex),
+    FetchResponse(Vec<Unit<B, H>>, NodeIndex),
     SyncMessage,
     SyncResponse,
     Alert,
@@ -62,8 +63,11 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
         let env = Arc::new(Mutex::new(env));
 
         let e = env.clone();
-        let (finalizer, batch_tx) =
-            Finalizer::<E>::new(Box::new(move |h| e.lock().finalize_block(h)));
+        let env_finalize = Box::new(move |h| e.lock().finalize_block(h));
+        let e = env.clone();
+        let env_extends_finalized = Box::new(move |h| e.lock().check_extends_finalized(h));
+
+        let (finalizer, batch_tx) = Finalizer::<E>::new(env_finalize, env_extends_finalized);
 
         let my_ix = conf.ix;
         let n_members = conf.n_members;
@@ -162,16 +166,16 @@ impl<H: HashT> ControlHash<H> {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct Unit<H: HashT> {
+pub struct Unit<B: HashT, H: HashT> {
     pub(crate) creator: NodeIndex,
     pub(crate) round: u32,
     pub(crate) epoch_id: u32, //we probably want a custom type for that
     pub(crate) hash: H,
     pub(crate) control_hash: ControlHash<H>,
-    pub(crate) best_block: H,
+    pub(crate) best_block: B,
 }
 
-impl<H: HashT> Unit<H> {
+impl<B: HashT, H: HashT> Unit<B, H> {
     pub(crate) fn hash(&self) -> H {
         self.hash
     }
@@ -197,7 +201,7 @@ impl<H: HashT> Unit<H> {
         round: u32,
         epoch_id: u32,
         parents: NodeMap<Option<H>>,
-        best_block: H,
+        best_block: B,
     ) -> Self {
         Unit {
             creator,
@@ -215,7 +219,7 @@ impl<H: HashT> Unit<H> {
         epoch_id: u32,
         hash: H,
         control_hash: ControlHash<H>,
-        best_block: H,
+        best_block: B,
     ) -> Self {
         Unit {
             creator,
@@ -228,44 +232,15 @@ impl<H: HashT> Unit<H> {
     }
 }
 
-struct Finalizer<E: Environment> {
-    batch_rx: Receiver<Vec<E::Hash>>,
-    finalizer: Box<dyn Fn(E::Hash) + Sync + Send + 'static>,
-}
-
-impl<E: Environment> Finalizer<E> {
-    fn new(
-        finalizer: Box<dyn Fn(E::Hash) + Send + Sync + 'static>,
-    ) -> (Self, Sender<Vec<E::Hash>>) {
-        let (batch_tx, batch_rx) = mpsc::unbounded_channel();
-        (
-            Finalizer {
-                batch_rx,
-                finalizer,
-            },
-            batch_tx,
-        )
-    }
-    async fn finalize(&mut self) {
-        loop {
-            if let Some(batch) = self.batch_rx.recv().await {
-                for h in batch {
-                    ((*self).finalizer)(h);
-                }
-            }
-        }
-    }
-}
-
 struct Syncer<E: Environment> {
     // outgoing messages
     messages_tx: E::Out,
     // incoming messages
     messages_rx: E::In,
     // channel for sending units to the terminal
-    units_tx: Sender<Unit<E::Hash>>,
+    units_tx: Sender<Unit<E::BlockHash, E::Hash>>,
     // channel for receiving messages to the outside world
-    requests_rx: Receiver<Message<E::Hash>>,
+    requests_rx: Receiver<Message<E::BlockHash, E::Hash>>,
 }
 
 impl<E: Environment> Syncer<E> {
@@ -274,9 +249,9 @@ impl<E: Environment> Syncer<E> {
         messages_rx: E::In,
     ) -> (
         Self,
-        Sender<Message<E::Hash>>,
-        Receiver<Unit<E::Hash>>,
-        Sender<Unit<E::Hash>>,
+        Sender<Message<E::BlockHash, E::Hash>>,
+        Receiver<Unit<E::BlockHash, E::Hash>>,
+        Sender<Unit<E::BlockHash, E::Hash>>,
     ) {
         let (units_tx, units_rx) = mpsc::unbounded_channel();
         let (requests_tx, requests_rx) = mpsc::unbounded_channel();
@@ -315,7 +290,7 @@ impl<E: Environment> Syncer<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::environment::{self, Hash, Network};
+    use crate::testing::environment::{self, BlockHash, Network};
 
     #[ignore]
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
@@ -326,7 +301,7 @@ mod tests {
         let conf = ConsensusConfig::new(0.into(), 1.into(), 0);
         let h = tokio::spawn(Consensus::new(conf, env).run());
 
-        assert_eq!(finalized_blocks.recv().await.unwrap().hash(), Hash(1));
+        assert_eq!(finalized_blocks.recv().await.unwrap().hash(), BlockHash(1));
         let _ = h.await;
     }
 }

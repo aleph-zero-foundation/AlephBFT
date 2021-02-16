@@ -26,16 +26,16 @@ impl Default for UnitStatus {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct TerminalUnit<H: HashT> {
-    unit: Unit<H>,
+pub struct TerminalUnit<B: HashT, H: HashT> {
+    unit: Unit<B, H>,
     parents: NodeMap<Option<H>>,
     n_miss_par_store: NodeCount,
     n_miss_par_dag: NodeCount,
     status: UnitStatus,
 }
 
-impl<H: HashT> From<TerminalUnit<H>> for ExtenderUnit<H> {
-    fn from(u: TerminalUnit<H>) -> ExtenderUnit<H> {
+impl<B: HashT, H: HashT> From<TerminalUnit<B, H>> for ExtenderUnit<B, H> {
+    fn from(u: TerminalUnit<B, H>) -> ExtenderUnit<B, H> {
         ExtenderUnit::new(
             u.unit.creator,
             u.unit.round,
@@ -46,15 +46,15 @@ impl<H: HashT> From<TerminalUnit<H>> for ExtenderUnit<H> {
     }
 }
 
-impl<H: HashT> From<TerminalUnit<H>> for Unit<H> {
-    fn from(u: TerminalUnit<H>) -> Unit<H> {
+impl<B: HashT, H: HashT> From<TerminalUnit<B, H>> for Unit<B, H> {
+    fn from(u: TerminalUnit<B, H>) -> Unit<B, H> {
         u.unit
     }
 }
 
-impl<H: HashT> TerminalUnit<H> {
+impl<B: HashT, H: HashT> TerminalUnit<B, H> {
     // creates a unit from a Control Hash Unit, that has no parents reconstructed yet
-    pub(crate) fn blank_from_unit(unit: &Unit<H>) -> Self {
+    pub(crate) fn blank_from_unit(unit: &Unit<B, H>) -> Self {
         let n_members = unit.control_hash.n_members();
         let n_parents = unit.control_hash.n_parents();
         TerminalUnit {
@@ -109,16 +109,16 @@ impl<H: HashT> RequestNote<H> {
 pub(crate) struct Terminal<E: Environment + 'static> {
     _ix: NodeIndex,
     // common channel for units from outside world and the ones we create
-    new_units_rx: Receiver<Unit<E::Hash>>,
-    requests_tx: Sender<Message<E::Hash>>,
+    new_units_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
+    requests_tx: Sender<Message<E::BlockHash, E::Hash>>,
     // Queue that is necessary to deal with cascading updates to the Dag/Store
     event_queue: VecDeque<TerminalEvent<E::Hash>>,
     // This queue contains "notes" that remind us to check on a particular unit, whether it already
     // has all the parents. If not then repeat a request.
     note_queue: VecDeque<RequestNote<E::Hash>>,
-    post_insert: Vec<Box<dyn Fn(TerminalUnit<E::Hash>) + Send + Sync + 'static>>,
+    post_insert: Vec<Box<dyn Fn(TerminalUnit<E::BlockHash, E::Hash>) + Send + Sync + 'static>>,
     // Here we store all the units -- the one in Dag and the ones "hanging".
-    unit_store: HashMap<E::Hash, TerminalUnit<E::Hash>>,
+    unit_store: HashMap<E::Hash, TerminalUnit<E::BlockHash, E::Hash>>,
 
     // TODO: custom type for round number?
     // TODO: get rid of HashMaps below and just use Vec<Vec<E::Hash>> for efficiency
@@ -139,8 +139,8 @@ pub(crate) struct Terminal<E: Environment + 'static> {
 impl<E: Environment + 'static> Terminal<E> {
     pub(crate) fn new(
         _ix: NodeIndex,
-        new_units_rx: Receiver<Unit<E::Hash>>,
-        requests_tx: Sender<Message<E::Hash>>,
+        new_units_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
+        requests_tx: Sender<Message<E::BlockHash, E::Hash>>,
     ) -> Self {
         Terminal {
             _ix,
@@ -205,7 +205,7 @@ impl<E: Environment + 'static> Terminal<E> {
         wait_list.push(*u_hash);
     }
 
-    fn update_on_store_add(&mut self, u: Unit<E::Hash>) {
+    fn update_on_store_add(&mut self, u: Unit<E::BlockHash, E::Hash>) {
         let u_hash = u.hash;
         let (u_round, pid) = (u.round, u.creator);
         //TODO: should check for forks at this very place and possibly trigger Alarm
@@ -244,9 +244,9 @@ impl<E: Environment + 'static> Terminal<E> {
         self.post_insert.iter().for_each(|f| f(u.clone()));
     }
 
-    fn add_to_store(&mut self, u: Unit<E::Hash>) {
+    fn add_to_store(&mut self, u: Unit<E::BlockHash, E::Hash>) {
         if let Entry::Vacant(entry) = self.unit_store.entry(u.hash()) {
-            entry.insert(TerminalUnit::<E::Hash>::blank_from_unit(&u));
+            entry.insert(TerminalUnit::<E::BlockHash, E::Hash>::blank_from_unit(&u));
             // below we push to the front of the queue because we want these requests (if applicable) to be
             // performed right away. This is perhaps not super clean, but the invariant of events in queue
             // being sorted by time is still (pretty much) preserved.
@@ -331,7 +331,7 @@ impl<E: Environment + 'static> Terminal<E> {
 
     pub(crate) fn register_post_insert_hook(
         &mut self,
-        hook: Box<dyn Fn(TerminalUnit<E::Hash>) + Send + Sync + 'static>,
+        hook: Box<dyn Fn(TerminalUnit<E::BlockHash, E::Hash>) + Send + Sync + 'static>,
     ) {
         self.post_insert.push(hook);
     }

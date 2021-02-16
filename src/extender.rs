@@ -7,22 +7,22 @@ use crate::{
 };
 
 #[derive(Clone, Default)]
-pub(crate) struct ExtenderUnit<H: HashT> {
+pub(crate) struct ExtenderUnit<B: HashT, H: HashT> {
     creator: NodeIndex,
     round: u32,
     parents: NodeMap<Option<H>>,
     hash: H,
-    best_block: H,
+    best_block: B,
     vote: bool,
 }
 
-impl<H: HashT> ExtenderUnit<H> {
+impl<B: HashT, H: HashT> ExtenderUnit<B, H> {
     pub(crate) fn new(
         creator: NodeIndex,
         round: u32,
         hash: H,
         parents: NodeMap<Option<H>>,
-        best_block: H,
+        best_block: B,
     ) -> Self {
         ExtenderUnit {
             creator,
@@ -58,10 +58,10 @@ impl CacheState {
 
 // a process responsible for extending the partial order
 pub(crate) struct Extender<E: Environment> {
-    electors: Receiver<ExtenderUnit<E::Hash>>,
-    finalizer_tx: Sender<Vec<E::Hash>>,
+    electors: Receiver<ExtenderUnit<E::BlockHash, E::Hash>>,
+    finalizer_tx: Sender<Vec<E::BlockHash>>,
     state: CacheState,
-    units: HashMap<E::Hash, ExtenderUnit<E::Hash>>,
+    units: HashMap<E::Hash, ExtenderUnit<E::BlockHash, E::Hash>>,
     units_by_round: Vec<Vec<E::Hash>>,
     n_members: NodeCount,
     candidates: Vec<E::Hash>,
@@ -69,8 +69,8 @@ pub(crate) struct Extender<E: Environment> {
 
 impl<E: Environment> Extender<E> {
     pub(crate) fn new(
-        electors: Receiver<ExtenderUnit<E::Hash>>,
-        finalizer_tx: Sender<Vec<E::Hash>>,
+        electors: Receiver<ExtenderUnit<E::BlockHash, E::Hash>>,
+        finalizer_tx: Sender<Vec<E::BlockHash>>,
         n_members: NodeCount,
     ) -> Self {
         Extender {
@@ -84,7 +84,7 @@ impl<E: Environment> Extender<E> {
         }
     }
 
-    fn add_unit(&mut self, u: ExtenderUnit<E::Hash>) {
+    fn add_unit(&mut self, u: ExtenderUnit<E::BlockHash, E::Hash>) {
         let round = u.round as usize;
         if round > self.state.highest_round {
             self.state.highest_round = round;
@@ -120,8 +120,8 @@ impl<E: Environment> Extender<E> {
 
     /// Prepares a batch and removes all unnecessary units from the data structures
     fn finalize_round(&mut self, round: usize, head: &E::Hash) {
-        let mut batch: Vec<E::Hash> = Vec::new();
-        let mut queue: VecDeque<ExtenderUnit<E::Hash>> = VecDeque::new();
+        let mut batch: Vec<E::BlockHash> = Vec::new();
+        let mut queue: VecDeque<ExtenderUnit<E::BlockHash, E::Hash>> = VecDeque::new();
         queue.push_back(self.units.remove(head).unwrap());
         while let Some(u) = queue.pop_front() {
             batch.push(u.best_block);
@@ -286,7 +286,7 @@ mod tests {
     use super::*;
     use crate::{
         nodes::NodeCount,
-        testing::environment::{self, Hash},
+        testing::environment::{self, BlockHash, Hash},
     };
     use tokio::sync::mpsc;
 
@@ -298,8 +298,8 @@ mod tests {
         creator: u32,
         round: u32,
         n_members: u32,
-        best_block: Hash,
-    ) -> ExtenderUnit<Hash> {
+        best_block: BlockHash,
+    ) -> ExtenderUnit<BlockHash, Hash> {
         let mut parents = NodeMap::new_with_len(NodeCount(n_members));
         if round > 0 {
             for i in 0..n_members {
@@ -328,18 +328,23 @@ mod tests {
 
         for round in 0..rounds {
             for creator in 0..n_members {
-                let block = Hash(coord_to_number(creator, round, n_members) + 1000);
+                let block = BlockHash(coord_to_number(creator, round, n_members) + 1000);
                 let unit = construct_unit(creator, round, n_members, block);
                 let _ = electors_tx.send(unit);
             }
         }
         let batch_round_0 = batch_rx.recv().await.unwrap();
-        assert_eq!(batch_round_0, vec![Hash(1000)]);
+        assert_eq!(batch_round_0, vec![BlockHash(1000)]);
 
         let batch_round_1 = batch_rx.recv().await.unwrap();
         assert_eq!(
             batch_round_1,
-            vec![Hash(1003), Hash(1002), Hash(1001), Hash(1004)]
+            vec![
+                BlockHash(1003),
+                BlockHash(1002),
+                BlockHash(1001),
+                BlockHash(1004)
+            ]
         );
     }
 }
