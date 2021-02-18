@@ -92,7 +92,15 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
             best_block,
         ));
 
-        let mut terminal = Terminal::<E>::new(conf.ix, incoming_units_rx, requests_tx.clone());
+        let e = env.clone();
+        let check_available = Box::new(move |h| e.lock().check_available(h));
+
+        let mut terminal = Terminal::<E>::new(
+            conf.ix,
+            incoming_units_rx,
+            requests_tx.clone(),
+            check_available,
+        );
 
         // send a multicast request
         terminal.register_post_insert_hook(Box::new(move |u| {

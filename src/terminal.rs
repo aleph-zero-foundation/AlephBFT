@@ -1,4 +1,4 @@
-use std::collections::{hash_map::Entry, HashMap, VecDeque};
+use std::collections::{hash_map::Entry, BinaryHeap, HashMap, VecDeque};
 
 use crate::{
     extender::ExtenderUnit,
@@ -6,16 +6,19 @@ use crate::{
     skeleton::{Message, Receiver, Sender, Unit},
     traits::{Environment, HashT},
 };
+use std::cmp::Ordering;
 use tokio::time;
 
-pub const REPEAT_INTERVAL: time::Duration = time::Duration::from_secs(4);
-pub const TICK_INTERVAL: time::Duration = time::Duration::from_millis(100);
+pub const FETCH_INTERVAL: time::Duration = time::Duration::from_secs(4);
+pub const BLOCK_AVAILABLE_INTERVAL: time::Duration = time::Duration::from_millis(50);
+pub const TICK_INTERVAL: time::Duration = time::Duration::from_millis(10);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum UnitStatus {
     ReconstructingParents,
     WrongControlHash,
     WaitingParentsInDag,
+    WaitingBlockAvailable,
     InDag,
 }
 
@@ -84,20 +87,42 @@ impl<B: HashT, H: HashT> TerminalUnit<B, H> {
 /// this has been made slightly more general (and thus complex) to add Alerts easily in the future.
 pub enum TerminalEvent<H: HashT> {
     ParentsReconstructed(H),
-    ReadyForDag(H),
+    ReadyForAvailabilityCheck(H),
 }
 
-struct RequestNote<H: HashT> {
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Task {
+    CheckBlockAvailable,
+    RequestParents,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+struct ScheduledTask<H: HashT> {
     unit: H,
     scheduled_time: time::Instant,
+    task: Task,
 }
 
-impl<H: HashT> RequestNote<H> {
-    fn new(unit: H, scheduled_time: time::Instant) -> Self {
-        RequestNote {
+impl<H: HashT> ScheduledTask<H> {
+    fn new(unit: H, scheduled_time: time::Instant, task: Task) -> Self {
+        ScheduledTask {
             unit,
             scheduled_time,
+            task,
         }
+    }
+}
+
+impl<H: HashT> Ord for ScheduledTask<H> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // we want earlier times to come first when used in max-heap, hence the below:
+        other.scheduled_time.cmp(&self.scheduled_time)
+    }
+}
+
+impl<H: HashT> PartialOrd for ScheduledTask<H> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -111,11 +136,12 @@ pub(crate) struct Terminal<E: Environment + 'static> {
     // common channel for units from outside world and the ones we create
     new_units_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
     requests_tx: Sender<Message<E::BlockHash, E::Hash>>,
+    check_available: Box<dyn Fn(E::BlockHash) -> bool + Sync + Send + 'static>,
     // Queue that is necessary to deal with cascading updates to the Dag/Store
     event_queue: VecDeque<TerminalEvent<E::Hash>>,
     // This queue contains "notes" that remind us to check on a particular unit, whether it already
     // has all the parents. If not then repeat a request.
-    note_queue: VecDeque<RequestNote<E::Hash>>,
+    scheduled_task_queue: BinaryHeap<ScheduledTask<E::Hash>>,
     post_insert: Vec<Box<dyn Fn(TerminalUnit<E::BlockHash, E::Hash>) + Send + Sync + 'static>>,
     // Here we store all the units -- the one in Dag and the ones "hanging".
     unit_store: HashMap<E::Hash, TerminalUnit<E::BlockHash, E::Hash>>,
@@ -132,7 +158,7 @@ pub(crate) struct Terminal<E: Environment + 'static> {
     // The same as above, but this time we await for a unit (with a particular hash) to be added to the Dag.
     // Once this happens, we notify all the children.
     children_hash: HashMap<E::Hash, Vec<E::Hash>>,
-    /// This is a ticker that is useful in forcing to fire "poll" at least every 100ms.
+    /// This is a ticker that is useful in forcing to fire "poll" at least every TICK_INTERVAL.
     request_ticker: time::Interval,
 }
 
@@ -141,13 +167,15 @@ impl<E: Environment + 'static> Terminal<E> {
         _ix: NodeIndex,
         new_units_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
         requests_tx: Sender<Message<E::BlockHash, E::Hash>>,
+        check_available: Box<dyn Fn(E::BlockHash) -> bool + Sync + Send + 'static>,
     ) -> Self {
         Terminal {
             _ix,
             new_units_rx,
             requests_tx,
+            check_available,
             event_queue: VecDeque::new(),
-            note_queue: VecDeque::new(),
+            scheduled_task_queue: BinaryHeap::new(),
             post_insert: Vec::new(),
             unit_store: HashMap::new(),
             unit_by_coord: HashMap::new(),
@@ -247,20 +275,30 @@ impl<E: Environment + 'static> Terminal<E> {
     fn add_to_store(&mut self, u: Unit<E::BlockHash, E::Hash>) {
         if let Entry::Vacant(entry) = self.unit_store.entry(u.hash()) {
             entry.insert(TerminalUnit::<E::BlockHash, E::Hash>::blank_from_unit(&u));
-            // below we push to the front of the queue because we want these requests (if applicable) to be
-            // performed right away. This is perhaps not super clean, but the invariant of events in queue
-            // being sorted by time is still (pretty much) preserved.
             let curr_time = time::Instant::now();
-            self.note_queue
-                .push_front(RequestNote::new(u.hash(), curr_time));
+            self.scheduled_task_queue.push(ScheduledTask::new(
+                u.hash(),
+                curr_time,
+                Task::RequestParents,
+            ));
             self.update_on_store_add(u);
         }
     }
 
-    fn add_to_dag(&mut self, u_hash: &E::Hash) {
+    fn check_availability(&mut self, u_hash: &E::Hash) {
         let u = self.unit_store.get_mut(u_hash).unwrap();
-        u.status = UnitStatus::InDag;
-        self.update_on_dag_add(u_hash);
+        if (self.check_available)(u.unit.best_block) {
+            u.status = UnitStatus::InDag;
+            self.update_on_dag_add(u_hash);
+        } else {
+            u.status = UnitStatus::WaitingBlockAvailable;
+            let curr_time = time::Instant::now();
+            self.scheduled_task_queue.push(ScheduledTask::new(
+                *u_hash,
+                curr_time + BLOCK_AVAILABLE_INTERVAL,
+                Task::CheckBlockAvailable,
+            ));
+        }
     }
 
     /// This drains the event queue. Note that new events might be added to the queue as the result of
@@ -274,56 +312,61 @@ impl<E: Environment + 'static> Terminal<E> {
                     let u = self.unit_store.get_mut(&u_hash).unwrap();
                     if u.verify_control_hash() {
                         self.event_queue
-                            .push_back(TerminalEvent::ReadyForDag(u_hash));
+                            .push_back(TerminalEvent::ReadyForAvailabilityCheck(u_hash));
                     } else {
                         u.status = UnitStatus::WrongControlHash;
-                        // might trigger some immediate action here, but it is not necessary as each "hanging" unit is periodically
-                        // checked and appropriate fetch requests are made.
+                        // TODO: should trigger some immediate action here
                     }
                 }
-                TerminalEvent::ReadyForDag(u_hash) => self.add_to_dag(&u_hash),
+                TerminalEvent::ReadyForAvailabilityCheck(u_hash) => {
+                    self.check_availability(&u_hash);
+                }
             }
         }
     }
 
-    fn process_hanging_units(&mut self) {
+    fn process_scheduled_tasks(&mut self) {
         let curr_time = time::Instant::now();
-        while !self.note_queue.is_empty() {
-            if self.note_queue.front().unwrap().scheduled_time > curr_time {
+        while !self.scheduled_task_queue.is_empty() {
+            if self.scheduled_task_queue.peek().unwrap().scheduled_time > curr_time {
                 // if there is a more rustic version of this loop control -- let me know :)
                 break;
             }
-            let note = self.note_queue.pop_front().unwrap();
+            let note = self.scheduled_task_queue.pop().unwrap();
             let u = self.unit_store.get(&note.unit).unwrap();
-            if u.round() == 0 {
-                continue;
-            }
-            match u.status {
-                UnitStatus::ReconstructingParents => {
-                    // This means there are some unavailable parents for this units...
-                    for (i, b) in u.unit.control_hash.parents.enumerate() {
-                        if *b && u.parents[i].is_none() {
-                            let _ = self
-                                .requests_tx
-                                .send(Message::FetchRequest(vec![(u.round() - 1, i)], i));
+            match note.task {
+                Task::RequestParents => {
+                    if u.status == UnitStatus::ReconstructingParents {
+                        // This means there are some unavailable parents for this unit...
+                        for (i, b) in u.unit.control_hash.parents.enumerate() {
+                            if *b && u.parents[i].is_none() {
+                                let _ = self
+                                    .requests_tx
+                                    .send(Message::FetchRequest(vec![(u.round() - 1, i)], i));
+                            }
+                        }
+                        // We might not be done, so we schedule the same task after FETCH_INTERVAL seconds.
+                        self.scheduled_task_queue.push(ScheduledTask::new(
+                            note.unit,
+                            curr_time + FETCH_INTERVAL,
+                            Task::RequestParents,
+                        ));
+                    }
+                }
+                Task::CheckBlockAvailable => {
+                    if u.status == UnitStatus::WaitingBlockAvailable {
+                        if (self.check_available)(u.unit.best_block) {
+                            self.event_queue
+                                .push_back(TerminalEvent::ReadyForAvailabilityCheck(note.unit));
+                        } else {
+                            // The block is not there yet, we check again after BLOCK_AVAILABLE_INTERVAL seconds.
+                            self.scheduled_task_queue.push(ScheduledTask::new(
+                                note.unit,
+                                curr_time + BLOCK_AVAILABLE_INTERVAL,
+                                Task::CheckBlockAvailable,
+                            ));
                         }
                     }
-                    // The line below adds a note to the queue that we should wake up and look at this unit again
-                    // after REPEAT_INTERVAL=4seconds.
-                    self.note_queue
-                        .push_back(RequestNote::new(note.unit, curr_time + REPEAT_INTERVAL));
-                }
-                UnitStatus::WaitingParentsInDag => {
-                    // We are done here, all parents are in the store
-                    continue;
-                }
-                UnitStatus::InDag => {
-                    // We are done here, the unit is in Dag
-                    continue;
-                }
-                UnitStatus::WrongControlHash => {
-                    // TODO: need to introduce a new type of requests for this, and then write logic
-                    // Should also add a note to the queue (as the status means the issue not resolved yet)
                 }
             }
         }
@@ -341,11 +384,12 @@ impl<E: Environment + 'static> Terminal<E> {
             tokio::select! {
                 Some(u) = self.new_units_rx.recv() => {
                     self.add_to_store(u);
-                    self.handle_events();
+
                 }
-                _ = self.request_ticker.tick() =>
-                    self.process_hanging_units(),
+                _ = self.request_ticker.tick() =>{},
             };
+            self.process_scheduled_tasks();
+            self.handle_events();
         }
     }
 }
