@@ -69,13 +69,9 @@ pub trait Environment {
     fn finalize_block(&mut self, _h: Self::BlockHash);
     fn check_extends_finalized(&self, _h: Self::BlockHash) -> bool;
     fn best_block(&self) -> Self::BlockHash;
+    fn check_available(&self, h: Self::BlockHash) -> bool;
     // sth needed in the future for randomness
     fn crypto(&self) -> Self::Crypto;
     fn consensus_data(&self) -> (Self::Out, Self::In);
     fn hash(data: &[u8]) -> Self::Hash;
-    // fn verify_signature(
-    //     hash: &Self::Hash,
-    //     public_key: &Self::ValidatorId,
-    //     signature: &<Self::ValidatorSecret as ValidatorSecret>::Signature,
-    // ) -> bool;
 }

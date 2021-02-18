@@ -129,6 +129,11 @@ pub mod environment {
             }
         }
 
+        fn check_available(&self, h: Self::BlockHash) -> bool {
+            let chain = self.chain.lock();
+            chain.block(&h).is_some()
+        }
+
         fn check_extends_finalized(&self, h: Self::BlockHash) -> bool {
             let chain = self.chain.lock();
             let last_finalized = chain.best_finalized();
