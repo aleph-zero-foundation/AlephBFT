@@ -303,25 +303,27 @@ impl<E: Environment> Syncer<E> {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
-    use crate::testing::environment::{self, dispatch_nodes, BlockHash, Network};
+    use crate::testing::environment::{self, BlockHash, Network};
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn dummy() {
         let net = Network::new();
-        let (env, mut finalized_blocks) = environment::Environment::new(net);
-        env.gen_chain(vec![(0.into(), vec![1.into()])]);
         let n_nodes = 2;
-        let conf = ConsensusConfig::new(0.into(), n_nodes.into(), 0);
+        let mut finalized_blocks_rxs = Vec::new();
+        let mut handles = Vec::new();
 
-        let check = Box::new(move || {
-            let h = futures::executor::block_on(finalized_blocks.recv())
-                .unwrap()
-                .hash();
+        for node_ix in 0..n_nodes {
+            let (mut env, rx) = environment::Environment::new(net.clone());
+            finalized_blocks_rxs.push(rx);
+            env.gen_chain(vec![(0.into(), vec![1.into()])]);
+            let conf = ConsensusConfig::new(node_ix.into(), n_nodes.into(), 0);
+            handles.push(tokio::spawn(Consensus::new(conf.clone(), env).run()));
+        }
+
+        for mut rx in finalized_blocks_rxs.drain(..) {
+            let h = futures::executor::block_on(async { rx.recv().await.unwrap().hash() });
             assert_eq!(h, BlockHash(1));
-        });
-
-        dispatch_nodes(n_nodes, conf, env, check).await;
+        }
     }
 }
