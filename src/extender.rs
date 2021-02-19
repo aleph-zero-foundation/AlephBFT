@@ -125,11 +125,9 @@ impl<E: Environment> Extender<E> {
         queue.push_back(self.units.remove(head).unwrap());
         while let Some(u) = queue.pop_front() {
             batch.push(u.best_block);
-            for maybe_u_hash in u.parents {
-                if let Some(u_hash) = maybe_u_hash {
-                    if let Some(v) = self.units.remove(&u_hash) {
-                        queue.push_back(v);
-                    }
+            for u_hash in u.parents.into_iter().flatten() {
+                if let Some(v) = self.units.remove(&u_hash) {
+                    queue.push_back(v);
                 }
             }
         }
@@ -167,18 +165,16 @@ impl<E: Environment> Extender<E> {
         let mut n_votes_true = NodeCount(0);
         let mut n_votes_total = NodeCount(0);
 
-        for maybe_p_hash in voter.parents.iter() {
-            if let Some(p_hash) = maybe_p_hash {
-                let p = self.units.get(p_hash).unwrap();
-                if p.vote {
-                    n_votes_true += NodeCount(1);
-                }
-                n_votes_total += NodeCount(1);
+        for p_hash in voter.parents.iter().flatten() {
+            let p = self.units.get(p_hash).unwrap();
+            if p.vote {
+                n_votes_true += NodeCount(1);
             }
+            n_votes_total += NodeCount(1);
         }
         let cv = self.common_vote(relative_round);
         let mut decision = None;
-        let threshold = (self.n_members / 3) * 2;
+        let threshold = (self.n_members * 2) / 3;
 
         if relative_round >= 3
             && ((cv && n_votes_true > threshold)

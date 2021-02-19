@@ -6,7 +6,7 @@ pub mod environment {
     use parking_lot::Mutex;
     use serde::{Deserialize, Serialize};
     use std::{
-        collections::BTreeMap,
+        collections::HashMap,
         pin::Pin,
         sync::Arc,
         task::{Context, Poll},
@@ -65,21 +65,22 @@ pub mod environment {
     type Out = Box<dyn Sink<Message<BlockHash, Hash>, Error = Error> + Send + Unpin>;
     type In = Box<dyn Stream<Item = Message<BlockHash, Hash>> + Send + Unpin>;
 
-    #[derive(Clone)]
     pub(crate) struct Environment {
-        chain: Arc<Mutex<Chain>>,
+        chain: Chain,
         network: Network,
         finalized_notifier: UnboundedSender<Block>,
         calls_to_finalize: Vec<BlockHash>,
     }
 
     impl Environment {
-        pub(crate) fn new(network: Network) -> (Self, UnboundedReceiver<Block>) {
+        pub(crate) fn new_with_chain(
+            network: Network,
+            chain: Chain,
+        ) -> (Self, UnboundedReceiver<Block>) {
             let (finalized_tx, finalized_rx) = unbounded_channel();
-
             (
                 Environment {
-                    chain: Arc::new(Mutex::new(Chain::new())),
+                    chain,
                     network,
                     finalized_notifier: finalized_tx,
                     calls_to_finalize: Vec::new(),
@@ -88,18 +89,23 @@ pub mod environment {
             )
         }
 
+        pub(crate) fn new(network: Network) -> (Self, UnboundedReceiver<Block>) {
+            let chain = Chain::new();
+            Self::new_with_chain(network, chain)
+        }
+
         pub(crate) fn get_log_finalize_calls(&self) -> Vec<BlockHash> {
             self.calls_to_finalize.clone()
         }
 
-        pub(crate) fn gen_chain(&self, branches: Vec<(BlockHash, Vec<BlockHash>)>) {
+        pub(crate) fn gen_chain(&mut self, branches: Vec<(BlockHash, Vec<BlockHash>)>) {
             for (h, branch) in branches {
-                self.chain.lock().import_blocks(h, branch);
+                self.chain.import_branch(h, branch);
             }
         }
 
-        pub(crate) fn import_block(&self, block: BlockHash, parent: BlockHash) {
-            self.chain.lock().import_blocks(parent, vec![block]);
+        pub(crate) fn import_block(&mut self, block: BlockHash, parent: BlockHash) {
+            self.chain.import_block(block, parent);
         }
     }
 
@@ -115,33 +121,23 @@ pub mod environment {
 
         fn finalize_block(&mut self, h: Self::BlockHash) {
             self.calls_to_finalize.push(h);
-            let mut chain = self.chain.lock();
-            let last_finalized = chain.best_finalized();
-            if !chain.is_descendant(&h, &last_finalized) {
-                return;
-            }
-            chain.finalize(h);
-            let mut new_finalized = h;
-            while new_finalized != last_finalized {
-                let block = chain.block(&new_finalized).unwrap();
-                new_finalized = block.parent.unwrap();
+            let finalized_blocks = self.chain.finalize(h);
+            for block in finalized_blocks {
                 let _ = self.finalized_notifier.send(block);
             }
         }
 
         fn check_available(&self, h: Self::BlockHash) -> bool {
-            let chain = self.chain.lock();
-            chain.block(&h).is_some()
+            self.chain.block(&h).is_some()
         }
 
         fn check_extends_finalized(&self, h: Self::BlockHash) -> bool {
-            let chain = self.chain.lock();
-            let last_finalized = chain.best_finalized();
-            h != last_finalized && chain.is_descendant(&h, &last_finalized)
+            let last_finalized = self.chain.best_finalized();
+            h != last_finalized && self.chain.is_descendant(&h, &last_finalized)
         }
 
         fn best_block(&self) -> Self::BlockHash {
-            self.chain.lock().best_block()
+            self.chain.best_block()
         }
 
         fn crypto(&self) -> Self::Crypto {}
@@ -155,7 +151,7 @@ pub mod environment {
         }
     }
 
-    #[derive(Copy, Clone)]
+    #[derive(Copy, Clone, Debug)]
     pub(crate) struct Block {
         number: usize,
         parent: Option<BlockHash>,
@@ -169,88 +165,86 @@ pub mod environment {
     }
 
     #[derive(Clone)]
-    struct Chain {
-        tree: BTreeMap<BlockHash, Block>,
-        leaves: Vec<BlockHash>,
+    pub(crate) struct Chain {
+        tree: HashMap<BlockHash, Block>,
         best_finalized: BlockHash,
+        longest_chain: BlockHash,
     }
 
     impl Chain {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             let genesis = Block {
                 number: 0,
                 parent: None,
                 hash: BlockHash::default(),
             };
             let genesis_hash = genesis.hash;
-            let mut tree = BTreeMap::new();
+            let mut tree = HashMap::new();
             tree.insert(genesis.hash, genesis);
-            let leaves = vec![genesis_hash];
 
             Chain {
                 tree,
-                leaves,
                 best_finalized: genesis_hash,
+                longest_chain: genesis_hash,
             }
         }
 
-        fn import_blocks(&mut self, base: BlockHash, branch: Vec<BlockHash>) {
-            if branch.is_empty() || !self.tree.contains_key(&base) {
-                return;
-            }
-
-            let base = *self.tree.get(&base).unwrap();
-            let pos = match self
-                .leaves
-                .binary_search_by(|leaf| self.tree.get(leaf).unwrap().number.cmp(&base.number))
+        fn update_longest_chain(&mut self, candidate_hash: BlockHash) {
+            let old_longest = self
+                .tree
+                .get(&self.longest_chain)
+                .expect("Longest chain block not in tree.");
+            let cand_longest = self
+                .tree
+                .get(&candidate_hash)
+                .expect("Candidate block not in tree.");
+            if cand_longest.number > old_longest.number
+                || (cand_longest.number == old_longest.number
+                    && cand_longest.hash < old_longest.hash)
             {
-                Ok(pos) => pos,
-                Err(_) => return,
-            };
-            self.leaves.remove(pos);
+                self.longest_chain = candidate_hash;
+            }
+        }
 
-            let new_leaf_hash = *branch.last().unwrap();
-            let mut parent_hash = base.hash;
-            let mut number = base.number + 1;
+        pub(crate) fn import_block(&mut self, block_hash: BlockHash, parent_hash: BlockHash) {
+            let parent_block = self
+                .tree
+                .get(&parent_hash)
+                .expect("Parent not in block tree.");
+            assert!(
+                !self.tree.contains_key(&block_hash),
+                "The imported block is already in the tree."
+            );
+            let block_number = parent_block.number + 1;
+            let new_block = Block {
+                number: block_number,
+                parent: Some(parent_hash),
+                hash: block_hash,
+            };
+            self.tree.insert(block_hash, new_block);
+            self.update_longest_chain(block_hash);
+        }
+
+        pub(crate) fn import_branch(&mut self, base: BlockHash, branch: Vec<BlockHash>) {
+            let mut parent = base;
             for block_hash in branch {
-                let block = Block {
-                    number,
-                    parent: Some(parent_hash),
-                    hash: block_hash,
-                };
-                number += 1;
-                parent_hash = block.hash;
-                self.tree.insert(block.hash, block);
+                self.import_block(block_hash, parent);
+                parent = block_hash;
             }
-
-            let pos = match self
-                .leaves
-                .binary_search_by(|leaf| self.tree.get(leaf).unwrap().number.cmp(&number))
-            {
-                Ok(pos) => pos,
-                Err(pos) => pos,
-            };
-
-            self.leaves.insert(pos, new_leaf_hash);
         }
 
         fn is_descendant(&self, child: &BlockHash, parent: &BlockHash) -> bool {
-            let mut child = match self.tree.get(child) {
-                Some(block) => block,
-                None => return false,
-            };
-            let parent = match self.tree.get(parent) {
-                Some(block) => block,
-                None => return false,
-            };
-            if child.number < parent.number {
-                return true;
+            // Equal or strict descendant returns true.
+            // Panics if either block does not exist.
+            let mut child_block = self.tree.get(child).expect("Child block not in tree.");
+            let parent_block = self.tree.get(parent).expect("Parent block not in tree.");
+            if child_block.number < parent_block.number {
+                return false;
             }
-            while child.number > parent.number {
-                child = &*self.tree.get(&child.parent.unwrap()).unwrap();
+            while child_block.number > parent_block.number {
+                child_block = self.tree.get(&child_block.parent.unwrap()).unwrap();
             }
-
-            child.hash == parent.hash
+            child_block.hash == parent_block.hash
         }
 
         fn block(&self, h: &BlockHash) -> Option<Block> {
@@ -258,27 +252,38 @@ pub mod environment {
         }
 
         fn best_block(&self) -> BlockHash {
-            *self.leaves.last().unwrap()
+            self.longest_chain
         }
 
         fn best_finalized(&self) -> BlockHash {
             self.best_finalized
         }
 
-        fn finalize(&mut self, h: BlockHash) -> bool {
-            if !self.tree.contains_key(&h) {
-                return false;
-            }
+        fn finalize(&mut self, h: BlockHash) -> Vec<Block> {
+            // Will panic if h does not exist or we finalize a block that is not a strict descendant of best_finalized
+            // Outputs a vector of newly finalized blocks.
+            assert!(
+                self.tree.contains_key(&h),
+                "Block to finalize does not exist"
+            );
+            assert!(
+                self.is_descendant(&h, &self.best_finalized),
+                "Block to finalize is not a descendant of the last finalized block."
+            );
+            assert!(
+                h != self.best_finalized,
+                "Block to finalize is equal to the last finalized block."
+            );
+            let mut list_finalized = Vec::new();
 
-            let finalized = self.tree.get(&self.best_finalized).unwrap();
-            let candidate = self.tree.get(&h).unwrap();
-            if candidate.number < finalized.number {
-                return false;
+            let mut block = self.tree.get(&h).unwrap();
+            while block.hash != self.best_finalized {
+                list_finalized.push(*block);
+                block = self.tree.get(&block.parent.unwrap()).unwrap();
             }
-
             self.best_finalized = h;
-
-            true
+            list_finalized.reverse();
+            list_finalized
         }
     }
 
@@ -341,30 +346,6 @@ pub mod environment {
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
             // here we may add custom logic for dropping/changing messages
             self.0.poll_recv(cx)
-        }
-    }
-
-    use crate::skeleton::{Consensus, ConsensusConfig};
-    pub(crate) async fn dispatch_nodes(
-        n_nodes: u32,
-        conf: ConsensusConfig,
-        env: Environment,
-        check: Box<dyn FnOnce() + Send + Sync + 'static>,
-    ) {
-        let mut handles = vec![];
-        for ix in 0..n_nodes {
-            let mut conf = conf.clone();
-            conf.ix = ix.into();
-            handles.push(tokio::spawn(
-                Consensus::new(conf.clone(), env.clone()).run(),
-            ));
-        }
-
-        check();
-
-        // TODO this returns immediately since we don't join in consensus, add exit signal
-        for h in handles {
-            let _ = h.await;
         }
     }
 }

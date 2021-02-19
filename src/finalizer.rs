@@ -49,7 +49,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
     async fn finalize_blocks() {
         let net = Network::new();
-        let (env, mut finalized_blocks_rx) = environment::Environment::new(net);
+        let (mut env, mut finalized_blocks_rx) = environment::Environment::new(net);
         env.import_block(1.into(), 0.into());
         env.import_block(2.into(), 1.into());
 
@@ -66,9 +66,9 @@ mod tests {
 
         let _ = batch_tx.send(vec![BlockHash(1)]);
         let _ = batch_tx.send(vec![BlockHash(1), BlockHash(2)]);
-
         let block_1 = finalized_blocks_rx.recv().await.unwrap();
         let block_2 = finalized_blocks_rx.recv().await.unwrap();
+
         assert_eq!(block_1.hash(), BlockHash(1));
         assert_eq!(block_2.hash(), BlockHash(2));
         assert_eq!(
@@ -80,7 +80,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
     async fn ignore_block_not_extending_finalized() {
         let net = Network::new();
-        let (env, mut finalized_blocks_rx) = environment::Environment::new(net);
+        let (mut env, mut finalized_blocks_rx) = environment::Environment::new(net);
 
         // Block tree constructed below:
         //     5
