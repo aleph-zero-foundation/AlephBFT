@@ -1,10 +1,10 @@
 #[cfg(test)]
 pub mod environment {
-    use crate::skeleton::Message;
+    use crate::Message;
     use derive_more::Display;
     use futures::{Sink, Stream};
     use parking_lot::Mutex;
-    use serde::{Deserialize, Serialize};
+
     use std::{
         collections::HashMap,
         pin::Pin,
@@ -18,20 +18,7 @@ pub mod environment {
     #[derive(Hash, Debug, Display, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
     pub struct Id(pub u32);
 
-    #[derive(
-        Hash,
-        Debug,
-        Default,
-        Display,
-        Clone,
-        Copy,
-        PartialEq,
-        Eq,
-        Ord,
-        PartialOrd,
-        Serialize,
-        Deserialize,
-    )]
+    #[derive(Hash, Debug, Default, Display, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
     pub struct Hash(pub u32);
 
     impl From<u32> for Hash {
@@ -40,20 +27,7 @@ pub mod environment {
         }
     }
 
-    #[derive(
-        Hash,
-        Debug,
-        Default,
-        Display,
-        Clone,
-        Copy,
-        PartialEq,
-        Eq,
-        Ord,
-        PartialOrd,
-        Serialize,
-        Deserialize,
-    )]
+    #[derive(Hash, Debug, Default, Display, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
     pub struct BlockHash(pub u32);
 
     impl From<u32> for BlockHash {
@@ -109,7 +83,7 @@ pub mod environment {
         }
     }
 
-    impl crate::traits::Environment for Environment {
+    impl crate::Environment for Environment {
         type NodeId = Id;
         type Hash = Hash;
         type BlockHash = BlockHash;
@@ -139,8 +113,6 @@ pub mod environment {
         fn best_block(&self) -> Self::BlockHash {
             self.chain.best_block()
         }
-
-        fn crypto(&self) -> Self::Crypto {}
 
         fn hash(_data: &[u8]) -> Self::Hash {
             Default::default()
@@ -353,7 +325,7 @@ pub mod environment {
 #[cfg(test)]
 mod tests {
     use super::environment::*;
-    use crate::skeleton::Message;
+    use crate::Message;
     use futures::{sink::SinkExt, stream::StreamExt};
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]

@@ -3,8 +3,7 @@ use std::collections::{hash_map::Entry, BinaryHeap, HashMap, VecDeque};
 use crate::{
     extender::ExtenderUnit,
     nodes::{NodeCount, NodeIndex, NodeMap},
-    skeleton::{Message, Receiver, Sender, Unit},
-    traits::{Environment, HashT},
+    Environment, HashT, Message, Receiver, Round, Sender, Unit,
 };
 use std::cmp::Ordering;
 use tokio::time;
@@ -72,7 +71,7 @@ impl<B: HashT, H: HashT> TerminalUnit<B, H> {
         self.unit.creator
     }
 
-    pub(crate) fn round(&self) -> u32 {
+    pub(crate) fn round(&self) -> Round {
         self.unit.round
     }
 
@@ -151,10 +150,10 @@ pub(crate) struct Terminal<E: Environment + 'static> {
 
     // In this Map, for each pair (r, pid) we store the first unit made by pid at round r that we ever received.
     // In case of forks, we still store only the first one -- others are ignored (but stored in store anyway of course).
-    unit_by_coord: HashMap<(u32, NodeIndex), E::Hash>,
+    unit_by_coord: HashMap<(Round, NodeIndex), E::Hash>,
     // This stores, for a pair (r, pid) the list of all units (by hash) that await a unit made by pid at
     // round r, as their parent. Once such a unit arrives, we notify all these children.
-    children_coord: HashMap<(u32, NodeIndex), Vec<E::Hash>>,
+    children_coord: HashMap<(Round, NodeIndex), Vec<E::Hash>>,
     // The same as above, but this time we await for a unit (with a particular hash) to be added to the Dag.
     // Once this happens, we notify all the children.
     children_hash: HashMap<E::Hash, Vec<E::Hash>>,
@@ -216,7 +215,7 @@ impl<E: Environment + 'static> Terminal<E> {
         }
     }
 
-    fn add_coord_trigger(&mut self, round: u32, pid: NodeIndex, u_hash: E::Hash) {
+    fn add_coord_trigger(&mut self, round: Round, pid: NodeIndex, u_hash: E::Hash) {
         let coord = (round, pid);
         if !self.children_coord.contains_key(&coord) {
             self.children_coord.insert((round, pid), Vec::new());

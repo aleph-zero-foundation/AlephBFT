@@ -2,14 +2,13 @@ use std::collections::{HashMap, VecDeque};
 
 use crate::{
     nodes::{NodeCount, NodeIndex, NodeMap},
-    skeleton::{Receiver, Sender},
-    traits::{Environment, HashT},
+    Environment, HashT, Receiver, Round, Sender,
 };
 
 #[derive(Clone, Default)]
 pub(crate) struct ExtenderUnit<B: HashT, H: HashT> {
     creator: NodeIndex,
-    round: u32,
+    round: Round,
     parents: NodeMap<Option<H>>,
     hash: H,
     best_block: B,
@@ -19,7 +18,7 @@ pub(crate) struct ExtenderUnit<B: HashT, H: HashT> {
 impl<B: HashT, H: HashT> ExtenderUnit<B, H> {
     pub(crate) fn new(
         creator: NodeIndex,
-        round: u32,
+        round: Round,
         hash: H,
         parents: NodeMap<Option<H>>,
         best_block: B,
@@ -37,8 +36,8 @@ impl<B: HashT, H: HashT> ExtenderUnit<B, H> {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 struct CacheState {
-    highest_round: usize,
-    current_round: usize,
+    highest_round: Round,
+    current_round: Round,
     round_initialized: bool,
     pending_cand_id: usize,
     votes_up_to_date: bool,
@@ -78,27 +77,27 @@ impl<E: Environment> Extender<E> {
             finalizer_tx,
             state: CacheState::empty_dag_cache(),
             units: HashMap::new(),
-            units_by_round: vec![Vec::new()],
+            units_by_round: vec![vec![]],
             n_members,
-            candidates: Vec::new(),
+            candidates: vec![],
         }
     }
 
     fn add_unit(&mut self, u: ExtenderUnit<E::BlockHash, E::Hash>) {
-        let round = u.round as usize;
+        let round = u.round;
         if round > self.state.highest_round {
             self.state.highest_round = round;
         }
         // need to extend the vector first to the required length
         if self.units_by_round.len() <= round {
-            self.units_by_round.push(Vec::new());
+            self.units_by_round.push(vec![]);
         }
         self.units_by_round[round].push(u.hash);
         self.units.insert(u.hash, u);
     }
 
     //
-    fn initialize_round(&mut self, round: usize) {
+    fn initialize_round(&mut self, round: Round) {
         // The clone below is necessary as we take "a snapshot" of the set of units at this round and never
         // go back and never update this list. From math it follows that each unit that is added to the Dag later
         // then the moment of round initialization will be decided as false, hence they can be ignored.
@@ -107,7 +106,7 @@ impl<E: Environment> Extender<E> {
         self.candidates.sort();
     }
 
-    fn common_vote(&self, relative_round: usize) -> bool {
+    fn common_vote(&self, relative_round: Round) -> bool {
         if relative_round == 3 {
             return false;
         }
@@ -119,9 +118,9 @@ impl<E: Environment> Extender<E> {
     }
 
     /// Prepares a batch and removes all unnecessary units from the data structures
-    fn finalize_round(&mut self, round: usize, head: &E::Hash) {
-        let mut batch: Vec<E::BlockHash> = Vec::new();
-        let mut queue: VecDeque<ExtenderUnit<E::BlockHash, E::Hash>> = VecDeque::new();
+    fn finalize_round(&mut self, round: Round, head: &E::Hash) {
+        let mut batch = vec![];
+        let mut queue = VecDeque::new();
         queue.push_back(self.units.remove(head).unwrap());
         while let Some(u) = queue.pop_front() {
             batch.push(u.best_block);
@@ -149,12 +148,12 @@ impl<E: Environment> Extender<E> {
         candidate_hash: &E::Hash,
         voter_hash: &E::Hash,
         candidate_creator: NodeIndex,
-        candidate_round: usize,
+        candidate_round: Round,
     ) -> (bool, Option<bool>) {
         // Outputs the vote and decision of a unit u, computed based on the votes of its parents
         // It is thus required the votes of the parents to be up-to-date (if relative_round>=2).
         let voter = self.units.get(voter_hash).unwrap();
-        let relative_round = (voter.round as usize) - candidate_round;
+        let relative_round = (voter.round) - candidate_round;
         if relative_round == 1 {
             return (
                 voter.parents[candidate_creator] == Some(*candidate_hash),
@@ -286,27 +285,27 @@ mod tests {
     };
     use tokio::sync::mpsc;
 
-    fn coord_to_number(creator: u32, round: u32, n_members: u32) -> u32 {
+    fn coord_to_number(creator: usize, round: usize, n_members: usize) -> usize {
         round * n_members + creator
     }
 
     fn construct_unit(
-        creator: u32,
-        round: u32,
-        n_members: u32,
+        creator: usize,
+        round: usize,
+        n_members: usize,
         best_block: BlockHash,
     ) -> ExtenderUnit<BlockHash, Hash> {
         let mut parents = NodeMap::new_with_len(NodeCount(n_members));
         if round > 0 {
             for i in 0..n_members {
-                parents[NodeIndex(i)] = Some(Hash(coord_to_number(i, round - 1, n_members)));
+                parents[NodeIndex(i)] = Some(Hash(coord_to_number(i, round - 1, n_members) as u32));
             }
         }
 
         ExtenderUnit::new(
             NodeIndex(creator),
             round,
-            Hash(coord_to_number(creator, round, n_members)),
+            Hash(coord_to_number(creator, round, n_members) as u32),
             parents,
             best_block,
         )
@@ -324,7 +323,7 @@ mod tests {
 
         for round in 0..rounds {
             for creator in 0..n_members {
-                let block = BlockHash(coord_to_number(creator, round, n_members) + 1000);
+                let block = BlockHash(coord_to_number(creator, round, n_members) as u32 + 1000);
                 let unit = construct_unit(creator, round, n_members, block);
                 let _ = electors_tx.send(unit);
             }

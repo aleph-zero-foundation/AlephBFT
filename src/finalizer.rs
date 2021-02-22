@@ -1,9 +1,6 @@
 use tokio::sync::mpsc;
 
-use crate::{
-    skeleton::{Receiver, Sender},
-    traits::Environment,
-};
+use crate::{Environment, Receiver, Sender};
 
 pub(crate) struct Finalizer<E: Environment> {
     batch_rx: Receiver<Vec<E::BlockHash>>,
