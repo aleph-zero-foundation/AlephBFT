@@ -1,5 +1,6 @@
 use crate::{Environment, Message, Receiver, Sender, Unit};
 use futures::{SinkExt, StreamExt};
+use log::{debug, error};
 use tokio::sync::mpsc;
 
 pub(crate) struct Syncer<E: Environment> {
@@ -24,6 +25,7 @@ impl<E: Environment> Syncer<E> {
         Sender<Unit<E::BlockHash, E::Hash>>,
     ) {
         let (units_tx, units_rx) = mpsc::unbounded_channel();
+
         let (requests_tx, requests_rx) = mpsc::unbounded_channel();
         (
             Syncer {
@@ -41,15 +43,35 @@ impl<E: Environment> Syncer<E> {
         loop {
             tokio::select! {
                 Some(m) = self.requests_rx.recv() => {
-                    let _ = self.messages_tx.send(m).await;
+                    let send_result = self.messages_tx.send(m).await;
+                    if let Err(e) = send_result {
+                        error!(target: "rush-syncer", "Unable to send a message: {:?}.", e);
+                    }
                 }
                 Some(m) = self.messages_rx.next() => {
                     match m {
-                        Message::Multicast(u) => if self.units_tx.send(u).is_err() {},
-                        Message::FetchResponse(units, _) => units
+                        Message::Multicast(u) => {
+                            debug!(target: "rush-syncer", "Received a unit {} via Multicast.", u.hash());
+                            let send_result = self.units_tx.send(u);
+                            if let Err(e) =send_result {
+                                error!(target: "rush-syncer", "Unable to send a unit from Multicast to Terminal: {:?}.", e);
+                            }
+
+                        }
+                        Message::FetchResponse(units, _) => {
+                            debug!(target: "rush-syncer", "Received {} units cia FetchResponse.", units.len());
+                            units
                             .into_iter()
-                            .for_each(|u| if self.units_tx.send(u).is_err() {}),
-                        _ => {}
+                            .for_each(|u| {
+                                let send_result = self.units_tx.send(u);
+                                if let Err(e) = send_result {
+                                    error!(target: "rush-syncer", "Unable to send a unit from Fetch to Terminal: {:?}.", e);
+                                }
+                            })
+                        },
+                        _ => {
+                            debug!(target: "rush-syncer", "Unsupported Message type: {:?}.", m);
+                        }
                     }
                 }
             }

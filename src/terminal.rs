@@ -5,6 +5,7 @@ use crate::{
     nodes::{NodeCount, NodeIndex, NodeMap},
     Environment, HashT, Message, Receiver, Round, Sender, Unit,
 };
+use log::{debug, error};
 use std::cmp::Ordering;
 use tokio::time;
 
@@ -145,7 +146,6 @@ pub(crate) struct Terminal<E: Environment + 'static> {
     // Here we store all the units -- the one in Dag and the ones "hanging".
     unit_store: HashMap<E::Hash, TerminalUnit<E::BlockHash, E::Hash>>,
 
-    // TODO: custom type for round number?
     // TODO: get rid of HashMaps below and just use Vec<Vec<E::Hash>> for efficiency
 
     // In this Map, for each pair (r, pid) we store the first unit made by pid at round r that we ever received.
@@ -272,6 +272,7 @@ impl<E: Environment + 'static> Terminal<E> {
     }
 
     fn add_to_store(&mut self, u: Unit<E::BlockHash, E::Hash>) {
+        debug!(target: "rush-terminal", "Adding a unit {:?} to store", u.hash());
         if let Entry::Vacant(entry) = self.unit_store.entry(u.hash()) {
             entry.insert(TerminalUnit::<E::BlockHash, E::Hash>::blank_from_unit(&u));
             let curr_time = time::Instant::now();
@@ -288,8 +289,10 @@ impl<E: Environment + 'static> Terminal<E> {
         let u = self.unit_store.get_mut(u_hash).unwrap();
         if (self.check_available)(u.unit.best_block) {
             u.status = UnitStatus::InDag;
+            debug!(target: "rush-terminal", "Adding unit {:?} to Dag.", u_hash);
             self.update_on_dag_add(u_hash);
         } else {
+            debug!(target: "rush-terminal", "Block in unit {:?} not available.", u_hash);
             u.status = UnitStatus::WaitingBlockAvailable;
             let curr_time = time::Instant::now();
             self.scheduled_task_queue.push(ScheduledTask::new(
@@ -339,9 +342,12 @@ impl<E: Environment + 'static> Terminal<E> {
                         // This means there are some unavailable parents for this unit...
                         for (i, b) in u.unit.control_hash.parents.enumerate() {
                             if *b && u.parents[i].is_none() {
-                                let _ = self
+                                let send_result = self
                                     .requests_tx
                                     .send(Message::FetchRequest(vec![(u.round() - 1, i)], i));
+                                if let Err(e) = send_result {
+                                    error!(target: "rush-terminal", "Unable to place a Fetch request: {:?}.", e);
+                                }
                             }
                         }
                         // We might not be done, so we schedule the same task after FETCH_INTERVAL seconds.

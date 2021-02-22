@@ -1,6 +1,7 @@
 //! Consensus crate level documentation is about to show here
 
 use futures::{Sink, Stream};
+use log::{debug, error};
 use parking_lot::Mutex;
 use std::{
     fmt::{Debug, Display},
@@ -56,7 +57,7 @@ pub trait Environment {
     type Crypto;
     type In: Stream<Item = Message<Self::BlockHash, Self::Hash>> + Send + Unpin;
     type Out: Sink<Message<Self::BlockHash, Self::Hash>, Error = Self::Error> + Send + Unpin;
-    type Error: Send + Sync;
+    type Error: Send + Sync + std::fmt::Debug;
 
     fn finalize_block(&mut self, _h: Self::BlockHash);
     fn check_extends_finalized(&self, _h: Self::BlockHash) -> bool;
@@ -159,12 +160,18 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
         terminal.register_post_insert_hook(Box::new(move |u| {
             if my_ix == u.creator() {
                 // send unit u corresponding to v
-                let _ = requests_tx.send(Message::Multicast(u.into()));
+                let send_result = requests_tx.send(Message::Multicast(u.into()));
+                if let Err(e) = send_result {
+                    error!(target:"rush-init", "Unable to place a Multicast request: {:?}.", e);
+                }
             }
         }));
         // send a new parent candidate to the creator
         terminal.register_post_insert_hook(Box::new(move |u| {
-            let _ = parents_tx.send(u.into());
+            let send_result = parents_tx.send(u.into());
+            if let Err(e) = send_result {
+                error!(target:"rush-terminal", "Unable to send a unit to Creator: {:?}.", e);
+            }
         }));
         // try to extend the partial order after adding a unit to the dag
         terminal.register_post_insert_hook(Box::new(
@@ -188,6 +195,7 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
 // This is to be called from within substrate
 impl<E: Environment> Consensus<E> {
     pub async fn run(mut self) {
+        debug!(target: "rush-init", "Starting all services...",);
         let mut creator = self.creator.take().unwrap();
         let _creator_handle = tokio::spawn(async move { creator.create().await });
         let mut terminal = self.terminal.take().unwrap();
@@ -198,6 +206,8 @@ impl<E: Environment> Consensus<E> {
         let _syncer_handle = tokio::spawn(async move { syncer.sync().await });
         let mut finalizer = self.finalizer.take().unwrap();
         let _finalizer_handle = tokio::spawn(async move { finalizer.finalize().await });
+
+        debug!(target: "rush-init", "All services started.",);
 
         // TODO add close signal
     }
@@ -231,7 +241,7 @@ impl<H: HashT> ControlHash<H> {
 pub struct Unit<B: HashT, H: HashT> {
     pub(crate) creator: NodeIndex,
     pub(crate) round: Round,
-    pub(crate) epoch_id: EpochId, //we probably want a custom type for that
+    pub(crate) epoch_id: EpochId,
     pub(crate) hash: H,
     pub(crate) control_hash: ControlHash<H>,
     pub(crate) best_block: B,
