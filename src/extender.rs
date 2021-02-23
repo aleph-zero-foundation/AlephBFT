@@ -1,5 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 
+use log::{debug, error};
+
 use crate::{
     nodes::{NodeCount, NodeIndex, NodeMap},
     Environment, HashT, Receiver, Round, Sender,
@@ -139,7 +141,11 @@ impl<E: Environment> Extender<E> {
 
         // We reverse for the batch to start with least recent units.
         batch.reverse();
-        let _ = self.finalizer_tx.send(batch);
+        let send_result = self.finalizer_tx.send(batch);
+        if let Err(e) = send_result {
+            error!(target: "rush-extender", "Unable to send a batch to Finalizer: {:?}.", e);
+        }
+        debug!(target: "rush-extender", "Finalized round {}.", round);
         self.units_by_round[round].clear();
     }
 

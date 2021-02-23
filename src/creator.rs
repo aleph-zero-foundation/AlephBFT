@@ -2,6 +2,7 @@ use crate::{
     nodes::{NodeCount, NodeIndex, NodeMap},
     Environment, EpochId, Receiver, Round, Sender, Unit,
 };
+use log::{debug, error};
 
 // a process responsible for creating new units
 pub(crate) struct Creator<E: Environment> {
@@ -58,7 +59,11 @@ impl<E: Environment> Creator<E> {
         };
         let new_unit =
             Unit::new_from_parents(self.pid, round, self.epoch_id, parents, (self.best_block)());
-        let _ = self.new_units_tx.send(new_unit);
+        let send_result = self.new_units_tx.send(new_unit);
+        if let Err(e) = send_result {
+            error!(target: "rush-creator", "Unable to send a newly created unit: {:?}.", e);
+        }
+        debug!(target: "rush-creator", "Created a new unit at round {}.", self.current_round);
         self.current_round += 1;
     }
 

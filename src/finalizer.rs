@@ -1,6 +1,7 @@
 use tokio::sync::mpsc;
 
 use crate::{Environment, Receiver, Sender};
+use log::debug;
 
 pub(crate) struct Finalizer<E: Environment> {
     batch_rx: Receiver<Vec<E::BlockHash>>,
@@ -29,6 +30,7 @@ impl<E: Environment> Finalizer<E> {
                 for h in batch {
                     if (self.extends_finalized)(h) {
                         (self.finalize)(h);
+                        debug!(target: "rush-finalizer", "Finalized block hash {}.", h);
                     }
                 }
             }
