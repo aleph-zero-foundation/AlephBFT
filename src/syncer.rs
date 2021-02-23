@@ -3,14 +3,15 @@ use futures::{SinkExt, StreamExt};
 use log::{debug, error};
 use tokio::sync::mpsc;
 
+/// A process responsible for managing input and output messages.
 pub(crate) struct Syncer<E: Environment> {
-    // outgoing messages
+    /// Outgoing messages.
     messages_tx: E::Out,
-    // incoming messages
+    /// Incoming messages.
     messages_rx: E::In,
-    // channel for sending units to the terminal
+    /// A channel for sending units to the [Terminal].
     units_tx: Sender<Unit<E::BlockHash, E::Hash>>,
-    // channel for receiving messages to the outside world
+    /// A channel for receiving messages from the outside world.
     requests_rx: Receiver<Message<E::BlockHash, E::Hash>>,
 }
 

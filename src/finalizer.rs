@@ -3,6 +3,11 @@ use tokio::sync::mpsc;
 use crate::{Environment, Receiver, Sender};
 use log::debug;
 
+/// A process that receives batches of BlockHashes from the [Extender] (from the batch_rx channel
+/// endopoint) and finalizes blocks based on this input. Finalizer takes advantage of the access to the
+/// `extends_finalized` oracle in order to decide which block to finalize from a batch. Important: this
+/// oracle should output `true` only for *strict extension* i.e. `extends_finalized(h)` should be
+/// `false` in case h is the most recently finalized block.
 pub(crate) struct Finalizer<E: Environment> {
     batch_rx: Receiver<Vec<E::BlockHash>>,
     finalize: Box<dyn Fn(E::BlockHash) + Sync + Send + 'static>,

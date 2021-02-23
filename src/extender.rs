@@ -57,7 +57,14 @@ impl CacheState {
     }
 }
 
-// a process responsible for extending the partial order
+/// A process responsible for executing the Consensus protocol on a local copy of the Dag.
+/// It receives units via a channel `electors` which are guaranteed to be eventually in the Dags
+/// of all honest nodes. The static Aleph Consensus algorithm is then run on this Dag in order
+/// to finalize subsequent rounds of the Dag. More specifically whenever a new unit is received
+/// this process checks whether a new round can be finalized and if so, it computes the batch of
+/// units that should be finalized, unwraps them (leaving only a block hash per unit) and pushes
+/// such a batch to a channel via the finalizer_tx endpoint.
+
 pub(crate) struct Extender<E: Environment> {
     electors: Receiver<ExtenderUnit<E::BlockHash, E::Hash>>,
     finalizer_tx: Sender<Vec<E::BlockHash>>,

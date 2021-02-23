@@ -1,4 +1,6 @@
-//! Consensus crate level documentation is about to show here
+//! Implements the Aleph BFT Consensus protocol as a "finality gadget". The [Consensus] struct
+//! requires access to an [Environment] object which black-boxes the network layer and gives
+//! appropriate access to the set of available blocks that we need to make consensus on.
 
 use futures::{Sink, Stream};
 use log::{debug, error};
@@ -44,6 +46,7 @@ impl<H> HashT for H where
 {
 }
 
+/// A trait that describes the interaction of the [Consensus] component with the external world.
 pub trait Environment {
     /// Unique identifiers for nodes
     type NodeId: NodeIdT;
@@ -59,10 +62,26 @@ pub trait Environment {
     type Out: Sink<Message<Self::BlockHash, Self::Hash>, Error = Self::Error> + Send + Unpin;
     type Error: Send + Sync + std::fmt::Debug;
 
+    /// Supposed to be called whenever a new block is finalized according to the protocol.
+    /// If [finalize_block] is called first with `h1` and then with `h2` then necessarily
+    /// `h2` must be a strict descendant of `h1`.
     fn finalize_block(&mut self, _h: Self::BlockHash);
+
+    /// Checks if a particular block has been already finalized.
     fn check_extends_finalized(&self, _h: Self::BlockHash) -> bool;
+
+    /// Outputs a block that the node should vote for. There is no concrete specification on
+    /// what [best_block] should be only that it should guarantee that its output is always a
+    /// descendant of the most recently finalized block (to guarantee liveness).
     fn best_block(&self) -> Self::BlockHash;
+
+    /// Checks whether a given block is "available" meaning that its content has been downloaded
+    /// by the current node. This is required as consensus messages from other committee members
+    /// referring to unavailable blocks must be ignored (at least till the block shows).
     fn check_available(&self, h: Self::BlockHash) -> bool;
+
+    /// Outputs two channel endpoints: transmitter of outgoing messages and receiver if incoming
+    /// messages.
     fn consensus_data(&self) -> (Self::Out, Self::In);
     fn hash(data: &[u8]) -> Self::Hash;
 }
@@ -72,12 +91,14 @@ pub enum Error {}
 pub type Round = usize;
 pub type EpochId = usize;
 
+/// Type for Consensus messages.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Message<B: HashT, H: HashT> {
+    /// The most common message: multicasting a unit to all committee memebers.
     Multicast(Unit<B, H>),
-    // request for a particular list of units (specified by (round, creator)) to a particular node
+    /// Request for a particular list of units (specified by (round, creator)) to a particular node.
     FetchRequest(Vec<(Round, NodeIndex)>, NodeIndex),
-    // requested units by a given request id
+    /// Response to a FetchRequest.
     FetchResponse(Vec<Unit<B, H>>, NodeIndex),
     SyncMessage,
     SyncResponse,
@@ -215,6 +236,7 @@ impl<E: Environment> Consensus<E> {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ControlHash<H: HashT> {
+    // TODO we need to optimize it for it to take O(N) bits of memory not O(N) words.
     pub parents: NodeMap<bool>,
     pub hash: H,
 }
