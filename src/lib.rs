@@ -56,6 +56,7 @@ pub trait Environment {
     type BlockHash: HashT;
     /// The ID of a consensus protocol instance.
     type InstanceId: HashT;
+    type Hashing: Fn(&[u8]) -> Self::Hash + Send + Sync + 'static;
 
     type Crypto;
     type In: Stream<Item = Message<Self::BlockHash, Self::Hash>> + Send + Unpin;
@@ -84,6 +85,7 @@ pub trait Environment {
     /// messages.
     fn consensus_data(&self) -> (Self::Out, Self::In);
     fn hash(data: &[u8]) -> Self::Hash;
+    fn hashing() -> Self::Hashing;
 }
 
 pub enum Error {}
@@ -159,6 +161,7 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
 
         let e = env.clone();
         let best_block = Box::new(move || e.lock().best_block());
+        let hashing = Box::new(E::hashing());
         let creator = Some(Creator::<E>::new(
             parents_rx,
             created_units_tx,
@@ -166,6 +169,7 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
             my_ix,
             n_members,
             best_block,
+            hashing,
         ));
 
         let check_available = Box::new(move |h| env.lock().check_available(h));
@@ -293,19 +297,20 @@ impl<B: HashT, H: HashT> Unit<B, H> {
         ((round * n_parents + creator.0) as u32).into()
     }
 
-    pub(crate) fn new_from_parents(
+    pub(crate) fn new_from_parents<Hashing: Fn(&[u8]) -> H>(
         creator: NodeIndex,
         round: Round,
         epoch_id: EpochId,
         parents: NodeMap<Option<H>>,
         best_block: B,
+        hashing: Hashing,
     ) -> Self {
         let control_hash = ControlHash::new(parents);
         Unit {
             creator,
             round,
             epoch_id,
-            hash: Self::compute_hash(creator, round, epoch_id, &control_hash),
+            hash: (hashing)(&[0; 1]),
             control_hash,
             best_block,
         }

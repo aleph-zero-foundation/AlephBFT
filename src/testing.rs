@@ -92,6 +92,7 @@ pub mod environment {
         type Error = Error;
         type Out = Out;
         type In = In;
+        type Hashing = Box<dyn Fn(&[u8]) -> Self::Hash + Send + Sync + 'static>;
 
         fn finalize_block(&mut self, h: Self::BlockHash) {
             self.calls_to_finalize.push(h);
@@ -120,6 +121,10 @@ pub mod environment {
 
         fn consensus_data(&self) -> (Self::Out, Self::In) {
             self.network.consensus_data()
+        }
+
+        fn hashing() -> Self::Hashing {
+            Box::new(|_data: &[u8]| Hash(0))
         }
     }
 

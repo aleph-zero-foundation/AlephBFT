@@ -23,6 +23,7 @@ pub(crate) struct Creator<E: Environment> {
     candidates_by_round: Vec<NodeMap<Option<E::Hash>>>,
     n_candidates_by_round: Vec<NodeCount>,
     best_block: Box<dyn Fn() -> E::BlockHash + Send + Sync + 'static>,
+    hashing: Box<E::Hashing>,
 }
 
 impl<E: Environment> Creator<E> {
@@ -33,6 +34,7 @@ impl<E: Environment> Creator<E> {
         pid: NodeIndex,
         n_members: NodeCount,
         best_block: Box<dyn Fn() -> E::BlockHash + Send + Sync + 'static>,
+        hashing: Box<E::Hashing>,
     ) -> Self {
         Creator {
             parents_rx,
@@ -44,6 +46,7 @@ impl<E: Environment> Creator<E> {
             candidates_by_round: vec![NodeMap::new_with_len(n_members)],
             n_candidates_by_round: vec![NodeCount(0)],
             best_block,
+            hashing,
         }
     }
 
@@ -65,8 +68,15 @@ impl<E: Environment> Creator<E> {
                 self.candidates_by_round[round - 1].clone()
             }
         };
-        let new_unit =
-            Unit::new_from_parents(self.pid, round, self.epoch_id, parents, (self.best_block)());
+        let new_unit = Unit::new_from_parents(
+            self.pid,
+            round,
+            self.epoch_id,
+            parents,
+            (self.best_block)(),
+            &self.hashing,
+        );
+
         let send_result = self.new_units_tx.send(new_unit);
         if let Err(e) = send_result {
             error!(target: "rush-creator", "Unable to send a newly created unit: {:?}.", e);
