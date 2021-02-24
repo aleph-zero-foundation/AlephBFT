@@ -13,6 +13,7 @@ pub const FETCH_INTERVAL: time::Duration = time::Duration::from_secs(4);
 pub const BLOCK_AVAILABLE_INTERVAL: time::Duration = time::Duration::from_millis(50);
 pub const TICK_INTERVAL: time::Duration = time::Duration::from_millis(10);
 
+/// An enum describing the status of a Unit in the Terminal pipeline.
 #[derive(Clone, Debug, PartialEq)]
 pub enum UnitStatus {
     ReconstructingParents,
@@ -28,6 +29,8 @@ impl Default for UnitStatus {
     }
 }
 
+/// A Unit struct used in the Terminal. It stores a copy of a unit and apart from that some
+/// information on its status, i.e., already reconstructed parents etc.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TerminalUnit<B: HashT, H: HashT> {
     unit: Unit<B, H>,
@@ -83,8 +86,8 @@ impl<B: HashT, H: HashT> TerminalUnit<B, H> {
     }
 }
 
-/// This enum could be simplified to just one option and consequently gotten rid off. However,
-/// this has been made slightly more general (and thus complex) to add Alerts easily in the future.
+// This enum could be simplified to just one option and consequently gotten rid off. However,
+// this has been made slightly more general (and thus complex) to add Alerts easily in the future.
 pub enum TerminalEvent<H: HashT> {
     ParentsReconstructed(H),
     ReadyForAvailabilityCheck(H),
@@ -126,18 +129,24 @@ impl<H: HashT> PartialOrd for ScheduledTask<H> {
     }
 }
 
-// Terminal is responsible for:
-// - managing units that cannot be added to the dag yet, i.e fetching missing parents
-// - checking control hashes
-// - TODO checking for potential forks and raising alarms
-// - TODO updating randomness source
+/// A process whose goal is to receive new units and place them in our local Dag. Towards this end
+/// this process must orchestrate fetching units from other nodes in case we are missing them and
+/// manage the `Alert` mechanism which makes sure `horizontal spam` (unit fork spam) is not possible.
+/// Importantly, our local Dag is a set of units that are *guaranteed* to be sooner or later
+/// received by all honest nodes in the network.
+/// The Terminal receives new units via the new_units_rx channel endpoint and pushes requests for units
+/// to the requests_tx channel endpoint.
 pub(crate) struct Terminal<E: Environment + 'static> {
     _ix: NodeIndex,
-    // common channel for units from outside world and the ones we create
+    // A channel for receiving new units (they might also come from the local node).
     new_units_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
+    // A channel to push unit requests.
     requests_tx: Sender<Message<E::BlockHash, E::Hash>>,
+    // An oracle for checking if a given block hash h is available. This is needed to check for a new unit
+    // U whether the block it carries is available, and hence the unit U should be accepted (or held aside
+    // till the block is available).
     check_available: Box<dyn Fn(E::BlockHash) -> bool + Sync + Send + 'static>,
-    // Queue that is necessary to deal with cascading updates to the Dag/Store
+    // A Queue that is necessary to deal with cascading updates to the Dag/Store
     event_queue: VecDeque<TerminalEvent<E::Hash>>,
     // This queue contains "notes" that remind us to check on a particular unit, whether it already
     // has all the parents. If not then repeat a request.
@@ -157,7 +166,7 @@ pub(crate) struct Terminal<E: Environment + 'static> {
     // The same as above, but this time we await for a unit (with a particular hash) to be added to the Dag.
     // Once this happens, we notify all the children.
     children_hash: HashMap<E::Hash, Vec<E::Hash>>,
-    /// This is a ticker that is useful in forcing to fire "poll" at least every TICK_INTERVAL.
+    // This is a ticker that is useful in forcing to fire "poll" at least every TICK_INTERVAL.
     request_ticker: time::Interval,
 }
 
@@ -303,10 +312,10 @@ impl<E: Environment + 'static> Terminal<E> {
         }
     }
 
-    /// This drains the event queue. Note that new events might be added to the queue as the result of
-    /// handling other events -- for instance when a unit u is waiting for its parent p, and this parent p waits
-    /// for his parent pp. In this case adding pp to the Dag, will trigger adding p, which in turns triggers
-    /// adding u.
+    // This drains the event queue. Note that new events might be added to the queue as the result of
+    // handling other events -- for instance when a unit u is waiting for its parent p, and this parent p waits
+    // for his parent pp. In this case adding pp to the Dag, will trigger adding p, which in turns triggers
+    // adding u.
     fn handle_events(&mut self) {
         while let Some(event) = self.event_queue.pop_front() {
             match event {

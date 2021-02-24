@@ -4,7 +4,15 @@ use crate::{
 };
 use log::{debug, error};
 
-// a process responsible for creating new units
+/// A process responsible for creating new units. It receives all the units added locally to the Dag
+/// via the parents_rx channel endpoint. It creates units according to an internal strategy respecting
+/// always the following constraints: for a unit U of round r
+/// - all U's parents are from round (r-1),
+/// - all U's parents are created by different nodes,
+/// - one of U's parents is the (r-1)-round unit by U's creator,
+/// - U has > floor(2*N/3) parents.
+/// The currently implemented strategy creates the unit U at the very first moment when enough
+/// candidates for parents are available for all the above constraints to be satisfied.
 pub(crate) struct Creator<E: Environment> {
     parents_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
     new_units_tx: Sender<Unit<E::BlockHash, E::Hash>>,
