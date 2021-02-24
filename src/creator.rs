@@ -14,10 +14,11 @@ use log::{debug, error};
 /// The currently implemented strategy creates the unit U at the very first moment when enough
 /// candidates for parents are available for all the above constraints to be satisfied.
 pub(crate) struct Creator<E: Environment> {
+    node_id: E::NodeId,
     parents_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
     new_units_tx: Sender<Unit<E::BlockHash, E::Hash>>,
     epoch_id: EpochId,
-    pid: NodeIndex,
+    node_ix: NodeIndex,
     n_members: NodeCount,
     current_round: Round, // current_round is the round number of our next unit
     candidates_by_round: Vec<NodeMap<Option<E::Hash>>>,
@@ -27,18 +28,20 @@ pub(crate) struct Creator<E: Environment> {
 
 impl<E: Environment> Creator<E> {
     pub(crate) fn new(
+        node_id: E::NodeId,
+        node_ix: NodeIndex,
         parents_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
         new_units_tx: Sender<Unit<E::BlockHash, E::Hash>>,
         epoch_id: EpochId,
-        pid: NodeIndex,
         n_members: NodeCount,
         best_block: Box<dyn Fn() -> E::BlockHash + Send + Sync + 'static>,
     ) -> Self {
         Creator {
+            node_id,
+            node_ix,
             parents_rx,
             new_units_tx,
             epoch_id,
-            pid,
             n_members,
             current_round: 0,
             candidates_by_round: vec![NodeMap::new_with_len(n_members)],
@@ -65,14 +68,22 @@ impl<E: Environment> Creator<E> {
                 self.candidates_by_round[round - 1].clone()
             }
         };
-        let new_unit =
-            Unit::new_from_parents(self.pid, round, self.epoch_id, parents, (self.best_block)());
+
+        let new_unit = Unit::new_from_parents(
+            self.node_ix,
+            round,
+            self.epoch_id,
+            parents,
+            (self.best_block)(),
+        );
+        debug!(target: "rush-creator", "{} Created a new unit {:?} at round {}.", self.node_id, new_unit, self.current_round);
         let send_result = self.new_units_tx.send(new_unit);
         if let Err(e) = send_result {
-            error!(target: "rush-creator", "Unable to send a newly created unit: {:?}.", e);
+            error!(target: "rush-creator", "{} Unable to send a newly created unit: {:?}.", self.node_id, e);
         }
-        debug!(target: "rush-creator", "Created a new unit at round {}.", self.current_round);
+
         self.current_round += 1;
+        self.init_round(self.current_round);
     }
 
     fn add_unit(&mut self, round: Round, pid: NodeIndex, hash: E::Hash) {
@@ -97,7 +108,7 @@ impl<E: Environment> Creator<E> {
         let threshold = (self.n_members * 2) / 3;
 
         self.n_candidates_by_round[prev_round] > threshold
-            && self.candidates_by_round[prev_round][self.pid].is_some()
+            && self.candidates_by_round[prev_round][self.node_ix].is_some()
     }
 
     pub(crate) async fn create(&mut self) {

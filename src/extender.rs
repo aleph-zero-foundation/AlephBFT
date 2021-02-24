@@ -7,7 +7,7 @@ use crate::{
     Environment, HashT, Receiver, Round, Sender,
 };
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub(crate) struct ExtenderUnit<B: HashT, H: HashT> {
     creator: NodeIndex,
     round: Round,
@@ -66,6 +66,7 @@ impl CacheState {
 /// such a batch to a channel via the finalizer_tx endpoint.
 
 pub(crate) struct Extender<E: Environment> {
+    node_id: E::NodeId,
     electors: Receiver<ExtenderUnit<E::BlockHash, E::Hash>>,
     finalizer_tx: Sender<Vec<E::BlockHash>>,
     state: CacheState,
@@ -77,11 +78,13 @@ pub(crate) struct Extender<E: Environment> {
 
 impl<E: Environment> Extender<E> {
     pub(crate) fn new(
+        node_id: E::NodeId,
         electors: Receiver<ExtenderUnit<E::BlockHash, E::Hash>>,
         finalizer_tx: Sender<Vec<E::BlockHash>>,
         n_members: NodeCount,
     ) -> Self {
         Extender {
+            node_id,
             electors,
             finalizer_tx,
             state: CacheState::empty_dag_cache(),
@@ -92,7 +95,8 @@ impl<E: Environment> Extender<E> {
         }
     }
 
-    fn add_unit(&mut self, u: ExtenderUnit<E::BlockHash, E::Hash>) {
+    fn add_unit(&mut self, u: ExtenderUnit<E::BlockHash, E::Hash>) -> bool {
+        debug!(target: "rush-extender", "{} New unit in Extender {:?}.", self.node_id, u.hash);
         let round = u.round;
         if round > self.state.highest_round {
             self.state.highest_round = round;
@@ -101,8 +105,13 @@ impl<E: Environment> Extender<E> {
         if self.units_by_round.len() <= round {
             self.units_by_round.push(vec![]);
         }
-        self.units_by_round[round].push(u.hash);
-        self.units.insert(u.hash, u);
+        if round >= self.state.current_round {
+            self.units_by_round[round].push(u.hash);
+            self.units.insert(u.hash, u);
+            true
+        } else {
+            false
+        }
     }
 
     //
@@ -150,9 +159,9 @@ impl<E: Environment> Extender<E> {
         batch.reverse();
         let send_result = self.finalizer_tx.send(batch);
         if let Err(e) = send_result {
-            error!(target: "rush-extender", "Unable to send a batch to Finalizer: {:?}.", e);
+            error!(target: "rush-extender", "{} Unable to send a batch to Finalizer: {:?}.", self.node_id, e);
         }
-        debug!(target: "rush-extender", "Finalized round {}.", round);
+        debug!(target: "rush-extender", "{} Finalized round {}.", self.node_id, round);
         self.units_by_round[round].clear();
     }
 
@@ -166,7 +175,10 @@ impl<E: Environment> Extender<E> {
         // Outputs the vote and decision of a unit u, computed based on the votes of its parents
         // It is thus required the votes of the parents to be up-to-date (if relative_round>=2).
         let voter = self.units.get(voter_hash).unwrap();
-        let relative_round = (voter.round) - candidate_round;
+        if voter.round <= candidate_round {
+            return (false, None);
+        }
+        let relative_round = voter.round - candidate_round;
         if relative_round == 1 {
             return (
                 voter.parents[candidate_creator] == Some(*candidate_hash),
@@ -282,8 +294,9 @@ impl<E: Environment> Extender<E> {
         loop {
             if let Some(v) = self.electors.recv().await {
                 let v_hash = v.hash;
-                self.add_unit(v);
-                self.progress(v_hash);
+                if self.add_unit(v) {
+                    self.progress(v_hash);
+                }
             }
         }
     }
@@ -330,8 +343,12 @@ mod tests {
         let rounds = 6;
         let (batch_tx, mut batch_rx) = mpsc::unbounded_channel();
         let (electors_tx, electors_rx) = mpsc::unbounded_channel();
-        let mut extender =
-            Extender::<environment::Environment>::new(electors_rx, batch_tx, NodeCount(n_members));
+        let mut extender = Extender::<environment::Environment>::new(
+            0.into(),
+            electors_rx,
+            batch_tx,
+            NodeCount(n_members),
+        );
         let _extender_handle = tokio::spawn(async move { extender.extend().await });
 
         for round in 0..rounds {

@@ -79,6 +79,10 @@ impl<B: HashT, H: HashT> TerminalUnit<B, H> {
         self.unit.round
     }
 
+    pub(crate) fn _hash(&self) -> H {
+        self.unit.hash
+    }
+
     pub(crate) fn verify_control_hash(&self) -> bool {
         // this will be called only after all parents have been reconstructed
         // TODO: implement this
@@ -137,7 +141,7 @@ impl<H: HashT> PartialOrd for ScheduledTask<H> {
 /// The Terminal receives new units via the new_units_rx channel endpoint and pushes requests for units
 /// to the requests_tx channel endpoint.
 pub(crate) struct Terminal<E: Environment + 'static> {
-    _ix: NodeIndex,
+    node_id: E::NodeId,
     // A channel for receiving new units (they might also come from the local node).
     new_units_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
     // A channel to push unit requests.
@@ -172,13 +176,13 @@ pub(crate) struct Terminal<E: Environment + 'static> {
 
 impl<E: Environment + 'static> Terminal<E> {
     pub(crate) fn new(
-        _ix: NodeIndex,
+        node_id: E::NodeId,
         new_units_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
         requests_tx: Sender<Message<E::BlockHash, E::Hash>>,
         check_available: Box<dyn Fn(E::BlockHash) -> bool + Sync + Send + 'static>,
     ) -> Self {
         Terminal {
-            _ix,
+            node_id,
             new_units_rx,
             requests_tx,
             check_available,
@@ -271,17 +275,17 @@ impl<E: Environment + 'static> Terminal<E> {
     }
 
     fn update_on_dag_add(&mut self, u_hash: &E::Hash) {
+        let u = self.unit_store.get(u_hash).unwrap();
+        self.post_insert.iter().for_each(|f| f(u.clone()));
         if let Some(children) = self.children_hash.remove(u_hash) {
             for v_hash in children {
                 self.new_parent_in_dag(&v_hash);
             }
         }
-        let u = self.unit_store.get(u_hash).unwrap();
-        self.post_insert.iter().for_each(|f| f(u.clone()));
     }
 
     fn add_to_store(&mut self, u: Unit<E::BlockHash, E::Hash>) {
-        debug!(target: "rush-terminal", "Adding a unit {:?} to store", u.hash());
+        debug!(target: "rush-terminal", "{} Adding to store {:?}", self.node_id, u.hash());
         if let Entry::Vacant(entry) = self.unit_store.entry(u.hash()) {
             entry.insert(TerminalUnit::<E::BlockHash, E::Hash>::blank_from_unit(&u));
             let curr_time = time::Instant::now();
@@ -298,10 +302,10 @@ impl<E: Environment + 'static> Terminal<E> {
         let u = self.unit_store.get_mut(u_hash).unwrap();
         if (self.check_available)(u.unit.best_block) {
             u.status = UnitStatus::InDag;
-            debug!(target: "rush-terminal", "Adding unit {:?} to Dag.", u_hash);
+            debug!(target: "rush-terminal", "{} Adding to Dag {:?}.", self.node_id, u_hash);
             self.update_on_dag_add(u_hash);
         } else {
-            debug!(target: "rush-terminal", "Block in unit {:?} not available.", u_hash);
+            debug!(target: "rush-terminal", "{} Block in unit {:?} not available.", self.node_id, u_hash);
             u.status = UnitStatus::WaitingBlockAvailable;
             let curr_time = time::Instant::now();
             self.scheduled_task_queue.push(ScheduledTask::new(
@@ -355,7 +359,7 @@ impl<E: Environment + 'static> Terminal<E> {
                                     .requests_tx
                                     .send(Message::FetchRequest(vec![(u.round() - 1, i)], i));
                                 if let Err(e) = send_result {
-                                    error!(target: "rush-terminal", "Unable to place a Fetch request: {:?}.", e);
+                                    error!(target: "rush-terminal", "{} Unable to place a Fetch request: {:?}.", self.node_id, e);
                                 }
                             }
                         }

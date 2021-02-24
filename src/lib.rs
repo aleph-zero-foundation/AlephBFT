@@ -106,16 +106,24 @@ pub enum Message<B: HashT, H: HashT> {
 }
 
 #[derive(Clone)]
-pub struct ConsensusConfig {
-    pub(crate) ix: NodeIndex,
+pub struct ConsensusConfig<E: Environment> {
+    pub(crate) node_id: E::NodeId,
+    //TODO: we need to get rid of my_ix field here when adding support for non-committee nodes
+    my_ix: NodeIndex,
     n_members: NodeCount,
     epoch_id: EpochId,
 }
 
-impl ConsensusConfig {
-    pub fn new(ix: NodeIndex, n_members: NodeCount, epoch_id: EpochId) -> Self {
+impl<E: Environment> ConsensusConfig<E> {
+    pub fn new(
+        node_id: E::NodeId,
+        my_ix: NodeIndex,
+        n_members: NodeCount,
+        epoch_id: EpochId,
+    ) -> Self {
         ConsensusConfig {
-            ix,
+            node_id,
+            my_ix,
             n_members,
             epoch_id,
         }
@@ -123,7 +131,7 @@ impl ConsensusConfig {
 }
 
 pub struct Consensus<E: Environment + 'static> {
-    _conf: ConsensusConfig,
+    conf: ConsensusConfig<E>,
     creator: Option<Creator<E>>,
     terminal: Option<Terminal<E>>,
     extender: Option<Extender<E>>,
@@ -135,7 +143,7 @@ pub(crate) type Receiver<T> = mpsc::UnboundedReceiver<T>;
 pub(crate) type Sender<T> = mpsc::UnboundedSender<T>;
 
 impl<E: Environment + Send + Sync + 'static> Consensus<E> {
-    pub fn new(conf: ConsensusConfig, env: E) -> Self {
+    pub fn new(conf: ConsensusConfig<E>, env: E) -> Self {
         let (o, i) = env.consensus_data();
         let env = Arc::new(Mutex::new(env));
 
@@ -144,26 +152,34 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
         let e = env.clone();
         let env_extends_finalized = Box::new(move |h| e.lock().check_extends_finalized(h));
 
-        let (finalizer, batch_tx) = Finalizer::<E>::new(env_finalize, env_extends_finalized);
+        let (finalizer, batch_tx) =
+            Finalizer::<E>::new(conf.node_id.clone(), env_finalize, env_extends_finalized);
 
-        let my_ix = conf.ix;
+        let my_ix = conf.my_ix;
         let n_members = conf.n_members;
         let epoch_id = conf.epoch_id;
 
         let (electors_tx, electors_rx) = mpsc::unbounded_channel();
-        let extender = Some(Extender::<E>::new(electors_rx, batch_tx, n_members));
+        let extender = Some(Extender::<E>::new(
+            conf.node_id.clone(),
+            electors_rx,
+            batch_tx,
+            n_members,
+        ));
 
-        let (syncer, requests_tx, incoming_units_rx, created_units_tx) = Syncer::<E>::new(o, i);
+        let (syncer, requests_tx, incoming_units_rx, created_units_tx) =
+            Syncer::<E>::new(conf.node_id.clone(), o, i);
 
         let (parents_tx, parents_rx) = mpsc::unbounded_channel();
 
         let e = env.clone();
         let best_block = Box::new(move || e.lock().best_block());
         let creator = Some(Creator::<E>::new(
+            conf.node_id.clone(),
+            my_ix,
             parents_rx,
             created_units_tx,
             epoch_id,
-            my_ix,
             n_members,
             best_block,
         ));
@@ -171,7 +187,7 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
         let check_available = Box::new(move |h| env.lock().check_available(h));
 
         let mut terminal = Terminal::<E>::new(
-            conf.ix,
+            conf.node_id.clone(),
             incoming_units_rx,
             requests_tx.clone(),
             check_available,
@@ -195,15 +211,18 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
             }
         }));
         // try to extend the partial order after adding a unit to the dag
-        terminal.register_post_insert_hook(Box::new(
-            move |u| if electors_tx.send(u.into()).is_err() {},
-        ));
+        terminal.register_post_insert_hook(Box::new(move |u| {
+            let send_result = electors_tx.send(u.into());
+            if let Err(e) = send_result {
+                error!(target:"rush-terminal", "Unable to send a unit to Extender: {:?}.", e);
+            }
+        }));
         let finalizer = Some(finalizer);
         let syncer = Some(syncer);
         let terminal = Some(terminal);
 
         Consensus {
-            _conf: conf,
+            conf,
             terminal,
             extender,
             creator,
@@ -216,7 +235,7 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
 // This is to be called from within substrate
 impl<E: Environment> Consensus<E> {
     pub async fn run(mut self) {
-        debug!(target: "rush-init", "Starting all services...",);
+        debug!(target: "rush-init", "{} Starting all services...", self.conf.node_id);
         let mut creator = self.creator.take().unwrap();
         let _creator_handle = tokio::spawn(async move { creator.create().await });
         let mut terminal = self.terminal.take().unwrap();
@@ -228,7 +247,7 @@ impl<E: Environment> Consensus<E> {
         let mut finalizer = self.finalizer.take().unwrap();
         let _finalizer_handle = tokio::spawn(async move { finalizer.finalize().await });
 
-        debug!(target: "rush-init", "All services started.",);
+        debug!(target: "rush-init", "{} All services started.", self.conf.node_id);
 
         // TODO add close signal
     }
@@ -288,9 +307,9 @@ impl<B: HashT, H: HashT> Unit<B, H> {
     ) -> H {
         //TODO: need to write actual hashing here
 
-        let n_parents = control_hash.n_parents().0;
+        let n_members = control_hash.n_members().0;
 
-        ((round * n_parents + creator.0) as u32).into()
+        ((round * n_members + creator.0) as u32).into()
     }
 
     pub(crate) fn new_from_parents(
@@ -335,10 +354,18 @@ mod tests {
     use super::*;
     use crate::testing::environment::{self, BlockHash, Network};
 
+    fn init_log() {
+        let _ = env_logger::builder()
+            .filter_level(log::LevelFilter::max())
+            .is_test(true)
+            .try_init();
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn dummy() {
+        init_log();
         let net = Network::new();
-        let n_nodes = 2;
+        let n_nodes = 4;
         let mut finalized_blocks_rxs = Vec::new();
         let mut handles = Vec::new();
 
@@ -346,8 +373,8 @@ mod tests {
             let (mut env, rx) = environment::Environment::new(net.clone());
             finalized_blocks_rxs.push(rx);
             env.gen_chain(vec![(0.into(), vec![1.into()])]);
-            let conf = ConsensusConfig::new(node_ix.into(), n_nodes.into(), 0);
-            handles.push(tokio::spawn(Consensus::new(conf.clone(), env).run()));
+            let conf = ConsensusConfig::new(node_ix.into(), node_ix.into(), n_nodes.into(), 0);
+            handles.push(tokio::spawn(Consensus::new(conf, env).run()));
         }
 
         for mut rx in finalized_blocks_rxs.drain(..) {

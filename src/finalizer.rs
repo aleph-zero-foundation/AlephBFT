@@ -9,6 +9,7 @@ use log::debug;
 /// oracle should output `true` only for *strict extension* i.e. `extends_finalized(h)` should be
 /// `false` in case h is the most recently finalized block.
 pub(crate) struct Finalizer<E: Environment> {
+    node_id: E::NodeId,
     batch_rx: Receiver<Vec<E::BlockHash>>,
     finalize: Box<dyn Fn(E::BlockHash) + Sync + Send + 'static>,
     extends_finalized: Box<dyn Fn(E::BlockHash) -> bool + Sync + Send + 'static>,
@@ -16,12 +17,14 @@ pub(crate) struct Finalizer<E: Environment> {
 
 impl<E: Environment> Finalizer<E> {
     pub(crate) fn new(
+        node_id: E::NodeId,
         finalize: Box<dyn Fn(E::BlockHash) + Send + Sync + 'static>,
         extends_finalized: Box<dyn Fn(E::BlockHash) -> bool + Sync + Send + 'static>,
     ) -> (Self, Sender<Vec<E::BlockHash>>) {
         let (batch_tx, batch_rx) = mpsc::unbounded_channel();
         (
             Finalizer {
+                node_id,
                 batch_rx,
                 finalize,
                 extends_finalized,
@@ -35,7 +38,7 @@ impl<E: Environment> Finalizer<E> {
                 for h in batch {
                     if (self.extends_finalized)(h) {
                         (self.finalize)(h);
-                        debug!(target: "rush-finalizer", "Finalized block hash {}.", h);
+                        debug!(target: "rush-finalizer", "{} Finalized block hash {}.", self.node_id, h);
                     }
                 }
             }
@@ -64,8 +67,11 @@ mod tests {
         let e = env.clone();
         let env_extends_finalized = Box::new(move |h| e.lock().check_extends_finalized(h));
 
-        let (mut finalizer, batch_tx) =
-            Finalizer::<environment::Environment>::new(env_finalize, env_extends_finalized);
+        let (mut finalizer, batch_tx) = Finalizer::<environment::Environment>::new(
+            0.into(),
+            env_finalize,
+            env_extends_finalized,
+        );
         let _ = tokio::spawn(async move { finalizer.finalize().await });
 
         let _ = batch_tx.send(vec![BlockHash(1)]);
@@ -109,8 +115,11 @@ mod tests {
         let e = env.clone();
         let env_extends_finalized = Box::new(move |h| e.lock().check_extends_finalized(h));
 
-        let (mut finalizer, batch_tx) =
-            Finalizer::<environment::Environment>::new(env_finalize, env_extends_finalized);
+        let (mut finalizer, batch_tx) = Finalizer::<environment::Environment>::new(
+            0.into(),
+            env_finalize,
+            env_extends_finalized,
+        );
         let _ = tokio::spawn(async move { finalizer.finalize().await });
 
         let _ = batch_tx.send(vec![
