@@ -1,12 +1,13 @@
 #[cfg(test)]
 pub mod environment {
     use crate::Message;
-    use derive_more::Display;
+    use derive_more::{Display, From, Into};
     use futures::{Sink, Stream};
     use parking_lot::Mutex;
 
     use std::{
         collections::HashMap,
+        fmt,
         pin::Pin,
         sync::Arc,
         task::{Context, Poll},
@@ -15,8 +16,14 @@ pub mod environment {
 
     type Error = ();
 
-    #[derive(Hash, Debug, Display, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
-    pub struct Id(pub u32);
+    #[derive(Hash, From, Into, Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
+    pub struct NodeId(pub usize);
+
+    impl fmt::Display for NodeId {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "Node-{}", self.0)
+        }
+    }
 
     #[derive(Hash, Debug, Default, Display, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
     pub struct Hash(pub u32);
@@ -84,7 +91,7 @@ pub mod environment {
     }
 
     impl crate::Environment for Environment {
-        type NodeId = Id;
+        type NodeId = NodeId;
         type Hash = Hash;
         type BlockHash = BlockHash;
         type InstanceId = u32;

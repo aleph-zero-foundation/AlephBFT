@@ -15,3 +15,4 @@ derive_more = "0.99.7"
 serde = { version = "1.0.110", features = ["derive"] }
 futures-timer = "3.0.2"
 log = "0.4.14"
+env_logger = "0.8.3"

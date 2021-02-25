@@ -1,4 +1,4 @@
-use derive_more::{Add, AddAssign, From, Into, Sub, SubAssign, Sum};
+use derive_more::{Add, AddAssign, Display, From, Into, Sub, SubAssign, Sum};
 
 use std::{
     iter::FromIterator,
@@ -7,7 +7,7 @@ use std::{
 };
 
 /// The index of a node
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd, From)]
+#[derive(Copy, Clone, Debug, Display, Default, Eq, PartialEq, Hash, Ord, PartialOrd, From)]
 pub struct NodeIndex(pub(crate) usize);
 
 /// Node count -- if necessary this can be then generalized to weights
