@@ -291,18 +291,6 @@ pub struct Unit<B: HashT, H: HashT> {
     pub(crate) best_block: B,
 }
 
-impl<B: HashT, H: HashT> Encode for Unit<B, H> {
-    fn encode_to<T: Output>(&self, dest: &mut T) {
-        let mut bytes = self.epoch_id.to_le_bytes().to_vec();
-        bytes.append(&mut self.creator.0.to_le_bytes().to_vec());
-        bytes.append(&mut self.round.to_le_bytes().to_vec());
-        bytes.append(&mut self.hash.encode());
-        bytes.append(&mut self.control_hash.encode());
-        bytes.append(&mut self.best_block.encode());
-        Encode::encode_to(&bytes, dest)
-    }
-}
-
 impl<B: HashT, H: HashT> Unit<B, H> {
     pub(crate) fn hash(&self) -> H {
         self.hash
