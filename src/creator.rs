@@ -1,6 +1,6 @@
 use crate::{
     nodes::{NodeCount, NodeIndex, NodeMap},
-    Environment, EpochId, Receiver, Round, Sender, Unit,
+    Config, Environment, EpochId, MyIndex, Receiver, Round, Sender, Unit,
 };
 use log::{debug, error};
 
@@ -18,7 +18,6 @@ pub(crate) struct Creator<E: Environment> {
     parents_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
     new_units_tx: Sender<Unit<E::BlockHash, E::Hash>>,
     epoch_id: EpochId,
-    node_ix: NodeIndex,
     n_members: NodeCount,
     current_round: Round, // current_round is the round number of our next unit
     candidates_by_round: Vec<NodeMap<Option<E::Hash>>>,
@@ -29,18 +28,19 @@ pub(crate) struct Creator<E: Environment> {
 
 impl<E: Environment> Creator<E> {
     pub(crate) fn new(
-        node_id: E::NodeId,
-        node_ix: NodeIndex,
+        conf: Config<E::NodeId>,
         parents_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
         new_units_tx: Sender<Unit<E::BlockHash, E::Hash>>,
-        epoch_id: EpochId,
-        n_members: NodeCount,
         best_block: Box<dyn Fn() -> E::BlockHash + Send + Sync + 'static>,
         hashing: Box<E::Hashing>,
     ) -> Self {
+        let Config {
+            node_id,
+            n_members,
+            epoch_id,
+        } = conf;
         Creator {
             node_id,
-            node_ix,
             parents_rx,
             new_units_tx,
             epoch_id,
@@ -73,7 +73,7 @@ impl<E: Environment> Creator<E> {
         };
 
         let new_unit = Unit::new_from_parents(
-            self.node_ix,
+            self.node_id.my_index().unwrap(),
             round,
             self.epoch_id,
             parents,
@@ -112,7 +112,7 @@ impl<E: Environment> Creator<E> {
         let threshold = (self.n_members * 2) / 3;
 
         self.n_candidates_by_round[prev_round] > threshold
-            && self.candidates_by_round[prev_round][self.node_ix].is_some()
+            && self.candidates_by_round[prev_round][self.node_id.my_index().unwrap()].is_some()
     }
 
     pub(crate) async fn create(&mut self) {
