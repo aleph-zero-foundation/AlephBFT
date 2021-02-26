@@ -2,6 +2,7 @@ use crate::{
     nodes::{NodeCount, NodeIndex, NodeMap},
     Environment, EpochId, Receiver, Round, Sender, Unit,
 };
+use codec::{Encode, Output};
 use log::{debug, error};
 
 /// A process responsible for creating new units. It receives all the units added locally to the Dag
@@ -24,6 +25,18 @@ pub(crate) struct Creator<E: Environment> {
     candidates_by_round: Vec<NodeMap<Option<E::Hash>>>,
     n_candidates_by_round: Vec<NodeCount>,
     best_block: Box<dyn Fn() -> E::BlockHash + Send + Sync + 'static>,
+    hashing: Box<E::Hashing>,
+}
+
+impl<E: Environment> Encode for Creator<E> {
+    fn encode_to<T: Output>(&self, dest: &mut T) {
+        let mut bytes = self.epoch_id.to_le_bytes().to_vec();
+        bytes.append(&mut self.node_id.encode());
+        bytes.append(&mut self.node_ix.0.to_le_bytes().to_vec());
+        bytes.append(&mut self.n_members.0.to_le_bytes().to_vec());
+        bytes.append(&mut self.current_round.to_le_bytes().to_vec());
+        Encode::encode_to(&bytes, dest)
+    }
 }
 
 impl<E: Environment> Creator<E> {
@@ -35,6 +48,7 @@ impl<E: Environment> Creator<E> {
         epoch_id: EpochId,
         n_members: NodeCount,
         best_block: Box<dyn Fn() -> E::BlockHash + Send + Sync + 'static>,
+        hashing: Box<E::Hashing>,
     ) -> Self {
         Creator {
             node_id,
@@ -47,6 +61,7 @@ impl<E: Environment> Creator<E> {
             candidates_by_round: vec![NodeMap::new_with_len(n_members)],
             n_candidates_by_round: vec![NodeCount(0)],
             best_block,
+            hashing,
         }
     }
 
@@ -75,6 +90,7 @@ impl<E: Environment> Creator<E> {
             self.epoch_id,
             parents,
             (self.best_block)(),
+            &self.hashing,
         );
         debug!(target: "rush-creator", "{} Created a new unit {:?} at round {}.", self.node_id, new_unit, self.current_round);
         let send_result = self.new_units_tx.send(new_unit);

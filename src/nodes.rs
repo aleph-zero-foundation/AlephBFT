@@ -1,5 +1,5 @@
+use codec::Encode;
 use derive_more::{Add, AddAssign, Display, From, Into, Sub, SubAssign, Sum};
-
 use std::{
     iter::FromIterator,
     ops::{Div, Index, IndexMut, Mul},
@@ -46,7 +46,7 @@ impl Div<usize> for NodeCount {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, From, Hash)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, From, Hash, Encode)]
 pub struct NodeMap<T>(Vec<T>);
 
 impl<T> NodeMap<T> {

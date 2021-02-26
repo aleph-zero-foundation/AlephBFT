@@ -2,6 +2,7 @@
 //! requires access to an [Environment] object which black-boxes the network layer and gives
 //! appropriate access to the set of available blocks that we need to make consensus on.
 
+use codec::{Encode, Output};
 use futures::{Sink, Stream};
 use log::{debug, error};
 use parking_lot::Mutex;
@@ -29,20 +30,31 @@ mod syncer;
 mod terminal;
 mod testing;
 
-pub trait NodeIdT: Clone + Display + Debug + Send + Eq + Hash + 'static {}
+pub trait NodeIdT: Clone + Display + Debug + Send + Eq + Hash + Encode + 'static {}
 
-impl<I> NodeIdT for I where I: Clone + Display + Debug + Send + Eq + Hash + 'static {}
+impl<I> NodeIdT for I where I: Clone + Display + Debug + Send + Eq + Hash + Encode + 'static {}
 
 /// A hash, as an identifier for a block or unit.
 pub trait HashT:
     // TODO remove From<u32> after adding proper hash impl
-    Eq + Ord + Copy + Clone + Default + Send + Sync + Debug + Display + Hash + From<u32>
+    Eq + Ord + Copy + Clone + Default + Send + Sync + Debug + Display + Hash + From<u32> + Encode
 {
 }
 
 impl<H> HashT for H where
     // TODO remove From<u32> after adding proper hash impl
-    H: Eq + Ord + Copy + Clone + Send + Sync + Default + Debug + Display + Hash + From<u32>
+    H: Eq
+        + Ord
+        + Copy
+        + Clone
+        + Send
+        + Sync
+        + Default
+        + Debug
+        + Display
+        + Hash
+        + From<u32>
+        + Encode
 {
 }
 
@@ -56,6 +68,7 @@ pub trait Environment {
     type BlockHash: HashT;
     /// The ID of a consensus protocol instance.
     type InstanceId: HashT;
+    type Hashing: Fn(&[u8]) -> Self::Hash + Send + Sync + 'static;
 
     type Crypto;
     type In: Stream<Item = Message<Self::BlockHash, Self::Hash>> + Send + Unpin;
@@ -84,6 +97,7 @@ pub trait Environment {
     /// messages.
     fn consensus_data(&self) -> (Self::Out, Self::In);
     fn hash(data: &[u8]) -> Self::Hash;
+    fn hashing() -> Self::Hashing;
 }
 
 pub enum Error {}
@@ -174,6 +188,7 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
 
         let e = env.clone();
         let best_block = Box::new(move || e.lock().best_block());
+        let hashing = Box::new(E::hashing());
         let creator = Some(Creator::<E>::new(
             conf.node_id.clone(),
             my_ix,
@@ -182,6 +197,7 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
             epoch_id,
             n_members,
             best_block,
+            hashing,
         ));
 
         let check_available = Box::new(move |h| env.lock().check_available(h));
@@ -253,7 +269,7 @@ impl<E: Environment> Consensus<E> {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Encode)]
 pub struct ControlHash<H: HashT> {
     // TODO we need to optimize it for it to take O(N) bits of memory not O(N) words.
     pub parents: NodeMap<bool>,
@@ -288,6 +304,18 @@ pub struct Unit<B: HashT, H: HashT> {
     pub(crate) best_block: B,
 }
 
+impl<B: HashT, H: HashT> Encode for Unit<B, H> {
+    fn encode_to<T: Output>(&self, dest: &mut T) {
+        let mut bytes = self.epoch_id.to_le_bytes().to_vec();
+        bytes.append(&mut self.creator.0.to_le_bytes().to_vec());
+        bytes.append(&mut self.round.to_le_bytes().to_vec());
+        bytes.append(&mut self.hash.encode());
+        bytes.append(&mut self.control_hash.encode());
+        bytes.append(&mut self.best_block.encode());
+        Encode::encode_to(&bytes, dest)
+    }
+}
+
 impl<B: HashT, H: HashT> Unit<B, H> {
     pub(crate) fn hash(&self) -> H {
         self.hash
@@ -299,32 +327,39 @@ impl<B: HashT, H: HashT> Unit<B, H> {
         self.round
     }
 
-    pub(crate) fn compute_hash(
-        creator: NodeIndex,
-        round: Round,
-        _epoch_id: EpochId,
-        control_hash: &ControlHash<H>,
-    ) -> H {
-        //TODO: need to write actual hashing here
+    //pub(crate) fn compute_hash(
+    //	creator: NodeIndex,
+    //	round: Round,
+    //	_epoch_id: EpochId,
+    //	control_hash: &ControlHash<H>,
+    //) -> H {
+    //TODO: need to write actual hashing here
 
-        let n_members = control_hash.n_members().0;
+    //	let n_members = control_hash.n_members().0;
 
-        ((round * n_members + creator.0) as u32).into()
-    }
+    //	((round * n_members + creator.0) as u32).into()
+    //}
 
-    pub(crate) fn new_from_parents(
+    pub(crate) fn new_from_parents<Hashing: Fn(&[u8]) -> H>(
         creator: NodeIndex,
         round: Round,
         epoch_id: EpochId,
         parents: NodeMap<Option<H>>,
         best_block: B,
+        hashing: Hashing,
     ) -> Self {
+        let mut v = vec![];
+        v.extend(creator.0.to_le_bytes().to_vec());
+        v.extend(round.to_le_bytes().to_vec());
+        v.extend(epoch_id.to_le_bytes().to_vec());
+        v.extend(parents.encode());
+        v.extend(best_block.encode());
         let control_hash = ControlHash::new(parents);
         Unit {
             creator,
             round,
             epoch_id,
-            hash: Self::compute_hash(creator, round, epoch_id, &control_hash),
+            hash: (hashing(&v)),
             control_hash,
             best_block,
         }
