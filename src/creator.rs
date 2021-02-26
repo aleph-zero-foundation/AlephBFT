@@ -24,7 +24,6 @@ pub(crate) struct Creator<E: Environment> {
     candidates_by_round: Vec<NodeMap<Option<E::Hash>>>,
     n_candidates_by_round: Vec<NodeCount>,
     best_block: Box<dyn Fn() -> E::BlockHash + Send + Sync + 'static>,
-    hashing: Box<E::Hashing>,
 }
 
 impl<E: Environment> Creator<E> {
@@ -36,7 +35,6 @@ impl<E: Environment> Creator<E> {
         epoch_id: EpochId,
         n_members: NodeCount,
         best_block: Box<dyn Fn() -> E::BlockHash + Send + Sync + 'static>,
-        hashing: Box<E::Hashing>,
     ) -> Self {
         Creator {
             node_id,
@@ -49,7 +47,6 @@ impl<E: Environment> Creator<E> {
             candidates_by_round: vec![NodeMap::new_with_len(n_members)],
             n_candidates_by_round: vec![NodeCount(0)],
             best_block,
-            hashing,
         }
     }
 
@@ -78,7 +75,6 @@ impl<E: Environment> Creator<E> {
             self.epoch_id,
             parents,
             (self.best_block)(),
-            &self.hashing,
         );
         debug!(target: "rush-creator", "{} Created a new unit {:?} at round {}.", self.node_id, new_unit, self.current_round);
         let send_result = self.new_units_tx.send(new_unit);

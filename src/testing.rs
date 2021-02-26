@@ -1,16 +1,13 @@
 #[cfg(test)]
 pub mod environment {
     use crate::Message;
-    use codec::{Encode, Output};
     use derive_more::{Display, From, Into};
     use futures::{Sink, Stream};
     use parking_lot::Mutex;
 
     use std::{
-        collections::hash_map::DefaultHasher,
         collections::HashMap,
         fmt,
-        hash::Hasher,
         pin::Pin,
         sync::Arc,
         task::{Context, Poll},
@@ -22,22 +19,13 @@ pub mod environment {
     #[derive(Hash, From, Into, Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
     pub struct NodeId(pub usize);
 
-    impl Encode for NodeId {
-        fn encode_to<T: Output>(&self, dest: &mut T) {
-            let bytes = self.0.to_le_bytes().to_vec();
-            Encode::encode_to(&bytes, dest)
-        }
-    }
-
     impl fmt::Display for NodeId {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             write!(f, "Node-{}", self.0)
         }
     }
 
-    #[derive(
-        Hash, Debug, Default, Display, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Encode,
-    )]
+    #[derive(Hash, Debug, Default, Display, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
     pub struct Hash(pub u32);
 
     impl From<u32> for Hash {
@@ -46,9 +34,7 @@ pub mod environment {
         }
     }
 
-    #[derive(
-        Hash, Debug, Default, Display, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Encode,
-    )]
+    #[derive(Hash, Debug, Default, Display, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
     pub struct BlockHash(pub u32);
 
     impl From<u32> for BlockHash {
@@ -113,7 +99,6 @@ pub mod environment {
         type Error = Error;
         type Out = Out;
         type In = In;
-        type Hashing = Box<dyn Fn(&[u8]) -> Self::Hash + Send + Sync + 'static>;
 
         fn finalize_block(&mut self, h: Self::BlockHash) {
             self.calls_to_finalize.push(h);
@@ -142,14 +127,6 @@ pub mod environment {
 
         fn consensus_data(&self) -> (Self::Out, Self::In) {
             self.network.consensus_data()
-        }
-
-        fn hashing() -> Self::Hashing {
-            Box::new(|x: &[u8]| {
-                let mut hasher = DefaultHasher::new();
-                hasher.write(x);
-                Hash(hasher.finish() as u32)
-            })
         }
     }
 
