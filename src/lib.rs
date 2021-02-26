@@ -2,7 +2,7 @@
 //! requires access to an [Environment] object which black-boxes the network layer and gives
 //! appropriate access to the set of available blocks that we need to make consensus on.
 
-use codec::{Encode, Output};
+use codec::Encode;
 use futures::{Sink, Stream};
 use log::{debug, error};
 use parking_lot::Mutex;
@@ -321,7 +321,7 @@ impl<B: HashT, H: HashT> Unit<B, H> {
             creator,
             round,
             epoch_id,
-            hash: (hashing(&v)),
+            hash: hashing(&v),
             control_hash,
             best_block,
         }
@@ -349,7 +349,7 @@ impl<B: HashT, H: HashT> Unit<B, H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::environment::{self, BlockHash, Network};
+    use crate::testing::environment::{self, BlockHash, Network, NodeId};
 
     fn init_log() {
         let _ = env_logger::builder()
@@ -367,7 +367,7 @@ mod tests {
         let mut handles = Vec::new();
 
         for node_ix in 0..n_nodes {
-            let (mut env, rx) = environment::Environment::new(net.clone());
+            let (mut env, rx) = environment::Environment::new(NodeId(node_ix), net.clone());
             finalized_blocks_rxs.push(rx);
             env.gen_chain(vec![(0.into(), vec![1.into()])]);
             let conf = ConsensusConfig::new(node_ix.into(), node_ix.into(), n_nodes.into(), 0);

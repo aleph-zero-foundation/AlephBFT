@@ -49,14 +49,14 @@ impl<E: Environment> Finalizer<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::environment::{self, BlockHash, Network};
+    use crate::testing::environment::{self, BlockHash, Network, NodeId};
     use parking_lot::Mutex;
     use std::sync::Arc;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
     async fn finalize_blocks() {
         let net = Network::new();
-        let (mut env, mut finalized_blocks_rx) = environment::Environment::new(net);
+        let (mut env, mut finalized_blocks_rx) = environment::Environment::new(NodeId(0), net);
         env.import_block(1.into(), 0.into());
         env.import_block(2.into(), 1.into());
 
@@ -90,7 +90,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
     async fn ignore_block_not_extending_finalized() {
         let net = Network::new();
-        let (mut env, mut finalized_blocks_rx) = environment::Environment::new(net);
+        let (mut env, mut finalized_blocks_rx) = environment::Environment::new(NodeId(0), net);
 
         // Block tree constructed below:
         //     5

@@ -1,14 +1,13 @@
 #[cfg(test)]
 pub mod environment {
-    use crate::Message;
+    use crate::{Message, NodeIndex, Round, Unit};
     use codec::{Encode, Output};
     use derive_more::{Display, From, Into};
     use futures::{Sink, Stream};
     use parking_lot::Mutex;
 
     use std::{
-        collections::hash_map::DefaultHasher,
-        collections::HashMap,
+        collections::{hash_map::DefaultHasher, HashMap},
         fmt,
         hash::Hasher,
         pin::Pin,
@@ -61,6 +60,7 @@ pub mod environment {
     type In = Box<dyn Stream<Item = Message<BlockHash, Hash>> + Send + Unpin>;
 
     pub(crate) struct Environment {
+        node_id: NodeId,
         chain: Chain,
         network: Network,
         finalized_notifier: UnboundedSender<Block>,
@@ -69,12 +69,14 @@ pub mod environment {
 
     impl Environment {
         pub(crate) fn new_with_chain(
+            node_id: NodeId,
             network: Network,
             chain: Chain,
         ) -> (Self, UnboundedReceiver<Block>) {
             let (finalized_tx, finalized_rx) = unbounded_channel();
             (
                 Environment {
+                    node_id,
                     chain,
                     network,
                     finalized_notifier: finalized_tx,
@@ -84,9 +86,9 @@ pub mod environment {
             )
         }
 
-        pub(crate) fn new(network: Network) -> (Self, UnboundedReceiver<Block>) {
+        pub(crate) fn new(node_id: NodeId, network: Network) -> (Self, UnboundedReceiver<Block>) {
             let chain = Chain::new();
-            Self::new_with_chain(network, chain)
+            Self::new_with_chain(node_id, network, chain)
         }
 
         pub(crate) fn get_log_finalize_calls(&self) -> Vec<BlockHash> {
@@ -141,7 +143,7 @@ pub mod environment {
         }
 
         fn consensus_data(&self) -> (Self::Out, Self::In) {
-            self.network.consensus_data()
+            self.network.consensus_data(self.node_id)
         }
 
         fn hashing() -> Self::Hashing {
@@ -288,33 +290,68 @@ pub mod environment {
             list_finalized
         }
     }
-
+    type Units = Arc<Mutex<HashMap<(Round, NodeIndex), Unit<BlockHash, Hash>>>>;
     #[derive(Clone)]
     pub(crate) struct Network {
-        senders: BcastSink,
+        senders: Senders,
+        units: Units,
     }
 
     impl Network {
         pub(crate) fn new() -> Self {
             Network {
-                senders: BcastSink(Arc::new(Mutex::new(vec![]))),
+                senders: Arc::new(Mutex::new(vec![])),
+                units: Arc::new(Mutex::new(HashMap::new())),
             }
         }
-        pub(crate) fn consensus_data(&self) -> (Out, In) {
+        pub(crate) fn consensus_data(&self, node_id: NodeId) -> (Out, In) {
             let stream;
             {
                 let (tx, rx) = unbounded_channel();
                 stream = BcastStream(rx);
-                self.senders.0.lock().push(tx);
+                self.senders.lock().push((node_id, tx));
             }
-            let sink = Box::new(BcastSink(self.senders.0.clone()));
+            let sink = Box::new(BcastSink {
+                node_id,
+                senders: self.senders.clone(),
+                units: self.units.clone(),
+            });
 
             (sink, Box::new(stream))
         }
     }
 
+    type Sender = (NodeId, UnboundedSender<Message<BlockHash, Hash>>);
+    type Senders = Arc<Mutex<Vec<Sender>>>;
+
     #[derive(Clone)]
-    struct BcastSink(Arc<Mutex<Vec<UnboundedSender<Message<BlockHash, Hash>>>>>);
+    struct BcastSink {
+        node_id: NodeId,
+        senders: Senders,
+        units: Units,
+    }
+
+    impl BcastSink {
+        fn do_send(&self, msg: Message<BlockHash, Hash>, recipient: &Sender) {
+            let (node_id, tx) = recipient;
+            if *node_id != self.node_id {
+                let _ = tx.send(msg);
+            }
+        }
+        fn send_to_all(&self, msg: Message<BlockHash, Hash>) {
+            self.senders
+                .lock()
+                .iter()
+                .for_each(|r| self.do_send(msg.clone(), r));
+        }
+        fn send_to_peer(&self, msg: Message<BlockHash, Hash>, peer: NodeId) {
+            let _ = self.senders.lock().iter().for_each(|r| {
+                if r.0 == peer {
+                    self.do_send(msg.clone(), r);
+                }
+            });
+        }
+    }
 
     impl Sink<Message<BlockHash, Hash>> for BcastSink {
         type Error = Error;
@@ -334,8 +371,22 @@ pub mod environment {
             self: Pin<&mut Self>,
             m: Message<BlockHash, Hash>,
         ) -> Result<(), Self::Error> {
-            for tx in self.0.lock().iter() {
-                let _ = tx.send(m.clone());
+            use Message::*;
+            match m {
+                Multicast(ref u) => {
+                    let coord = (u.round(), u.creator());
+                    self.units.lock().insert(coord, u.clone());
+                    self.send_to_all(m.clone());
+                }
+                FetchRequest(coords, recipient) => {
+                    let units = coords
+                        .iter()
+                        .map(|coord| self.units.lock().get(coord).cloned().unwrap())
+                        .collect();
+                    let response = FetchResponse(units, recipient);
+                    self.send_to_peer(response, self.node_id);
+                }
+                _ => (),
             }
             Ok(())
         }
@@ -355,45 +406,35 @@ pub mod environment {
 #[cfg(test)]
 mod tests {
     use super::environment::*;
-    use crate::Message;
+    use crate::{Message, Unit};
     use futures::{sink::SinkExt, stream::StreamExt};
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
     async fn comm() {
         let n = Network::new();
-        let (mut out0, mut in0) = n.consensus_data();
-        let (mut out1, mut in1) = n.consensus_data();
+        let (mut out0, mut in0) = n.consensus_data(NodeId(0));
+        let (mut out1, mut in1) = n.consensus_data(NodeId(1));
+        let u0 = Unit {
+            creator: 0.into(),
+            ..Unit::default()
+        };
+        let u1 = Unit {
+            creator: 1.into(),
+            ..Unit::default()
+        };
 
+        let u = u1.clone();
         let h0 = tokio::spawn(async move {
-            assert_eq!(
-                in0.next().await.unwrap(),
-                Message::FetchRequest(vec![], 0.into()),
-            );
-            assert_eq!(
-                in0.next().await.unwrap(),
-                Message::FetchRequest(vec![], 1.into()),
-            );
+            assert_eq!(in0.next().await.unwrap(), Message::Multicast(u),);
         });
 
+        let u = u0.clone();
         let h1 = tokio::spawn(async move {
-            assert_eq!(
-                in1.next().await.unwrap(),
-                Message::FetchRequest(vec![], 0.into()),
-            );
-            assert_eq!(
-                in1.next().await.unwrap(),
-                Message::FetchRequest(vec![], 1.into()),
-            );
+            assert_eq!(in1.next().await.unwrap(), Message::Multicast(u));
         });
 
-        assert!(out0
-            .send(Message::FetchRequest(vec![], 0.into()))
-            .await
-            .is_ok());
-        assert!(out1
-            .send(Message::FetchRequest(vec![], 1.into()))
-            .await
-            .is_ok());
+        assert!(out0.send(Message::Multicast(u0)).await.is_ok());
+        assert!(out1.send(Message::Multicast(u1)).await.is_ok());
         assert!(h0.await.is_ok());
         assert!(h1.await.is_ok());
     }
