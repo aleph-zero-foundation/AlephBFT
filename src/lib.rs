@@ -30,9 +30,15 @@ mod syncer;
 mod terminal;
 mod testing;
 
-pub trait NodeIdT: Clone + Display + Debug + Send + Eq + Hash + Encode + 'static {}
+pub trait MyIndex {
+    fn my_index(&self) -> Option<NodeIndex>;
+}
+pub trait NodeIdT: Clone + Display + Debug + Send + Eq + Hash + Encode + MyIndex + 'static {}
 
-impl<I> NodeIdT for I where I: Clone + Display + Debug + Send + Eq + Hash + Encode + 'static {}
+impl<I> NodeIdT for I where
+    I: Clone + Display + Debug + Send + Eq + Hash + Encode + MyIndex + 'static
+{
+}
 
 /// A hash, as an identifier for a block or unit.
 pub trait HashT:
@@ -107,24 +113,16 @@ pub enum Message<B: HashT, H: HashT> {
 }
 
 #[derive(Clone)]
-pub struct ConsensusConfig<E: Environment> {
-    pub(crate) node_id: E::NodeId,
-    //TODO: we need to get rid of my_ix field here when adding support for non-committee nodes
-    my_ix: NodeIndex,
+pub struct Config<NI: NodeIdT> {
+    pub(crate) node_id: NI,
     n_members: NodeCount,
     epoch_id: EpochId,
 }
 
-impl<E: Environment> ConsensusConfig<E> {
-    pub fn new(
-        node_id: E::NodeId,
-        my_ix: NodeIndex,
-        n_members: NodeCount,
-        epoch_id: EpochId,
-    ) -> Self {
-        ConsensusConfig {
+impl<NI: NodeIdT> Config<NI> {
+    pub fn new(node_id: NI, n_members: NodeCount, epoch_id: EpochId) -> Self {
+        Config {
             node_id,
-            my_ix,
             n_members,
             epoch_id,
         }
@@ -132,7 +130,7 @@ impl<E: Environment> ConsensusConfig<E> {
 }
 
 pub struct Consensus<E: Environment + 'static> {
-    conf: ConsensusConfig<E>,
+    conf: Config<E::NodeId>,
     creator: Option<Creator<E>>,
     terminal: Option<Terminal<E>>,
     extender: Option<Extender<E>>,
@@ -144,7 +142,7 @@ pub(crate) type Receiver<T> = mpsc::UnboundedReceiver<T>;
 pub(crate) type Sender<T> = mpsc::UnboundedSender<T>;
 
 impl<E: Environment + Send + Sync + 'static> Consensus<E> {
-    pub fn new(conf: ConsensusConfig<E>, env: E) -> Self {
+    pub fn new(conf: Config<E::NodeId>, env: E) -> Self {
         let (o, i) = env.consensus_data();
         let env = Arc::new(Mutex::new(env));
 
@@ -156,9 +154,7 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
         let (finalizer, batch_tx) =
             Finalizer::<E>::new(conf.node_id.clone(), env_finalize, env_extends_finalized);
 
-        let my_ix = conf.my_ix;
         let n_members = conf.n_members;
-        let epoch_id = conf.epoch_id;
 
         let (electors_tx, electors_rx) = mpsc::unbounded_channel();
         let extender = Some(Extender::<E>::new(
@@ -177,12 +173,9 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
         let best_block = Box::new(move || e.lock().best_block());
         let hashing = Box::new(E::hashing());
         let creator = Some(Creator::<E>::new(
-            conf.node_id.clone(),
-            my_ix,
+            conf.clone(),
             parents_rx,
             created_units_tx,
-            epoch_id,
-            n_members,
             best_block,
             hashing,
         ));
@@ -197,6 +190,7 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
         );
 
         // send a multicast request
+        let my_ix = conf.node_id.my_index().unwrap();
         terminal.register_post_insert_hook(Box::new(move |u| {
             if my_ix == u.creator() {
                 // send unit u corresponding to v
@@ -226,9 +220,9 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
 
         Consensus {
             conf,
+            creator,
             terminal,
             extender,
-            creator,
             syncer,
             finalizer,
         }
@@ -370,7 +364,7 @@ mod tests {
             let (mut env, rx) = environment::Environment::new(NodeId(node_ix), net.clone());
             finalized_blocks_rxs.push(rx);
             env.gen_chain(vec![(0.into(), vec![1.into()])]);
-            let conf = ConsensusConfig::new(node_ix.into(), node_ix.into(), n_nodes.into(), 0);
+            let conf = Config::new(node_ix.into(), n_nodes.into(), 0);
             handles.push(tokio::spawn(Consensus::new(conf, env).run()));
         }
 

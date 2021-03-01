@@ -1,6 +1,6 @@
 #[cfg(test)]
 pub mod environment {
-    use crate::{Message, NodeIndex, Round, Unit};
+    use crate::{Message, MyIndex, NodeIndex, Round, Unit};
     use codec::{Encode, Output};
     use derive_more::{Display, From, Into};
     use futures::{Sink, Stream};
@@ -31,6 +31,12 @@ pub mod environment {
     impl fmt::Display for NodeId {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             write!(f, "Node-{}", self.0)
+        }
+    }
+
+    impl MyIndex for NodeId {
+        fn my_index(&self) -> Option<NodeIndex> {
+            Some(NodeIndex(self.0))
         }
     }
 
