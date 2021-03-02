@@ -1,6 +1,6 @@
 #[cfg(test)]
 pub mod environment {
-    use crate::{Message, MyIndex, NodeIndex, Round, Unit};
+    use crate::{MyIndex, NodeIndex, NotificationIn, NotificationOut, Round, Unit};
     use codec::{Encode, Output};
     use derive_more::{Display, From, Into};
     use futures::{Sink, Stream};
@@ -62,8 +62,8 @@ pub mod environment {
         }
     }
 
-    type Out = Box<dyn Sink<Message<BlockHash, Hash>, Error = Error> + Send + Unpin>;
-    type In = Box<dyn Stream<Item = Message<BlockHash, Hash>> + Send + Unpin>;
+    type Out = Box<dyn Sink<NotificationOut<BlockHash, Hash>, Error = Error> + Send + Unpin>;
+    type In = Box<dyn Stream<Item = NotificationIn<BlockHash, Hash>> + Send + Unpin>;
 
     pub(crate) struct Environment {
         node_id: NodeId,
@@ -297,6 +297,7 @@ pub mod environment {
         }
     }
     type Units = Arc<Mutex<HashMap<(Round, NodeIndex), Unit<BlockHash, Hash>>>>;
+
     #[derive(Clone)]
     pub(crate) struct Network {
         senders: Senders,
@@ -327,7 +328,7 @@ pub mod environment {
         }
     }
 
-    type Sender = (NodeId, UnboundedSender<Message<BlockHash, Hash>>);
+    type Sender = (NodeId, UnboundedSender<NotificationIn<BlockHash, Hash>>);
     type Senders = Arc<Mutex<Vec<Sender>>>;
 
     #[derive(Clone)]
@@ -338,19 +339,19 @@ pub mod environment {
     }
 
     impl BcastSink {
-        fn do_send(&self, msg: Message<BlockHash, Hash>, recipient: &Sender) {
+        fn do_send(&self, msg: NotificationIn<BlockHash, Hash>, recipient: &Sender) {
             let (node_id, tx) = recipient;
             if *node_id != self.node_id {
                 let _ = tx.send(msg);
             }
         }
-        fn send_to_all(&self, msg: Message<BlockHash, Hash>) {
+        fn send_to_all(&self, msg: NotificationIn<BlockHash, Hash>) {
             self.senders
                 .lock()
                 .iter()
                 .for_each(|r| self.do_send(msg.clone(), r));
         }
-        fn send_to_peer(&self, msg: Message<BlockHash, Hash>, peer: NodeId) {
+        fn send_to_peer(&self, msg: NotificationIn<BlockHash, Hash>, peer: NodeId) {
             let _ = self.senders.lock().iter().for_each(|r| {
                 if r.0 == peer {
                     self.do_send(msg.clone(), r);
@@ -359,7 +360,7 @@ pub mod environment {
         }
     }
 
-    impl Sink<Message<BlockHash, Hash>> for BcastSink {
+    impl Sink<NotificationOut<BlockHash, Hash>> for BcastSink {
         type Error = Error;
         fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
             Poll::Ready(Ok(()))
@@ -375,33 +376,33 @@ pub mod environment {
 
         fn start_send(
             self: Pin<&mut Self>,
-            m: Message<BlockHash, Hash>,
+            m: NotificationOut<BlockHash, Hash>,
         ) -> Result<(), Self::Error> {
-            use Message::*;
             match m {
-                Multicast(ref u) => {
+                NotificationOut::CreatedUnit(u) => {
                     let coord = (u.round(), u.creator());
                     self.units.lock().insert(coord, u.clone());
-                    self.send_to_all(m.clone());
+                    self.send_to_all(NotificationIn::NewUnit(u));
                 }
-                FetchRequest(coords, recipient) => {
-                    let units = coords
+                NotificationOut::MissingUnits(coords, _aux_data) => {
+                    let units: Vec<Unit<BlockHash, Hash>> = coords
                         .iter()
                         .map(|coord| self.units.lock().get(coord).cloned().unwrap())
                         .collect();
-                    let response = FetchResponse(units, recipient);
-                    self.send_to_peer(response, self.node_id);
+                    for u in units {
+                        let response = NotificationIn::NewUnit(u);
+                        self.send_to_peer(response, self.node_id);
+                    }
                 }
-                _ => (),
             }
             Ok(())
         }
     }
 
-    struct BcastStream(UnboundedReceiver<Message<BlockHash, Hash>>);
+    struct BcastStream(UnboundedReceiver<NotificationIn<BlockHash, Hash>>);
 
     impl Stream for BcastStream {
-        type Item = Message<BlockHash, Hash>;
+        type Item = NotificationIn<BlockHash, Hash>;
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
             // here we may add custom logic for dropping/changing messages
             self.0.poll_recv(cx)
@@ -412,7 +413,7 @@ pub mod environment {
 #[cfg(test)]
 mod tests {
     use super::environment::*;
-    use crate::{Message, Unit};
+    use crate::{NotificationIn, NotificationOut, Unit};
     use futures::{sink::SinkExt, stream::StreamExt};
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
@@ -431,16 +432,16 @@ mod tests {
 
         let u = u1.clone();
         let h0 = tokio::spawn(async move {
-            assert_eq!(in0.next().await.unwrap(), Message::Multicast(u),);
+            assert_eq!(in0.next().await.unwrap(), NotificationIn::NewUnit(u),);
         });
 
         let u = u0.clone();
         let h1 = tokio::spawn(async move {
-            assert_eq!(in1.next().await.unwrap(), Message::Multicast(u));
+            assert_eq!(in1.next().await.unwrap(), NotificationIn::NewUnit(u));
         });
 
-        assert!(out0.send(Message::Multicast(u0)).await.is_ok());
-        assert!(out1.send(Message::Multicast(u1)).await.is_ok());
+        assert!(out0.send(NotificationOut::CreatedUnit(u0)).await.is_ok());
+        assert!(out1.send(NotificationOut::CreatedUnit(u1)).await.is_ok());
         assert!(h0.await.is_ok());
         assert!(h1.await.is_ok());
     }

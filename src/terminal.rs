@@ -3,13 +3,12 @@ use std::collections::{hash_map::Entry, BinaryHeap, HashMap, VecDeque};
 use crate::{
     extender::ExtenderUnit,
     nodes::{NodeCount, NodeIndex, NodeMap},
-    Environment, HashT, Message, Receiver, Round, Sender, Unit,
+    Environment, HashT, NotificationOut, Receiver, RequestAuxData, Round, Sender, Unit,
 };
 use log::{debug, error};
 use std::cmp::Ordering;
 use tokio::time;
 
-pub const FETCH_INTERVAL: time::Duration = time::Duration::from_secs(4);
 pub const BLOCK_AVAILABLE_INTERVAL: time::Duration = time::Duration::from_millis(50);
 pub const TICK_INTERVAL: time::Duration = time::Duration::from_millis(10);
 
@@ -75,7 +74,7 @@ impl<B: HashT, H: HashT> TerminalUnit<B, H> {
         self.unit.creator
     }
 
-    pub(crate) fn round(&self) -> Round {
+    pub(crate) fn _round(&self) -> Round {
         self.unit.round
     }
 
@@ -100,7 +99,6 @@ pub enum TerminalEvent<H: HashT> {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Task {
     CheckBlockAvailable,
-    RequestParents,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -145,7 +143,7 @@ pub(crate) struct Terminal<E: Environment + 'static> {
     // A channel for receiving new units (they might also come from the local node).
     new_units_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
     // A channel to push unit requests.
-    requests_tx: Sender<Message<E::BlockHash, E::Hash>>,
+    requests_tx: Sender<NotificationOut<E::BlockHash, E::Hash>>,
     // An oracle for checking if a given block hash h is available. This is needed to check for a new unit
     // U whether the block it carries is available, and hence the unit U should be accepted (or held aside
     // till the block is available).
@@ -178,7 +176,7 @@ impl<E: Environment + 'static> Terminal<E> {
     pub(crate) fn new(
         node_id: E::NodeId,
         new_units_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
-        requests_tx: Sender<Message<E::BlockHash, E::Hash>>,
+        requests_tx: Sender<NotificationOut<E::BlockHash, E::Hash>>,
         check_available: Box<dyn Fn(E::BlockHash) -> bool + Sync + Send + 'static>,
     ) -> Self {
         Terminal {
@@ -259,6 +257,7 @@ impl<E: Environment + 'static> Terminal<E> {
             self.event_queue
                 .push_back(TerminalEvent::ParentsReconstructed(u_hash));
         } else {
+            let mut coords_to_request = Vec::new();
             for (i, b) in u.control_hash.parents.enumerate() {
                 if *b {
                     let coord = (u_round - 1, i);
@@ -267,8 +266,18 @@ impl<E: Environment + 'static> Terminal<E> {
                         Some(v_hash) => self.reconstruct_parent(&u_hash, i, &v_hash),
                         None => {
                             self.add_coord_trigger(u_round - 1, i, u_hash);
+                            coords_to_request.push((u.round() - 1, i));
                         }
                     }
+                }
+            }
+            if !coords_to_request.is_empty() {
+                let aux_data = RequestAuxData::new(u.creator);
+                let send_result = self
+                    .requests_tx
+                    .send(NotificationOut::MissingUnits(coords_to_request, aux_data));
+                if let Err(e) = send_result {
+                    error!(target: "rush-terminal", "{} Unable to place a Fetch request: {:?}.", self.node_id, e);
                 }
             }
         }
@@ -288,12 +297,6 @@ impl<E: Environment + 'static> Terminal<E> {
         debug!(target: "rush-terminal", "{} Adding to store {:?}", self.node_id, u.hash());
         if let Entry::Vacant(entry) = self.unit_store.entry(u.hash()) {
             entry.insert(TerminalUnit::<E::BlockHash, E::Hash>::blank_from_unit(&u));
-            let curr_time = time::Instant::now();
-            self.scheduled_task_queue.push(ScheduledTask::new(
-                u.hash(),
-                curr_time,
-                Task::RequestParents,
-            ));
             self.update_on_store_add(u);
         }
     }
@@ -350,27 +353,6 @@ impl<E: Environment + 'static> Terminal<E> {
             let note = self.scheduled_task_queue.pop().unwrap();
             let u = self.unit_store.get(&note.unit).unwrap();
             match note.task {
-                Task::RequestParents => {
-                    if u.status == UnitStatus::ReconstructingParents {
-                        // This means there are some unavailable parents for this unit...
-                        for (i, b) in u.unit.control_hash.parents.enumerate() {
-                            if *b && u.parents[i].is_none() {
-                                let send_result = self
-                                    .requests_tx
-                                    .send(Message::FetchRequest(vec![(u.round() - 1, i)], i));
-                                if let Err(e) = send_result {
-                                    error!(target: "rush-terminal", "{} Unable to place a Fetch request: {:?}.", self.node_id, e);
-                                }
-                            }
-                        }
-                        // We might not be done, so we schedule the same task after FETCH_INTERVAL seconds.
-                        self.scheduled_task_queue.push(ScheduledTask::new(
-                            note.unit,
-                            curr_time + FETCH_INTERVAL,
-                            Task::RequestParents,
-                        ));
-                    }
-                }
                 Task::CheckBlockAvailable => {
                     if u.status == UnitStatus::WaitingBlockAvailable {
                         if (self.check_available)(u.unit.best_block) {
