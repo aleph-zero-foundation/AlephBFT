@@ -64,8 +64,8 @@ pub trait Environment {
     type Hashing: Fn(&[u8]) -> Self::Hash + Send + Sync + 'static;
 
     type Crypto;
-    type In: Stream<Item = Message<Self::BlockHash, Self::Hash>> + Send + Unpin;
-    type Out: Sink<Message<Self::BlockHash, Self::Hash>, Error = Self::Error> + Send + Unpin;
+    type In: Stream<Item = NotificationIn<Self::BlockHash, Self::Hash>> + Send + Unpin;
+    type Out: Sink<NotificationOut<Self::BlockHash, Self::Hash>, Error = Self::Error> + Send + Unpin;
     type Error: Send + Sync + std::fmt::Debug;
 
     /// Supposed to be called whenever a new block is finalized according to the protocol.
@@ -98,18 +98,38 @@ pub enum Error {}
 pub type Round = usize;
 pub type EpochId = usize;
 
-/// Type for Consensus messages.
+/// Type used in NotificationOut::MissingUnits to give additional info about the missing units that might
+/// help the Environment to fetch them (currently this is the node_ix of the unit whose parents are missing).
 #[derive(Clone, Debug, PartialEq)]
-pub enum Message<B: HashT, H: HashT> {
-    /// The most common message: multicasting a unit to all committee memebers.
-    Multicast(Unit<B, H>),
-    /// Request for a particular list of units (specified by (round, creator)) to a particular node.
-    FetchRequest(Vec<(Round, NodeIndex)>, NodeIndex),
-    /// Response to a FetchRequest.
-    FetchResponse(Vec<Unit<B, H>>, NodeIndex),
-    SyncMessage,
-    SyncResponse,
-    Alert,
+pub struct RequestAuxData {
+    child_creator: NodeIndex,
+}
+
+impl RequestAuxData {
+    fn new(child_creator: NodeIndex) -> Self {
+        RequestAuxData { child_creator }
+    }
+}
+
+/// Type for incoming notifications: Environment to Consensus.
+#[derive(Clone, Debug, PartialEq)]
+pub enum NotificationIn<B: HashT, H: HashT> {
+    /// A notification carrying a single unit. This might come either from multicast or
+    /// from a response to a request. This is of no importance at this layer.
+    NewUnit(Unit<B, H>),
+    // TODO: ResponseParents(H, Vec<B, H>) and Alert() notifications
+}
+
+/// Type for outgoing notifications: Consensus to Environment.
+#[derive(Clone, Debug, PartialEq)]
+pub enum NotificationOut<B: HashT, H: HashT> {
+    // Notification about a unit created by this Consensus Node. Environment is meant to
+    // disseminate this unit among other nodes.
+    CreatedUnit(Unit<B, H>),
+    /// Notification that some units are needed but missing. The role of the Environment
+    /// is to fetch these unit (somehow). Auxiliary data is provided to help handle this request.
+    MissingUnits(Vec<(Round, NodeIndex)>, RequestAuxData),
+    // TODO: RequestParents(H) and Alert() notifications
 }
 
 #[derive(Clone)]
@@ -194,7 +214,7 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
         terminal.register_post_insert_hook(Box::new(move |u| {
             if my_ix == u.creator() {
                 // send unit u corresponding to v
-                let send_result = requests_tx.send(Message::Multicast(u.into()));
+                let send_result = requests_tx.send(NotificationOut::CreatedUnit(u.into()));
                 if let Err(e) = send_result {
                     error!(target:"rush-init", "Unable to place a Multicast request: {:?}.", e);
                 }
