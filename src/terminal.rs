@@ -93,6 +93,7 @@ impl<B: HashT, H: HashT> TerminalUnit<B, H> {
 // this has been made slightly more general (and thus complex) to add Alerts easily in the future.
 pub enum TerminalEvent<H: HashT> {
     ParentsReconstructed(H),
+    ParentsInDag(H),
     ReadyForAvailabilityCheck(H),
 }
 
@@ -197,32 +198,25 @@ impl<E: Environment + 'static> Terminal<E> {
 
     // Reconstruct the parent of a unit u (given by hash u_hash) at position pid as p (given by hash p_hash)
     fn reconstruct_parent(&mut self, u_hash: &E::Hash, pid: NodeIndex, p_hash: &E::Hash) {
-        let p_status = self.unit_store.get(p_hash).unwrap().status.clone();
         let u = self.unit_store.get_mut(u_hash).unwrap();
         // the above unwraps must succeed, should probably add some debug messages here...
 
         u.parents[pid] = Some(*p_hash);
         u.n_miss_par_store -= NodeCount(1);
         if u.n_miss_par_store == NodeCount(0) {
-            u.status = UnitStatus::WaitingParentsInDag;
             self.event_queue
                 .push_back(TerminalEvent::ParentsReconstructed(*u_hash));
-        }
-        if p_status == UnitStatus::InDag {
-            u.n_miss_par_dag -= NodeCount(1);
-        } else {
-            self.add_hash_trigger(p_hash, u_hash);
         }
     }
 
     // update u's count (u given by hash u_hash) of parents present in Dag and trigger the event of
-    // adding u itself to the Dag, if all parents present and control hash verifies
+    // adding u itself to the Dag
     fn new_parent_in_dag(&mut self, u_hash: &E::Hash) {
         let u = self.unit_store.get_mut(u_hash).unwrap();
         u.n_miss_par_dag -= NodeCount(1);
-        if u.n_miss_par_store == NodeCount(0) {
+        if u.n_miss_par_dag == NodeCount(0) {
             self.event_queue
-                .push_back(TerminalEvent::ParentsReconstructed(*u_hash));
+                .push_back(TerminalEvent::ParentsInDag(*u_hash));
         }
     }
 
@@ -273,6 +267,7 @@ impl<E: Environment + 'static> Terminal<E> {
             }
             if !coords_to_request.is_empty() {
                 let aux_data = RequestAuxData::new(u.creator);
+                debug!(target: "rush-terminal", "{} Missing coords {:?} aux {:?}", self.node_id, coords_to_request, aux_data);
                 let send_result = self
                     .requests_tx
                     .send(NotificationOut::MissingUnits(coords_to_request, aux_data));
@@ -294,7 +289,7 @@ impl<E: Environment + 'static> Terminal<E> {
     }
 
     fn add_to_store(&mut self, u: Unit<E::BlockHash, E::Hash>) {
-        debug!(target: "rush-terminal", "{} Adding to store {:?}", self.node_id, u.hash());
+        debug!(target: "rush-terminal", "{} Adding to store {:?} r {:?} ix {:?}", self.node_id, u.hash(), u.round, u.creator);
         if let Entry::Vacant(entry) = self.unit_store.entry(u.hash()) {
             entry.insert(TerminalUnit::<E::BlockHash, E::Hash>::blank_from_unit(&u));
             self.update_on_store_add(u);
@@ -305,7 +300,7 @@ impl<E: Environment + 'static> Terminal<E> {
         let u = self.unit_store.get_mut(u_hash).unwrap();
         if (self.check_available)(u.unit.best_block) {
             u.status = UnitStatus::InDag;
-            debug!(target: "rush-terminal", "{} Adding to Dag {:?}.", self.node_id, u_hash);
+            debug!(target: "rush-terminal", "{} Adding to Dag {:?} r {:?} ix {:?}.", self.node_id, u_hash, u.unit.round, u.unit.creator);
             self.update_on_dag_add(u_hash);
         } else {
             debug!(target: "rush-terminal", "{} Block in unit {:?} not available.", self.node_id, u_hash);
@@ -319,6 +314,28 @@ impl<E: Environment + 'static> Terminal<E> {
         }
     }
 
+    fn inspect_parents_in_dag(&mut self, u_hash: &E::Hash) {
+        let u_parents = self.unit_store.get(&u_hash).unwrap().parents.clone();
+        let mut n_parents_in_dag = NodeCount(0);
+        for p_hash in u_parents.into_iter().flatten() {
+            let p = self.unit_store.get(&p_hash).unwrap();
+            if p.status == UnitStatus::InDag {
+                n_parents_in_dag += NodeCount(1);
+            } else {
+                self.add_hash_trigger(&p_hash, u_hash);
+            }
+        }
+        let u = self.unit_store.get_mut(&u_hash).unwrap();
+        u.n_miss_par_dag -= n_parents_in_dag;
+        if u.n_miss_par_dag == NodeCount(0) {
+            self.event_queue
+                .push_back(TerminalEvent::ParentsInDag(*u_hash));
+        } else {
+            u.status = UnitStatus::WaitingParentsInDag;
+            // when the last parent is added an appropriate TerminalEvent will be triggered
+        }
+    }
+
     // This drains the event queue. Note that new events might be added to the queue as the result of
     // handling other events -- for instance when a unit u is waiting for its parent p, and this parent p waits
     // for his parent pp. In this case adding pp to the Dag, will trigger adding p, which in turns triggers
@@ -329,8 +346,7 @@ impl<E: Environment + 'static> Terminal<E> {
                 TerminalEvent::ParentsReconstructed(u_hash) => {
                     let u = self.unit_store.get_mut(&u_hash).unwrap();
                     if u.verify_control_hash() {
-                        self.event_queue
-                            .push_back(TerminalEvent::ReadyForAvailabilityCheck(u_hash));
+                        self.inspect_parents_in_dag(&u_hash);
                     } else {
                         u.status = UnitStatus::WrongControlHash;
                         // TODO: should trigger some immediate action here
@@ -338,6 +354,10 @@ impl<E: Environment + 'static> Terminal<E> {
                 }
                 TerminalEvent::ReadyForAvailabilityCheck(u_hash) => {
                     self.check_availability(&u_hash);
+                }
+                TerminalEvent::ParentsInDag(u_hash) => {
+                    self.event_queue
+                        .push_back(TerminalEvent::ReadyForAvailabilityCheck(u_hash));
                 }
             }
         }

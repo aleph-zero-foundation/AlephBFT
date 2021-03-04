@@ -101,6 +101,7 @@ impl<E: Environment> Extender<E> {
         if round > self.state.highest_round {
             self.state.highest_round = round;
         }
+        debug!(target: "rush-extender", "{} unit round {:?} state current_round {:?}", self.node_id, u.round, self.state.current_round);
         // need to extend the vector first to the required length
         if self.units_by_round.len() <= round {
             self.units_by_round.push(vec![]);

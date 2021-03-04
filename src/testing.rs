@@ -340,10 +340,8 @@ pub mod environment {
 
     impl BcastSink {
         fn do_send(&self, msg: NotificationIn<BlockHash, Hash>, recipient: &Sender) {
-            let (node_id, tx) = recipient;
-            if *node_id != self.node_id {
-                let _ = tx.send(msg);
-            }
+            let (_node_id, tx) = recipient;
+            let _ = tx.send(msg);
         }
         fn send_to_all(&self, msg: NotificationIn<BlockHash, Hash>) {
             self.senders
@@ -425,12 +423,8 @@ mod tests {
             creator: 0.into(),
             ..Unit::default()
         };
-        let u1 = Unit {
-            creator: 1.into(),
-            ..Unit::default()
-        };
 
-        let u = u1.clone();
+        let u = u0.clone();
         let h0 = tokio::spawn(async move {
             assert_eq!(in0.next().await.unwrap(), NotificationIn::NewUnit(u),);
         });
@@ -440,8 +434,11 @@ mod tests {
             assert_eq!(in1.next().await.unwrap(), NotificationIn::NewUnit(u));
         });
 
-        assert!(out0.send(NotificationOut::CreatedUnit(u0)).await.is_ok());
-        assert!(out1.send(NotificationOut::CreatedUnit(u1)).await.is_ok());
+        assert!(out0
+            .send(NotificationOut::CreatedUnit(u0.clone()))
+            .await
+            .is_ok());
+        assert!(out1.send(NotificationOut::CreatedUnit(u0)).await.is_ok());
         assert!(h0.await.is_ok());
         assert!(h1.await.is_ok());
     }

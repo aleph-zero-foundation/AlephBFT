@@ -376,7 +376,7 @@ mod tests {
     async fn dummy() {
         init_log();
         let net = Network::new();
-        let n_nodes = 4;
+        let n_nodes = 16;
         let mut finalized_blocks_rxs = Vec::new();
         let mut handles = Vec::new();
 
