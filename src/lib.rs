@@ -41,15 +41,9 @@ impl<I> NodeIdT for I where
 }
 
 /// A hash, as an identifier for a block or unit.
-pub trait HashT:
-    Eq + Ord + Copy + Clone + Default + Send + Sync + Debug + Display + Hash + Encode
-{
-}
+pub trait HashT: Eq + Ord + Copy + Clone + Send + Sync + Debug + Display + Hash + Encode {}
 
-impl<H> HashT for H where
-    H: Eq + Ord + Copy + Clone + Send + Sync + Default + Debug + Display + Hash + Encode
-{
-}
+impl<H> HashT for H where H: Eq + Ord + Copy + Clone + Send + Sync + Debug + Display + Hash + Encode {}
 
 /// A trait that describes the interaction of the [Consensus] component with the external world.
 pub trait Environment {
@@ -278,9 +272,15 @@ pub struct ControlHash<H: HashT> {
 }
 
 impl<H: HashT> ControlHash<H> {
-    //TODO need to actually compute the hash instead of return default
-    fn new(parent_map: NodeMap<Option<H>>) -> Self {
-        let hash = H::default();
+    fn new<Hashing: Fn(&[u8]) -> H>(parent_map: NodeMap<Option<H>>, hashing: &Hashing) -> Self {
+        let mut bytes = vec![];
+        parent_map
+            .iter()
+            .flatten()
+            .map(|h| h.encode())
+            .for_each(|b| bytes.extend(b));
+
+        let hash = hashing(&bytes);
         let parents = parent_map.iter().map(|h| h.is_some()).collect();
 
         ControlHash { parents, hash }
@@ -322,7 +322,7 @@ impl<B: HashT, H: HashT> Unit<B, H> {
         epoch_id: EpochId,
         parents: NodeMap<Option<H>>,
         best_block: B,
-        hashing: Hashing,
+        hashing: &Hashing,
     ) -> Self {
         let mut v = vec![];
         v.extend(creator.0.to_le_bytes().to_vec());
@@ -330,7 +330,7 @@ impl<B: HashT, H: HashT> Unit<B, H> {
         v.extend(epoch_id.to_le_bytes().to_vec());
         v.extend(parents.encode());
         v.extend(best_block.encode());
-        let control_hash = ControlHash::new(parents);
+        let control_hash = ControlHash::new(parents, &hashing);
         Unit {
             creator,
             round,
