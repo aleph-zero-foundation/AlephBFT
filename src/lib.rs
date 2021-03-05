@@ -185,13 +185,12 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
 
         let e = env.clone();
         let best_block = Box::new(move || e.lock().best_block());
-        let hashing = Box::new(E::hashing());
         let creator = Some(Creator::<E>::new(
             conf.clone(),
             parents_rx,
             created_units_tx,
             best_block,
-            hashing,
+            Box::new(E::hashing()),
         ));
 
         let check_available = Box::new(move |h| env.lock().check_available(h));
@@ -201,6 +200,7 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
             incoming_units_rx,
             requests_tx.clone(),
             check_available,
+            Box::new(E::hashing()),
         );
 
         // send a multicast request
@@ -272,18 +272,18 @@ pub struct ControlHash<H: HashT> {
 }
 
 impl<H: HashT> ControlHash<H> {
-    fn new<Hashing: Fn(&[u8]) -> H>(parent_map: NodeMap<Option<H>>, hashing: &Hashing) -> Self {
-        let mut bytes = vec![];
-        parent_map
-            .iter()
-            .flatten()
-            .map(|h| h.encode())
-            .for_each(|b| bytes.extend(b));
-
-        let hash = hashing(&bytes);
+    fn new<Hashing: Fn(&[u8]) -> H>(parent_map: &NodeMap<Option<H>>, hashing: &Hashing) -> Self {
+        let hash = Self::combine_hashes(&parent_map, hashing);
         let parents = parent_map.iter().map(|h| h.is_some()).collect();
 
         ControlHash { parents, hash }
+    }
+
+    pub(crate) fn combine_hashes<Hashing: Fn(&[u8]) -> H>(
+        parent_map: &NodeMap<Option<H>>,
+        hashing: &Hashing,
+    ) -> H {
+        parent_map.using_encoded(hashing)
     }
 
     pub(crate) fn n_parents(&self) -> NodeCount {
@@ -324,18 +324,20 @@ impl<B: HashT, H: HashT> Unit<B, H> {
         best_block: B,
         hashing: &Hashing,
     ) -> Self {
-        let mut v = vec![];
-        v.extend(creator.0.to_le_bytes().to_vec());
-        v.extend(round.to_le_bytes().to_vec());
-        v.extend(epoch_id.to_le_bytes().to_vec());
-        v.extend(parents.encode());
-        v.extend(best_block.encode());
-        let control_hash = ControlHash::new(parents, &hashing);
+        let control_hash = ControlHash::new(&parents, &hashing);
+        let hash = (
+            creator.0 as u64,
+            round as u64,
+            epoch_id as u64,
+            parents,
+            best_block,
+        )
+            .using_encoded(hashing);
         Unit {
             creator,
             round,
             epoch_id,
-            hash: hashing(&v),
+            hash,
             control_hash,
             best_block,
         }
