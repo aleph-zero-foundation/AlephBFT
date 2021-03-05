@@ -3,7 +3,8 @@ use std::collections::{hash_map::Entry, BinaryHeap, HashMap, VecDeque};
 use crate::{
     extender::ExtenderUnit,
     nodes::{NodeCount, NodeIndex, NodeMap},
-    Environment, HashT, NotificationOut, Receiver, RequestAuxData, Round, Sender, Unit,
+    ControlHash, Environment, HashT, NotificationOut, Receiver, RequestAuxData, Round, Sender,
+    Unit,
 };
 use log::{debug, error};
 use std::cmp::Ordering;
@@ -82,10 +83,10 @@ impl<B: HashT, H: HashT> TerminalUnit<B, H> {
         self.unit.hash
     }
 
-    pub(crate) fn verify_control_hash(&self) -> bool {
+    pub(crate) fn verify_control_hash<Hashing: Fn(&[u8]) -> H>(&self, hashing: &Hashing) -> bool {
         // this will be called only after all parents have been reconstructed
-        // TODO: implement this
-        true
+
+        self.unit.control_hash.hash == ControlHash::combine_hashes(&self.parents, hashing)
     }
 }
 
@@ -157,6 +158,8 @@ pub(crate) struct Terminal<E: Environment + 'static> {
     post_insert: Vec<Box<dyn Fn(TerminalUnit<E::BlockHash, E::Hash>) + Send + Sync + 'static>>,
     // Here we store all the units -- the one in Dag and the ones "hanging".
     unit_store: HashMap<E::Hash, TerminalUnit<E::BlockHash, E::Hash>>,
+    // Hashing function
+    hashing: Box<E::Hashing>,
 
     // TODO: get rid of HashMaps below and just use Vec<Vec<E::Hash>> for efficiency
 
@@ -179,6 +182,7 @@ impl<E: Environment + 'static> Terminal<E> {
         new_units_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
         requests_tx: Sender<NotificationOut<E::BlockHash, E::Hash>>,
         check_available: Box<dyn Fn(E::BlockHash) -> bool + Sync + Send + 'static>,
+        hashing: Box<E::Hashing>,
     ) -> Self {
         Terminal {
             node_id,
@@ -189,6 +193,7 @@ impl<E: Environment + 'static> Terminal<E> {
             scheduled_task_queue: BinaryHeap::new(),
             post_insert: Vec::new(),
             unit_store: HashMap::new(),
+            hashing,
             unit_by_coord: HashMap::new(),
             children_coord: HashMap::new(),
             children_hash: HashMap::new(),
@@ -345,10 +350,11 @@ impl<E: Environment + 'static> Terminal<E> {
             match event {
                 TerminalEvent::ParentsReconstructed(u_hash) => {
                     let u = self.unit_store.get_mut(&u_hash).unwrap();
-                    if u.verify_control_hash() {
+                    if u.verify_control_hash(&self.hashing) {
                         self.inspect_parents_in_dag(&u_hash);
                     } else {
                         u.status = UnitStatus::WrongControlHash;
+                        debug!(target: "rush-terminal", "{} wrong control hash", self.node_id);
                         // TODO: should trigger some immediate action here
                     }
                 }
