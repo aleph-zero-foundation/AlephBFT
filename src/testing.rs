@@ -3,7 +3,7 @@ pub mod environment {
     use crate::{MyIndex, NodeIndex, NotificationIn, NotificationOut, Round, Unit};
     use codec::{Encode, Output};
     use derive_more::{Display, From, Into};
-    use futures::{Sink, Stream};
+    use futures::{Future, Sink, Stream};
     use parking_lot::Mutex;
 
     use std::{
@@ -14,7 +14,7 @@ pub mod environment {
         sync::Arc,
         task::{Context, Poll},
     };
-    use tokio::sync::mpsc::*;
+    use tokio::sync::{mpsc::*, oneshot};
 
     type Error = ();
 
@@ -71,6 +71,7 @@ pub mod environment {
         network: Network,
         finalized_notifier: UnboundedSender<Block>,
         calls_to_finalize: Vec<BlockHash>,
+        to_notify: Arc<Mutex<HashMap<BlockHash, Vec<Option<oneshot::Sender<()>>>>>>,
     }
 
     impl Environment {
@@ -87,6 +88,7 @@ pub mod environment {
                     network,
                     finalized_notifier: finalized_tx,
                     calls_to_finalize: Vec::new(),
+                    to_notify: Arc::new(Mutex::new(HashMap::new())),
                 },
                 finalized_rx,
             )
@@ -108,7 +110,16 @@ pub mod environment {
         }
 
         pub(crate) fn import_block(&mut self, block: BlockHash, parent: BlockHash) {
+            let mut to_notify = self.to_notify.lock();
             self.chain.import_block(block, parent);
+            if let Some(mut notifiers) = to_notify.remove(&block) {
+                notifiers.iter_mut().for_each(|n| {
+                    n.take()
+                        .unwrap()
+                        .send(())
+                        .expect("should send a notification that a block arrived")
+                })
+            };
         }
     }
 
@@ -131,8 +142,17 @@ pub mod environment {
             }
         }
 
-        fn check_available(&self, h: Self::BlockHash) -> bool {
-            self.chain.block(&h).is_some()
+        fn check_available(
+            &self,
+            h: Self::BlockHash,
+        ) -> Box<dyn Future<Output = Result<(), Self::Error>> + Send + Sync + Unpin> {
+            if self.chain.block(&h).is_some() {
+                return Box::new(futures::future::ok(()));
+            }
+            let (tx, rx) = oneshot::channel();
+            self.to_notify.lock().entry(h).or_default().push(Some(tx));
+
+            Box::new(Box::pin(async move { rx.await.map_err(|_| ()) }))
         }
 
         fn check_extends_finalized(&self, h: Self::BlockHash) -> bool {

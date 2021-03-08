@@ -3,7 +3,7 @@
 //! appropriate access to the set of available blocks that we need to make consensus on.
 
 use codec::Encode;
-use futures::{Sink, Stream};
+use futures::{Future, Sink, Stream};
 use log::{debug, error};
 use parking_lot::Mutex;
 use std::{
@@ -78,7 +78,10 @@ pub trait Environment {
     /// Checks whether a given block is "available" meaning that its content has been downloaded
     /// by the current node. This is required as consensus messages from other committee members
     /// referring to unavailable blocks must be ignored (at least till the block shows).
-    fn check_available(&self, h: Self::BlockHash) -> bool;
+    fn check_available(
+        &self,
+        h: Self::BlockHash,
+    ) -> Box<dyn Future<Output = Result<(), Self::Error>> + Send + Sync + Unpin>;
 
     /// Outputs two channel endpoints: transmitter of outgoing messages and receiver if incoming
     /// messages.
