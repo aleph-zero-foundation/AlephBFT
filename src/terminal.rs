@@ -1,4 +1,4 @@
-use std::collections::{hash_map::Entry, BinaryHeap, HashMap, VecDeque};
+use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
 use crate::{
     extender::ExtenderUnit,
@@ -7,11 +7,7 @@ use crate::{
     Unit,
 };
 use log::{debug, error};
-use std::cmp::Ordering;
-use tokio::time;
-
-pub const BLOCK_AVAILABLE_INTERVAL: time::Duration = time::Duration::from_millis(50);
-pub const TICK_INTERVAL: time::Duration = time::Duration::from_millis(10);
+use std::future::Future;
 
 /// An enum describing the status of a Unit in the Terminal pipeline.
 #[derive(Clone, Debug, PartialEq)]
@@ -19,7 +15,6 @@ pub enum UnitStatus {
     ReconstructingParents,
     WrongControlHash,
     WaitingParentsInDag,
-    WaitingBlockAvailable,
     InDag,
 }
 
@@ -95,43 +90,15 @@ impl<B: HashT, H: HashT> TerminalUnit<B, H> {
 pub enum TerminalEvent<H: HashT> {
     ParentsReconstructed(H),
     ParentsInDag(H),
-    ReadyForAvailabilityCheck(H),
+    BlockAvailable(H),
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Task {
-    CheckBlockAvailable,
+pub enum Task<H: HashT> {
+    BlockAvailable(H),
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-struct ScheduledTask<H: HashT> {
-    unit: H,
-    scheduled_time: time::Instant,
-    task: Task,
-}
-
-impl<H: HashT> ScheduledTask<H> {
-    fn new(unit: H, scheduled_time: time::Instant, task: Task) -> Self {
-        ScheduledTask {
-            unit,
-            scheduled_time,
-            task,
-        }
-    }
-}
-
-impl<H: HashT> Ord for ScheduledTask<H> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        // we want earlier times to come first when used in max-heap, hence the below:
-        other.scheduled_time.cmp(&self.scheduled_time)
-    }
-}
-
-impl<H: HashT> PartialOrd for ScheduledTask<H> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
+type SyncClosure<X, Y> = Box<dyn Fn(X) -> Y + Sync + Send + 'static>;
 
 /// A process whose goal is to receive new units and place them in our local Dag. Towards this end
 /// this process must orchestrate fetching units from other nodes in case we are missing them and
@@ -149,13 +116,15 @@ pub(crate) struct Terminal<E: Environment + 'static> {
     // An oracle for checking if a given block hash h is available. This is needed to check for a new unit
     // U whether the block it carries is available, and hence the unit U should be accepted (or held aside
     // till the block is available).
-    check_available: Box<dyn Fn(E::BlockHash) -> bool + Sync + Send + 'static>,
+    check_available: SyncClosure<
+        E::BlockHash,
+        Box<dyn Future<Output = Result<(), E::Error>> + Send + Sync + Unpin>,
+    >,
     // A Queue that is necessary to deal with cascading updates to the Dag/Store
     event_queue: VecDeque<TerminalEvent<E::Hash>>,
-    // This queue contains "notes" that remind us to check on a particular unit, whether it already
-    // has all the parents. If not then repeat a request.
-    scheduled_task_queue: BinaryHeap<ScheduledTask<E::Hash>>,
-    post_insert: Vec<Box<dyn Fn(TerminalUnit<E::BlockHash, E::Hash>) + Send + Sync + 'static>>,
+    task_queue: Receiver<Task<E::Hash>>,
+    task_notifier: Sender<Task<E::Hash>>,
+    post_insert: Vec<SyncClosure<TerminalUnit<E::BlockHash, E::Hash>, ()>>,
     // Here we store all the units -- the one in Dag and the ones "hanging".
     unit_store: HashMap<E::Hash, TerminalUnit<E::BlockHash, E::Hash>>,
     // Hashing function
@@ -172,8 +141,6 @@ pub(crate) struct Terminal<E: Environment + 'static> {
     // The same as above, but this time we await for a unit (with a particular hash) to be added to the Dag.
     // Once this happens, we notify all the children.
     children_hash: HashMap<E::Hash, Vec<E::Hash>>,
-    // This is a ticker that is useful in forcing to fire "poll" at least every TICK_INTERVAL.
-    request_ticker: time::Interval,
 }
 
 impl<E: Environment + 'static> Terminal<E> {
@@ -181,23 +148,27 @@ impl<E: Environment + 'static> Terminal<E> {
         node_id: E::NodeId,
         new_units_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
         requests_tx: Sender<NotificationOut<E::BlockHash, E::Hash>>,
-        check_available: Box<dyn Fn(E::BlockHash) -> bool + Sync + Send + 'static>,
+        check_available: SyncClosure<
+            E::BlockHash,
+            Box<dyn Future<Output = Result<(), E::Error>> + Send + Sync + Unpin>,
+        >,
         hashing: Box<E::Hashing>,
     ) -> Self {
+        let (task_notifier, task_queue) = tokio::sync::mpsc::unbounded_channel();
         Terminal {
             node_id,
             new_units_rx,
             requests_tx,
             check_available,
             event_queue: VecDeque::new(),
-            scheduled_task_queue: BinaryHeap::new(),
+            task_queue,
+            task_notifier,
             post_insert: Vec::new(),
             unit_store: HashMap::new(),
             hashing,
             unit_by_coord: HashMap::new(),
             children_coord: HashMap::new(),
             children_hash: HashMap::new(),
-            request_ticker: time::interval(TICK_INTERVAL),
         }
     }
 
@@ -301,24 +272,6 @@ impl<E: Environment + 'static> Terminal<E> {
         }
     }
 
-    fn check_availability(&mut self, u_hash: &E::Hash) {
-        let u = self.unit_store.get_mut(u_hash).unwrap();
-        if (self.check_available)(u.unit.best_block) {
-            u.status = UnitStatus::InDag;
-            debug!(target: "rush-terminal", "{} Adding to Dag {:?} r {:?} ix {:?}.", self.node_id, u_hash, u.unit.round, u.unit.creator);
-            self.update_on_dag_add(u_hash);
-        } else {
-            debug!(target: "rush-terminal", "{} Block in unit {:?} not available.", self.node_id, u_hash);
-            u.status = UnitStatus::WaitingBlockAvailable;
-            let curr_time = time::Instant::now();
-            self.scheduled_task_queue.push(ScheduledTask::new(
-                *u_hash,
-                curr_time + BLOCK_AVAILABLE_INTERVAL,
-                Task::CheckBlockAvailable,
-            ));
-        }
-    }
-
     fn inspect_parents_in_dag(&mut self, u_hash: &E::Hash) {
         let u_parents = self.unit_store.get(&u_hash).unwrap().parents.clone();
         let mut n_parents_in_dag = NodeCount(0);
@@ -358,49 +311,43 @@ impl<E: Environment + 'static> Terminal<E> {
                         // TODO: should trigger some immediate action here
                     }
                 }
-                TerminalEvent::ReadyForAvailabilityCheck(u_hash) => {
-                    self.check_availability(&u_hash);
+                TerminalEvent::BlockAvailable(u_hash) => {
+                    let u = self.unit_store.get_mut(&u_hash).unwrap();
+                    u.status = UnitStatus::InDag;
+                    debug!(target: "rush-terminal", "{} Adding to Dag {:?} r {:?} ix {:?}.", self.node_id, u_hash, u.unit.round, u.unit.creator);
+                    self.update_on_dag_add(&u_hash);
                 }
                 TerminalEvent::ParentsInDag(u_hash) => {
-                    self.event_queue
-                        .push_back(TerminalEvent::ReadyForAvailabilityCheck(u_hash));
+                    let block = self.unit_store.get(&u_hash).unwrap().unit.best_block;
+                    let available = (self.check_available)(block);
+                    let notify = self.task_notifier.clone();
+                    // TODO this is needed for debugging, try to remove the clone later
+                    let node_id = self.node_id.clone();
+                    let _ = tokio::spawn(async move {
+                        if available.await.is_ok() {
+                            if let Err(e) = notify.send(Task::BlockAvailable(u_hash)) {
+                                debug!(target: "rush-terminal", "{} Error while sending BlockAvailable notification {}", node_id, e);
+                            }
+                        } else {
+                            debug!(target: "rush-terminal", "{} Error while checking block availability for unit {}", node_id, u_hash);
+                        }
+                    });
                 }
             }
         }
     }
 
-    fn process_scheduled_tasks(&mut self) {
-        let curr_time = time::Instant::now();
-        while !self.scheduled_task_queue.is_empty() {
-            if self.scheduled_task_queue.peek().unwrap().scheduled_time > curr_time {
-                // if there is a more rustic version of this loop control -- let me know :)
-                break;
-            }
-            let note = self.scheduled_task_queue.pop().unwrap();
-            let u = self.unit_store.get(&note.unit).unwrap();
-            match note.task {
-                Task::CheckBlockAvailable => {
-                    if u.status == UnitStatus::WaitingBlockAvailable {
-                        if (self.check_available)(u.unit.best_block) {
-                            self.event_queue
-                                .push_back(TerminalEvent::ReadyForAvailabilityCheck(note.unit));
-                        } else {
-                            // The block is not there yet, we check again after BLOCK_AVAILABLE_INTERVAL seconds.
-                            self.scheduled_task_queue.push(ScheduledTask::new(
-                                note.unit,
-                                curr_time + BLOCK_AVAILABLE_INTERVAL,
-                                Task::CheckBlockAvailable,
-                            ));
-                        }
-                    }
-                }
-            }
+    fn process_task(&mut self, task: Task<E::Hash>) {
+        match task {
+            Task::BlockAvailable(u_hash) => self
+                .event_queue
+                .push_back(TerminalEvent::BlockAvailable(u_hash)),
         }
     }
 
     pub(crate) fn register_post_insert_hook(
         &mut self,
-        hook: Box<dyn Fn(TerminalUnit<E::BlockHash, E::Hash>) + Send + Sync + 'static>,
+        hook: SyncClosure<TerminalUnit<E::BlockHash, E::Hash>, ()>,
     ) {
         self.post_insert.push(hook);
     }
@@ -410,11 +357,11 @@ impl<E: Environment + 'static> Terminal<E> {
             tokio::select! {
                 Some(u) = self.new_units_rx.recv() => {
                     self.add_to_store(u);
-
-                }
-                _ = self.request_ticker.tick() =>{},
-            };
-            self.process_scheduled_tasks();
+                },
+                Some(task) = self.task_queue.recv() =>{
+                    self.process_task(task);
+                },
+            }
             self.handle_events();
         }
     }
