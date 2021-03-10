@@ -67,18 +67,17 @@ pub mod environment {
 
     pub(crate) struct Environment {
         node_id: NodeId,
-        chain: Chain,
+        chain: Arc<Mutex<Chain>>,
         network: Network,
         finalized_notifier: UnboundedSender<Block>,
         calls_to_finalize: Vec<BlockHash>,
-        to_notify: Arc<Mutex<HashMap<BlockHash, Vec<Option<oneshot::Sender<()>>>>>>,
     }
 
     impl Environment {
         pub(crate) fn new_with_chain(
             node_id: NodeId,
             network: Network,
-            chain: Chain,
+            chain: Arc<Mutex<Chain>>,
         ) -> (Self, UnboundedReceiver<Block>) {
             let (finalized_tx, finalized_rx) = unbounded_channel();
             (
@@ -88,14 +87,13 @@ pub mod environment {
                     network,
                     finalized_notifier: finalized_tx,
                     calls_to_finalize: Vec::new(),
-                    to_notify: Arc::new(Mutex::new(HashMap::new())),
                 },
                 finalized_rx,
             )
         }
 
         pub(crate) fn new(node_id: NodeId, network: Network) -> (Self, UnboundedReceiver<Block>) {
-            let chain = Chain::new();
+            let chain = Arc::new(Mutex::new(Chain::new()));
             Self::new_with_chain(node_id, network, chain)
         }
 
@@ -104,22 +102,14 @@ pub mod environment {
         }
 
         pub(crate) fn gen_chain(&mut self, branches: Vec<(BlockHash, Vec<BlockHash>)>) {
+            let mut chain = self.chain.lock();
             for (h, branch) in branches {
-                self.chain.import_branch(h, branch);
+                chain.import_branch(h, branch);
             }
         }
 
         pub(crate) fn import_block(&mut self, block: BlockHash, parent: BlockHash) {
-            let mut to_notify = self.to_notify.lock();
-            self.chain.import_block(block, parent);
-            if let Some(mut notifiers) = to_notify.remove(&block) {
-                notifiers.iter_mut().for_each(|n| {
-                    n.take()
-                        .unwrap()
-                        .send(())
-                        .expect("should send a notification that a block arrived")
-                })
-            };
+            self.chain.lock().import_block(block, parent);
         }
     }
 
@@ -136,7 +126,7 @@ pub mod environment {
 
         fn finalize_block(&mut self, h: Self::BlockHash) {
             self.calls_to_finalize.push(h);
-            let finalized_blocks = self.chain.finalize(h);
+            let finalized_blocks = self.chain.lock().finalize(h);
             for block in finalized_blocks {
                 let _ = self.finalized_notifier.send(block);
             }
@@ -146,22 +136,24 @@ pub mod environment {
             &self,
             h: Self::BlockHash,
         ) -> Box<dyn Future<Output = Result<(), Self::Error>> + Send + Sync + Unpin> {
-            if self.chain.block(&h).is_some() {
+            let mut chain = self.chain.lock();
+            if chain.block(&h).is_some() {
                 return Box::new(futures::future::ok(()));
             }
             let (tx, rx) = oneshot::channel();
-            self.to_notify.lock().entry(h).or_default().push(Some(tx));
+            chain.add_observer(&h, tx);
 
             Box::new(Box::pin(async move { rx.await.map_err(|_| ()) }))
         }
 
         fn check_extends_finalized(&self, h: Self::BlockHash) -> bool {
-            let last_finalized = self.chain.best_finalized();
-            h != last_finalized && self.chain.is_descendant(&h, &last_finalized)
+            let chain = self.chain.lock();
+            let last_finalized = chain.best_finalized();
+            h != last_finalized && chain.is_descendant(&h, &last_finalized)
         }
 
         fn best_block(&self) -> Self::BlockHash {
-            self.chain.best_block()
+            self.chain.lock().best_block()
         }
 
         fn hash(_data: &[u8]) -> Self::Hash {
@@ -199,6 +191,7 @@ pub mod environment {
         tree: HashMap<BlockHash, Block>,
         best_finalized: BlockHash,
         longest_chain: BlockHash,
+        to_notify: Arc<Mutex<HashMap<BlockHash, Vec<oneshot::Sender<()>>>>>,
     }
 
     impl Chain {
@@ -216,6 +209,7 @@ pub mod environment {
                 tree,
                 best_finalized: genesis_hash,
                 longest_chain: genesis_hash,
+                to_notify: Arc::new(Mutex::new(HashMap::new())),
             }
         }
 
@@ -236,6 +230,14 @@ pub mod environment {
             }
         }
 
+        fn add_observer(&mut self, block_hash: &BlockHash, tx: oneshot::Sender<()>) {
+            self.to_notify
+                .lock()
+                .entry(*block_hash)
+                .or_default()
+                .push(tx);
+        }
+
         pub(crate) fn import_block(&mut self, block_hash: BlockHash, parent_hash: BlockHash) {
             let parent_block = self
                 .tree
@@ -253,6 +255,14 @@ pub mod environment {
             };
             self.tree.insert(block_hash, new_block);
             self.update_longest_chain(block_hash);
+
+            let mut to_notify = self.to_notify.lock();
+            if let Some(mut notifiers) = to_notify.remove(&block_hash) {
+                notifiers.drain(0..).for_each(|n| {
+                    n.send(())
+                        .expect("should send a notification that a block arrived")
+                })
+            };
         }
 
         pub(crate) fn import_branch(&mut self, base: BlockHash, branch: Vec<BlockHash>) {
