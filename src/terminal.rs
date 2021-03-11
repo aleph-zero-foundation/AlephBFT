@@ -39,7 +39,7 @@ impl<B: HashT, H: HashT> From<TerminalUnit<B, H>> for ExtenderUnit<B, H> {
     fn from(u: TerminalUnit<B, H>) -> ExtenderUnit<B, H> {
         ExtenderUnit::new(
             u.unit.creator,
-            u.unit.round(),
+            u.unit.round,
             u.unit.hash,
             u.parents,
             u.unit.best_block,
@@ -71,7 +71,7 @@ impl<B: HashT, H: HashT> TerminalUnit<B, H> {
     }
 
     pub(crate) fn _round(&self) -> Round {
-        self.unit.round()
+        self.unit.round
     }
 
     pub(crate) fn _hash(&self) -> H {
@@ -215,7 +215,7 @@ impl<E: Environment + 'static> Terminal<E> {
 
     fn update_on_store_add(&mut self, u: Unit<E::BlockHash, E::Hash>) {
         let u_hash = u.hash;
-        let (u_round, pid) = (u.round(), u.creator);
+        let (u_round, pid) = (u.round, u.creator);
         //TODO: should check for forks at this very place and possibly trigger Alarm
         self.unit_by_coord.insert((u_round, pid), u_hash);
         if let Some(children) = self.children_coord.remove(&(u_round, pid)) {

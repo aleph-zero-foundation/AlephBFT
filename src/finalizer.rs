@@ -38,7 +38,7 @@ impl<E: Environment> Finalizer<E> {
                 for h in batch {
                     if (self.extends_finalized)(h) {
                         (self.finalize)(h);
-                        debug!(target: "rush-finalizer", "{} Finalized block hash {:?}.", self.node_id, h);
+                        debug!(target: "rush-finalizer", "{} Finalized block hash {}.", self.node_id, h);
                     }
                 }
             }
