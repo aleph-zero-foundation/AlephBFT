@@ -1,4 +1,4 @@
-use codec::Encode;
+use codec::{Decode, Encode};
 use derive_more::{Add, AddAssign, Display, From, Into, Sub, SubAssign, Sum};
 use std::{
     iter::FromIterator,
@@ -7,8 +7,10 @@ use std::{
 };
 
 /// The index of a node
-#[derive(Copy, Clone, Debug, Display, Default, Eq, PartialEq, Hash, Ord, PartialOrd, From)]
-pub struct NodeIndex(pub(crate) usize);
+#[derive(
+    Copy, Clone, Debug, Display, Default, Eq, PartialEq, Hash, Ord, PartialOrd, From, Encode, Decode,
+)]
+pub struct NodeIndex(pub u64);
 
 /// Node count -- if necessary this can be then generalized to weights
 #[derive(
@@ -46,10 +48,19 @@ impl Div<usize> for NodeCount {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, From, Hash, Encode)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, From, Hash, Encode, Decode)]
 pub struct NodeMap<T>(Vec<T>);
 
 impl<T> NodeMap<T> {
+    /// Constructs a new node map with a given length.
+    pub fn new_with_len(len: NodeCount) -> Self
+        where
+            T: Default + Clone,
+    {
+        let v: Vec<T> = vec![T::default(); len.into()];
+        NodeMap(v)
+    }
+
     /// Returns the number of values. This must equal the number of nodes.
     pub(crate) fn len(&self) -> usize {
         self.0.len()
@@ -64,15 +75,7 @@ impl<T> NodeMap<T> {
     pub(crate) fn enumerate(&self) -> impl Iterator<Item = (NodeIndex, &T)> {
         self.iter()
             .enumerate()
-            .map(|(idx, value)| (NodeIndex(idx as usize), value))
-    }
-
-    pub(crate) fn new_with_len(len: NodeCount) -> Self
-    where
-        T: Default + Clone,
-    {
-        let v: Vec<T> = vec![T::default(); len.into()];
-        NodeMap(v)
+            .map(|(idx, value)| (NodeIndex(idx as u64), value))
     }
 }
 
@@ -94,13 +97,13 @@ impl<T> Index<NodeIndex> for NodeMap<T> {
     type Output = T;
 
     fn index(&self, vidx: NodeIndex) -> &T {
-        &self.0[vidx.0]
+        &self.0[vidx.0 as usize]
     }
 }
 
 impl<T> IndexMut<NodeIndex> for NodeMap<T> {
     fn index_mut(&mut self, vidx: NodeIndex) -> &mut T {
-        &mut self.0[vidx.0]
+        &mut self.0[vidx.0 as usize]
     }
 }
 
