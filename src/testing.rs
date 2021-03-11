@@ -1,7 +1,7 @@
 #[cfg(test)]
 pub mod environment {
     use crate::{MyIndex, NodeIndex, NotificationIn, NotificationOut, Round, Unit};
-    use codec::{Encode, Output};
+    use codec::{Decode, Encode, Error as CodecError, Input, Output};
     use derive_more::{Display, From, Into};
     use futures::{Future, Sink, Stream};
     use log::debug;
@@ -26,8 +26,18 @@ pub mod environment {
 
     impl Encode for NodeId {
         fn encode_to<T: Output>(&self, dest: &mut T) {
-            let bytes = self.0.to_le_bytes().to_vec();
+            let val = self.0 as u64;
+            let bytes = val.to_le_bytes().to_vec();
             Encode::encode_to(&bytes, dest)
+        }
+    }
+
+    impl Decode for NodeId {
+        fn decode<I: Input>(value: &mut I) -> Result<Self, CodecError> {
+            let mut arr = [0u8; 8];
+            value.read(&mut arr)?;
+            let val: u64 = u64::from_le_bytes(arr);
+            Ok(NodeId(val as usize))
         }
     }
 
@@ -44,7 +54,7 @@ pub mod environment {
     }
 
     #[derive(
-        Hash, Debug, Default, Display, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Encode,
+        Hash, Debug, Default, Display, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Encode, Decode,
     )]
     pub struct Hash(pub u32);
 
@@ -55,7 +65,7 @@ pub mod environment {
     }
 
     #[derive(
-        Hash, Debug, Default, Display, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Encode,
+        Hash, Debug, Default, Display, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Encode, Decode,
     )]
     pub struct BlockHash(pub u32);
 

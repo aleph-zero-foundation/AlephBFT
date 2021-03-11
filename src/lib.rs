@@ -2,7 +2,7 @@
 //! requires access to an [Environment] object which black-boxes the network layer and gives
 //! appropriate access to the set of available blocks that we need to make consensus on.
 
-use codec::Encode;
+use codec::{Decode, Encode};
 use futures::{Future, Sink, Stream};
 use log::{debug, error};
 use parking_lot::Mutex;
@@ -25,7 +25,7 @@ use crate::{
 mod creator;
 mod extender;
 mod finalizer;
-mod nodes;
+pub mod nodes;
 mod syncer;
 mod terminal;
 mod testing;
@@ -33,17 +33,26 @@ mod testing;
 pub trait MyIndex {
     fn my_index(&self) -> Option<NodeIndex>;
 }
-pub trait NodeIdT: Clone + Display + Debug + Send + Eq + Hash + Encode + MyIndex + 'static {}
+pub trait NodeIdT:
+    Clone + Display + Debug + Send + Eq + Hash + Encode + Decode + MyIndex + 'static
+{
+}
 
 impl<I> NodeIdT for I where
-    I: Clone + Display + Debug + Send + Eq + Hash + Encode + MyIndex + 'static
+    I: Clone + Display + Debug + Send + Eq + Hash + Encode + Decode + MyIndex + 'static
 {
 }
 
 /// A hash, as an identifier for a block or unit.
-pub trait HashT: Eq + Ord + Copy + Clone + Send + Sync + Debug + Display + Hash + Encode {}
+pub trait HashT:
+    Eq + Ord + Copy + Clone + Send + Sync + Debug + Display + Hash + Encode + Decode
+{
+}
 
-impl<H> HashT for H where H: Eq + Ord + Copy + Clone + Send + Sync + Debug + Display + Hash + Encode {}
+impl<H> HashT for H where
+    H: Eq + Ord + Copy + Clone + Send + Sync + Debug + Display + Hash + Encode + Decode
+{
+}
 
 /// A trait that describes the interaction of the [Consensus] component with the external world.
 pub trait Environment {
@@ -92,12 +101,18 @@ pub trait Environment {
 
 pub enum Error {}
 
+/// A round.
 pub type Round = usize;
-pub type EpochId = usize;
+
+/// A newtype of an epoch id.
+///
+/// This will be eventually moved to the Environment.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Decode, Encode)]
+pub struct EpochId(pub u64);
 
 /// Type used in NotificationOut::MissingUnits to give additional info about the missing units that might
 /// help the Environment to fetch them (currently this is the node_ix of the unit whose parents are missing).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Encode, Decode)]
 pub struct RequestAuxData {
     child_creator: NodeIndex,
 }
@@ -269,7 +284,7 @@ impl<E: Environment> Consensus<E> {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Encode)]
+#[derive(Clone, Debug, Default, PartialEq, Encode, Decode)]
 pub struct ControlHash<H: HashT> {
     // TODO we need to optimize it for it to take O(N) bits of memory not O(N) words.
     pub parents: NodeMap<bool>,
@@ -300,10 +315,12 @@ impl<H: HashT> ControlHash<H> {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+type UnitRound = u64;
+
+#[derive(Clone, Debug, Default, PartialEq, Encode, Decode)]
 pub struct Unit<B: HashT, H: HashT> {
     pub(crate) creator: NodeIndex,
-    pub(crate) round: Round,
+    round: UnitRound,
     pub(crate) epoch_id: EpochId,
     pub(crate) hash: H,
     pub(crate) control_hash: ControlHash<H>,
@@ -311,14 +328,17 @@ pub struct Unit<B: HashT, H: HashT> {
 }
 
 impl<B: HashT, H: HashT> Unit<B, H> {
-    pub(crate) fn hash(&self) -> H {
+    pub fn hash(&self) -> H {
         self.hash
     }
-    pub(crate) fn creator(&self) -> NodeIndex {
+    pub fn creator(&self) -> NodeIndex {
         self.creator
     }
-    pub(crate) fn round(&self) -> Round {
-        self.round
+    pub fn round(&self) -> Round {
+        self.round as Round
+    }
+    pub fn epoch_id(&self) -> EpochId {
+        self.epoch_id
     }
 
     pub(crate) fn new_from_parents<Hashing: Fn(&[u8]) -> H>(
@@ -333,14 +353,14 @@ impl<B: HashT, H: HashT> Unit<B, H> {
         let hash = (
             creator.0 as u64,
             round as u64,
-            epoch_id as u64,
+            epoch_id.0 as u64,
             parents,
             best_block,
         )
             .using_encoded(hashing);
         Unit {
             creator,
-            round,
+            round: round as u64,
             epoch_id,
             hash,
             control_hash,
@@ -348,7 +368,7 @@ impl<B: HashT, H: HashT> Unit<B, H> {
         }
     }
 
-    pub(crate) fn _new(
+    pub fn new(
         creator: NodeIndex,
         round: Round,
         epoch_id: EpochId,
@@ -358,7 +378,7 @@ impl<B: HashT, H: HashT> Unit<B, H> {
     ) -> Self {
         Unit {
             creator,
-            round,
+            round: round as UnitRound,
             epoch_id,
             hash,
             control_hash,
@@ -391,7 +411,12 @@ mod tests {
             let (mut env, rx) = environment::Environment::new(NodeId(node_ix), net.clone());
             finalized_blocks_rxs.push(rx);
             env.gen_chain(vec![(0.into(), vec![1.into()])]);
-            let conf = Config::new(node_ix.into(), n_nodes.into(), 0, Duration::from_millis(10));
+            let conf = Config::new(
+                node_ix.into(),
+                n_nodes.into(),
+                EpochId(0),
+                Duration::from_millis(10),
+            );
             handles.push(tokio::spawn(Consensus::new(conf, env).run()));
         }
 
@@ -420,7 +445,12 @@ mod tests {
                 node_chain.clone(),
             );
             finalized_blocks_rxs.push(rx);
-            let conf = Config::new(node_ix.into(), n_nodes.into(), 0, Duration::from_millis(15));
+            let conf = Config::new(
+                node_ix.into(),
+                n_nodes.into(),
+                EpochId(0),
+                Duration::from_millis(15),
+            );
             handles.push(tokio::spawn(Consensus::new(conf, env).run()));
         }
         let mut blocks_per_node = Vec::new();

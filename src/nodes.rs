@@ -1,4 +1,4 @@
-use codec::Encode;
+use codec::{Decode, Encode, Error as CodecError, Input, Output};
 use derive_more::{Add, AddAssign, Display, From, Into, Sub, SubAssign, Sum};
 use std::{
     iter::FromIterator,
@@ -8,7 +8,24 @@ use std::{
 
 /// The index of a node
 #[derive(Copy, Clone, Debug, Display, Default, Eq, PartialEq, Hash, Ord, PartialOrd, From)]
-pub struct NodeIndex(pub(crate) usize);
+pub struct NodeIndex(pub usize);
+
+impl Encode for NodeIndex {
+    fn encode_to<T: Output>(&self, dest: &mut T) {
+        let val = self.0 as u64;
+        let bytes = val.to_le_bytes().to_vec();
+        Encode::encode_to(&bytes, dest)
+    }
+}
+
+impl Decode for NodeIndex {
+    fn decode<I: Input>(value: &mut I) -> Result<Self, CodecError> {
+        let mut arr = [0u8; 8];
+        value.read(&mut arr)?;
+        let val: u64 = u64::from_le_bytes(arr);
+        Ok(NodeIndex(val as usize))
+    }
+}
 
 /// Node count -- if necessary this can be then generalized to weights
 #[derive(
@@ -46,10 +63,19 @@ impl Div<usize> for NodeCount {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, From, Hash, Encode)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, From, Hash, Encode, Decode)]
 pub struct NodeMap<T>(Vec<T>);
 
 impl<T> NodeMap<T> {
+    /// Constructs a new node map with a given length.
+    pub fn new_with_len(len: NodeCount) -> Self
+    where
+        T: Default + Clone,
+    {
+        let v: Vec<T> = vec![T::default(); len.into()];
+        NodeMap(v)
+    }
+
     /// Returns the number of values. This must equal the number of nodes.
     pub(crate) fn len(&self) -> usize {
         self.0.len()
@@ -64,15 +90,7 @@ impl<T> NodeMap<T> {
     pub(crate) fn enumerate(&self) -> impl Iterator<Item = (NodeIndex, &T)> {
         self.iter()
             .enumerate()
-            .map(|(idx, value)| (NodeIndex(idx as usize), value))
-    }
-
-    pub(crate) fn new_with_len(len: NodeCount) -> Self
-    where
-        T: Default + Clone,
-    {
-        let v: Vec<T> = vec![T::default(); len.into()];
-        NodeMap(v)
+            .map(|(idx, value)| (NodeIndex(idx), value))
     }
 }
 
@@ -94,13 +112,13 @@ impl<T> Index<NodeIndex> for NodeMap<T> {
     type Output = T;
 
     fn index(&self, vidx: NodeIndex) -> &T {
-        &self.0[vidx.0]
+        &self.0[vidx.0 as usize]
     }
 }
 
 impl<T> IndexMut<NodeIndex> for NodeMap<T> {
     fn index_mut(&mut self, vidx: NodeIndex) -> &mut T {
-        &mut self.0[vidx.0]
+        &mut self.0[vidx.0 as usize]
     }
 }
 
