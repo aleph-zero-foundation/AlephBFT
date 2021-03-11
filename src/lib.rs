@@ -11,7 +11,7 @@ use std::{
     hash::Hash,
     sync::Arc,
 };
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, time::Duration};
 
 use crate::{
     creator::Creator,
@@ -134,14 +134,16 @@ pub struct Config<NI: NodeIdT> {
     pub(crate) node_id: NI,
     n_members: NodeCount,
     epoch_id: EpochId,
+    create_lag: Duration,
 }
 
 impl<NI: NodeIdT> Config<NI> {
-    pub fn new(node_id: NI, n_members: NodeCount, epoch_id: EpochId) -> Self {
+    pub fn new(node_id: NI, n_members: NodeCount, epoch_id: EpochId, create_lag: Duration) -> Self {
         Config {
             node_id,
             n_members,
             epoch_id,
+            create_lag,
         }
     }
 }
@@ -368,7 +370,7 @@ impl<B: HashT, H: HashT> Unit<B, H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::environment::{self, BlockHash, Network, NodeId};
+    use crate::testing::environment::{self, BlockHash, Chain, Network, NodeId};
 
     fn init_log() {
         let _ = env_logger::builder()
@@ -389,13 +391,50 @@ mod tests {
             let (mut env, rx) = environment::Environment::new(NodeId(node_ix), net.clone());
             finalized_blocks_rxs.push(rx);
             env.gen_chain(vec![(0.into(), vec![1.into()])]);
-            let conf = Config::new(node_ix.into(), n_nodes.into(), 0);
+            let conf = Config::new(node_ix.into(), n_nodes.into(), 0, Duration::from_millis(10));
             handles.push(tokio::spawn(Consensus::new(conf, env).run()));
         }
 
         for mut rx in finalized_blocks_rxs.drain(..) {
-            let h = futures::executor::block_on(async { rx.recv().await.unwrap().hash() });
+            let h = rx.recv().await.unwrap().hash();
             assert_eq!(h, BlockHash(1));
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn finalize_blocks_random_chain() {
+        init_log();
+        let net = Network::new();
+        let n_nodes = 7;
+        let n_blocks = 10;
+        let mut finalized_blocks_rxs = Vec::new();
+        let mut handles = Vec::new();
+
+        for node_ix in 0..n_nodes {
+            let node_chain = Arc::new(Mutex::new(Chain::new()));
+            let seed_delay = node_ix as u64;
+            let _ = tokio::spawn(Chain::grow_chain(node_chain.clone(), 5, seed_delay));
+            let (env, rx) = environment::Environment::new_with_chain(
+                NodeId(node_ix),
+                net.clone(),
+                node_chain.clone(),
+            );
+            finalized_blocks_rxs.push(rx);
+            let conf = Config::new(node_ix.into(), n_nodes.into(), 0, Duration::from_millis(15));
+            handles.push(tokio::spawn(Consensus::new(conf, env).run()));
+        }
+        let mut blocks_per_node = Vec::new();
+        for mut rx in finalized_blocks_rxs.drain(..) {
+            let mut initial_blocks = Vec::new();
+            for _ in 0..n_blocks {
+                let block = rx.recv().await;
+                initial_blocks.push(block.unwrap().hash());
+            }
+            blocks_per_node.push(initial_blocks);
+        }
+        let blocks_node_0 = blocks_per_node[0].clone();
+        for blocks in blocks_per_node {
+            assert_eq!(blocks, blocks_node_0);
         }
     }
 }

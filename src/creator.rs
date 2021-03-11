@@ -3,6 +3,7 @@ use crate::{
     Config, Environment, EpochId, MyIndex, Receiver, Round, Sender, Unit,
 };
 use log::{debug, error};
+use tokio::time::{sleep, Duration};
 
 /// A process responsible for creating new units. It receives all the units added locally to the Dag
 /// via the parents_rx channel endpoint. It creates units according to an internal strategy respecting
@@ -24,6 +25,7 @@ pub(crate) struct Creator<E: Environment> {
     n_candidates_by_round: Vec<NodeCount>,
     best_block: Box<dyn Fn() -> E::BlockHash + Send + Sync + 'static>,
     hashing: Box<E::Hashing>,
+    create_lag: Duration,
 }
 
 impl<E: Environment> Creator<E> {
@@ -38,6 +40,7 @@ impl<E: Environment> Creator<E> {
             node_id,
             n_members,
             epoch_id,
+            create_lag,
         } = conf;
         Creator {
             node_id,
@@ -50,6 +53,7 @@ impl<E: Environment> Creator<E> {
             n_candidates_by_round: vec![NodeCount(0)],
             best_block,
             hashing,
+            create_lag,
         }
     }
 
@@ -122,6 +126,7 @@ impl<E: Environment> Creator<E> {
                 self.add_unit(u.round(), u.creator(), u.hash());
                 if self.check_ready() {
                     self.create_unit();
+                    sleep(self.create_lag).await;
                 }
             }
         }

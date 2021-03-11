@@ -4,7 +4,10 @@ pub mod environment {
     use codec::{Encode, Output};
     use derive_more::{Display, From, Into};
     use futures::{Future, Sink, Stream};
+    use log::debug;
     use parking_lot::Mutex;
+    use rand::{rngs::StdRng, Rng, SeedableRng};
+    use tokio::time::{sleep, Duration};
 
     use std::{
         collections::{hash_map::DefaultHasher, HashMap},
@@ -140,6 +143,7 @@ pub mod environment {
             if chain.block(&h).is_some() {
                 return Box::new(futures::future::ok(()));
             }
+            debug!("{} Block {:?} not yet available.", self.node_id, h);
             let (tx, rx) = oneshot::channel();
             chain.add_observer(&h, tx);
 
@@ -188,10 +192,11 @@ pub mod environment {
 
     #[derive(Clone)]
     pub(crate) struct Chain {
-        tree: HashMap<BlockHash, Block>,
+        pub(crate) tree: HashMap<BlockHash, Block>,
         best_finalized: BlockHash,
         longest_chain: BlockHash,
         to_notify: Arc<Mutex<HashMap<BlockHash, Vec<oneshot::Sender<()>>>>>,
+        finalized_chain: Vec<BlockHash>,
     }
 
     impl Chain {
@@ -204,16 +209,18 @@ pub mod environment {
             let genesis_hash = genesis.hash;
             let mut tree = HashMap::new();
             tree.insert(genesis.hash, genesis);
+            let finalized_chain = vec![genesis_hash];
 
             Chain {
                 tree,
                 best_finalized: genesis_hash,
                 longest_chain: genesis_hash,
                 to_notify: Arc::new(Mutex::new(HashMap::new())),
+                finalized_chain,
             }
         }
 
-        fn update_longest_chain(&mut self, candidate_hash: BlockHash) {
+        fn update_longest_chain(&mut self, candidate_hash: &BlockHash) {
             let old_longest = self
                 .tree
                 .get(&self.longest_chain)
@@ -222,11 +229,25 @@ pub mod environment {
                 .tree
                 .get(&candidate_hash)
                 .expect("Candidate block not in tree.");
+            if !self.is_descendant(&candidate_hash, &self.best_finalized) {
+                return;
+            }
             if cand_longest.number > old_longest.number
                 || (cand_longest.number == old_longest.number
                     && cand_longest.hash < old_longest.hash)
             {
-                self.longest_chain = candidate_hash;
+                self.longest_chain = *candidate_hash;
+            }
+        }
+
+        fn update_longest_chain_on_finalize(&mut self) {
+            if self.is_descendant(&self.longest_chain, &self.best_finalized) {
+                return;
+            }
+            self.longest_chain = self.best_finalized;
+            // below a borrow checker hack -- it should not affect performance much, though
+            for (block_hash, _) in self.tree.clone().iter() {
+                self.update_longest_chain(block_hash);
             }
         }
 
@@ -254,7 +275,7 @@ pub mod environment {
                 hash: block_hash,
             };
             self.tree.insert(block_hash, new_block);
-            self.update_longest_chain(block_hash);
+            self.update_longest_chain(&block_hash);
 
             let mut to_notify = self.to_notify.lock();
             if let Some(mut notifiers) = to_notify.remove(&block_hash) {
@@ -273,7 +294,7 @@ pub mod environment {
             }
         }
 
-        fn is_descendant(&self, child: &BlockHash, parent: &BlockHash) -> bool {
+        pub(crate) fn is_descendant(&self, child: &BlockHash, parent: &BlockHash) -> bool {
             // Equal or strict descendant returns true.
             // Panics if either block does not exist.
             let mut child_block = self.tree.get(child).expect("Child block not in tree.");
@@ -299,6 +320,10 @@ pub mod environment {
             self.best_finalized
         }
 
+        pub(crate) fn finalized_at(&self, height: usize) -> Option<BlockHash> {
+            self.finalized_chain.get(height).copied()
+        }
+
         fn finalize(&mut self, h: BlockHash) -> Vec<Block> {
             // Will panic if h does not exist or we finalize a block that is not a strict descendant of best_finalized
             // Outputs a vector of newly finalized blocks.
@@ -322,10 +347,59 @@ pub mod environment {
                 block = self.tree.get(&block.parent.unwrap()).unwrap();
             }
             self.best_finalized = h;
+            self.update_longest_chain_on_finalize();
             list_finalized.reverse();
+            for block in &list_finalized {
+                self.finalized_chain.push(block.hash());
+            }
             list_finalized
         }
+
+        // This grows the chain according to a random seeded expansion strategy. If two nodes
+        // finalize the same blocks then their chains will grow the same way, with the only difference
+        // being the time at which they see subsequent blocks (random, seeded independently).
+        pub(crate) async fn grow_chain(
+            growing_chain: Arc<Mutex<Chain>>,
+            expected_delay_ms: u64,
+            seed_delay: u64,
+        ) {
+            let mut rng_delay = StdRng::seed_from_u64(seed_delay);
+            let mut rng_chain = StdRng::seed_from_u64(0);
+            let mut tip_height: usize = 0;
+            let mut last_block_num: u32 = 0;
+            loop {
+                let maybe_finalized_hash = growing_chain.lock().finalized_at(tip_height);
+                if let Some(finalized_hash) = maybe_finalized_hash {
+                    // Block at height tip_height has been finalized, need to generate a couple of blocks
+                    for _ in 0..3 {
+                        loop {
+                            let parent_candidate = rng_chain.gen_range(0..(last_block_num + 1));
+                            if growing_chain
+                                .lock()
+                                .is_descendant(&(parent_candidate.into()), &finalized_hash)
+                            {
+                                last_block_num += 1;
+                                growing_chain
+                                    .lock()
+                                    .import_block(last_block_num.into(), parent_candidate.into());
+                                break;
+                            }
+                        }
+                        sleep(Duration::from_millis(
+                            rng_delay.gen_range(0..2 * expected_delay_ms),
+                        ))
+                        .await;
+                    }
+                    tip_height += 1;
+                }
+                sleep(Duration::from_millis(
+                    rng_delay.gen_range(0..2 * expected_delay_ms),
+                ))
+                .await;
+            }
+        }
     }
+
     type Units = Arc<Mutex<HashMap<(Round, NodeIndex), Unit<BlockHash, Hash>>>>;
 
     #[derive(Clone)]
