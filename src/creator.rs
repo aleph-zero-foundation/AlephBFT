@@ -1,6 +1,6 @@
 use crate::{
     nodes::{NodeCount, NodeIndex, NodeMap},
-    Config, Environment, EpochId, MyIndex, Receiver, Round, Sender, Unit,
+    Config, Environment, EpochId, Hashing, MyIndex, Receiver, Round, Sender, Unit,
 };
 use log::{debug, error};
 use tokio::time::{sleep, Duration};
@@ -24,7 +24,7 @@ pub(crate) struct Creator<E: Environment> {
     candidates_by_round: Vec<NodeMap<Option<E::Hash>>>,
     n_candidates_by_round: Vec<NodeCount>,
     best_block: Box<dyn Fn() -> E::BlockHash + Send + Sync + 'static>,
-    hashing: Box<E::Hashing>,
+    hashing: Hashing<E::Hash>,
     create_lag: Duration,
 }
 
@@ -34,7 +34,7 @@ impl<E: Environment> Creator<E> {
         parents_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
         new_units_tx: Sender<Unit<E::BlockHash, E::Hash>>,
         best_block: Box<dyn Fn() -> E::BlockHash + Send + Sync + 'static>,
-        hashing: Box<E::Hashing>,
+        hashing: Hashing<E::Hash>,
     ) -> Self {
         let Config {
             node_id,

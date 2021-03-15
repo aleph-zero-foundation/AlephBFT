@@ -3,8 +3,8 @@ use std::collections::{hash_map::Entry, HashMap, VecDeque};
 use crate::{
     extender::ExtenderUnit,
     nodes::{NodeCount, NodeIndex, NodeMap},
-    ControlHash, Environment, HashT, NotificationOut, Receiver, RequestAuxData, Round, Sender,
-    Unit,
+    ControlHash, Environment, HashT, Hashing, NotificationOut, Receiver, RequestAuxData, Round,
+    Sender, Unit,
 };
 use log::{debug, error};
 use std::future::Future;
@@ -128,7 +128,7 @@ pub(crate) struct Terminal<E: Environment + 'static> {
     // Here we store all the units -- the one in Dag and the ones "hanging".
     unit_store: HashMap<E::Hash, TerminalUnit<E::BlockHash, E::Hash>>,
     // Hashing function
-    hashing: Box<E::Hashing>,
+    hashing: Hashing<E::Hash>,
 
     // TODO: get rid of HashMaps below and just use Vec<Vec<E::Hash>> for efficiency
 
@@ -152,7 +152,7 @@ impl<E: Environment + 'static> Terminal<E> {
             E::BlockHash,
             Box<dyn Future<Output = Result<(), E::Error>> + Send + Sync + Unpin>,
         >,
-        hashing: Box<E::Hashing>,
+        hashing: Hashing<E::Hash>,
     ) -> Self {
         let (task_notifier, task_queue) = tokio::sync::mpsc::unbounded_channel();
         Terminal {

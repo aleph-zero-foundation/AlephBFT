@@ -54,6 +54,8 @@ impl<H> HashT for H where
 {
 }
 
+pub type Hashing<H> = Box<dyn Fn(&[u8]) -> H + Send + Sync + 'static>;
+
 /// A trait that describes the interaction of the [Consensus] component with the external world.
 pub trait Environment {
     /// Unique identifiers for nodes
@@ -64,7 +66,6 @@ pub trait Environment {
     type BlockHash: HashT;
     /// The ID of a consensus protocol instance.
     type InstanceId: HashT;
-    type Hashing: Fn(&[u8]) -> Self::Hash + Send + Sync + 'static;
 
     type Crypto;
     type In: Stream<Item = NotificationIn<Self::BlockHash, Self::Hash>> + Send + Unpin;
@@ -96,7 +97,7 @@ pub trait Environment {
     /// messages.
     fn consensus_data(&self) -> (Self::Out, Self::In);
     fn hash(data: &[u8]) -> Self::Hash;
-    fn hashing() -> Self::Hashing;
+    fn hashing() -> Hashing<Self::Hash>;
 }
 
 pub enum Error {}
