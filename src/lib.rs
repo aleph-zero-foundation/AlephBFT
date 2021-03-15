@@ -33,15 +33,10 @@ mod testing;
 pub trait MyIndex {
     fn my_index(&self) -> Option<NodeIndex>;
 }
-pub trait NodeIdT:
-    Clone + Display + Debug + Send + Eq + Hash + Encode + Decode + MyIndex + 'static
-{
-}
+pub trait NodeIdT: Clone + Debug + Send + Eq + Hash + Encode + Decode + MyIndex + 'static {}
 
-impl<I> NodeIdT for I where
-    I: Clone + Display + Debug + Send + Eq + Hash + Encode + Decode + MyIndex + 'static
-{
-}
+impl<I> NodeIdT for I where I: Clone + Debug + Send + Eq + Hash + Encode + Decode + MyIndex + 'static
+{}
 
 /// A hash, as an identifier for a block or unit.
 pub trait HashT:
@@ -267,7 +262,7 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
 // This is to be called from within substrate
 impl<E: Environment> Consensus<E> {
     pub async fn run(mut self) {
-        debug!(target: "rush-init", "{} Starting all services...", self.conf.node_id);
+        debug!(target: "rush-init", "{:?} Starting all services...", self.conf.node_id);
         let mut creator = self.creator.take().unwrap();
         let _creator_handle = tokio::spawn(async move { creator.create().await });
         let mut terminal = self.terminal.take().unwrap();
@@ -279,7 +274,7 @@ impl<E: Environment> Consensus<E> {
         let mut finalizer = self.finalizer.take().unwrap();
         let _finalizer_handle = tokio::spawn(async move { finalizer.finalize().await });
 
-        debug!(target: "rush-init", "{} All services started.", self.conf.node_id);
+        debug!(target: "rush-init", "{:?} All services started.", self.conf.node_id);
 
         // TODO add close signal
     }
