@@ -169,10 +169,6 @@ pub mod environment {
             self.chain.lock().best_block()
         }
 
-        fn hash(_data: &[u8]) -> Self::Hash {
-            Default::default()
-        }
-
         fn consensus_data(&self) -> (Self::Out, Self::In) {
             self.network.consensus_data(self.node_id)
         }

@@ -91,7 +91,6 @@ pub trait Environment {
     /// Outputs two channel endpoints: transmitter of outgoing messages and receiver if incoming
     /// messages.
     fn consensus_data(&self) -> (Self::Out, Self::In);
-    fn hash(data: &[u8]) -> Self::Hash;
     fn hashing() -> Hashing<Self::Hash>;
 }
 
