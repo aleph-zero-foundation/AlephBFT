@@ -158,7 +158,7 @@ impl<NI: NodeIdT> Config<NI> {
 }
 
 pub trait SpawnHandle {
-    fn spawn(&self, name: &str, task: impl Future<Output = ()> + Send + 'static);
+    fn spawn(&self, name: &'static str, task: impl Future<Output = ()> + Send + 'static);
 }
 
 pub struct Consensus<E: Environment + 'static> {
