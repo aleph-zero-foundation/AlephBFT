@@ -83,7 +83,7 @@ pub mod environment {
         chain: Arc<Mutex<Chain>>,
         network: Network,
         finalized_notifier: UnboundedSender<Block>,
-        calls_to_finalize: Vec<BlockHash>,
+        calls_to_finalize: Arc<Mutex<Vec<BlockHash>>>,
     }
 
     impl Environment {
@@ -91,37 +91,40 @@ pub mod environment {
             node_id: NodeId,
             network: Network,
             chain: Arc<Mutex<Chain>>,
-        ) -> (Self, UnboundedReceiver<Block>) {
+        ) -> (Arc<Self>, UnboundedReceiver<Block>) {
             let (finalized_tx, finalized_rx) = unbounded_channel();
             (
-                Environment {
+                Arc::new(Environment {
                     node_id,
                     chain,
                     network,
                     finalized_notifier: finalized_tx,
-                    calls_to_finalize: Vec::new(),
-                },
+                    calls_to_finalize: Arc::new(Mutex::new(Vec::new())),
+                }),
                 finalized_rx,
             )
         }
 
-        pub(crate) fn new(node_id: NodeId, network: Network) -> (Self, UnboundedReceiver<Block>) {
+        pub(crate) fn new(
+            node_id: NodeId,
+            network: Network,
+        ) -> (Arc<Self>, UnboundedReceiver<Block>) {
             let chain = Arc::new(Mutex::new(Chain::new()));
             Self::new_with_chain(node_id, network, chain)
         }
 
         pub(crate) fn get_log_finalize_calls(&self) -> Vec<BlockHash> {
-            self.calls_to_finalize.clone()
+            self.calls_to_finalize.lock().clone()
         }
 
-        pub(crate) fn gen_chain(&mut self, branches: Vec<(BlockHash, Vec<BlockHash>)>) {
+        pub(crate) fn gen_chain(&self, branches: Vec<(BlockHash, Vec<BlockHash>)>) {
             let mut chain = self.chain.lock();
             for (h, branch) in branches {
                 chain.import_branch(h, branch);
             }
         }
 
-        pub(crate) fn import_block(&mut self, block: BlockHash, parent: BlockHash) {
+        pub(crate) fn import_block(&self, block: BlockHash, parent: BlockHash) {
             self.chain.lock().import_block(block, parent);
         }
     }
@@ -136,8 +139,8 @@ pub mod environment {
         type Out = Out;
         type In = In;
 
-        fn finalize_block(&mut self, h: Self::BlockHash) {
-            self.calls_to_finalize.push(h);
+        fn finalize_block(&self, h: Self::BlockHash) {
+            self.calls_to_finalize.lock().push(h);
             let finalized_blocks = self.chain.lock().finalize(h);
             for block in finalized_blocks {
                 let _ = self.finalized_notifier.send(block);

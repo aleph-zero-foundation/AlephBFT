@@ -5,7 +5,6 @@
 use codec::{Decode, Encode};
 use futures::{Future, Sink, Stream};
 use log::{debug, error};
-use parking_lot::Mutex;
 use std::{
     fmt::{Debug, Display},
     hash::Hash,
@@ -70,7 +69,7 @@ pub trait Environment {
     /// Supposed to be called whenever a new block is finalized according to the protocol.
     /// If [finalize_block] is called first with `h1` and then with `h2` then necessarily
     /// `h2` must be a strict descendant of `h1`.
-    fn finalize_block(&mut self, _h: Self::BlockHash);
+    fn finalize_block(&self, _h: Self::BlockHash);
 
     /// Checks if a particular block has been already finalized.
     fn check_extends_finalized(&self, _h: Self::BlockHash) -> bool;
@@ -171,14 +170,13 @@ pub(crate) type Receiver<T> = mpsc::UnboundedReceiver<T>;
 pub(crate) type Sender<T> = mpsc::UnboundedSender<T>;
 
 impl<E: Environment + Send + Sync + 'static> Consensus<E> {
-    pub fn new(conf: Config<E::NodeId>, env: E) -> Self {
+    pub fn new(conf: Config<E::NodeId>, env: Arc<E>) -> Self {
         let (o, i) = env.consensus_data();
-        let env = Arc::new(Mutex::new(env));
 
         let e = env.clone();
-        let env_finalize = Box::new(move |h| e.lock().finalize_block(h));
+        let env_finalize = Box::new(move |h| e.finalize_block(h));
         let e = env.clone();
-        let env_extends_finalized = Box::new(move |h| e.lock().check_extends_finalized(h));
+        let env_extends_finalized = Box::new(move |h| e.check_extends_finalized(h));
 
         let (finalizer, batch_tx) =
             Finalizer::<E>::new(conf.node_id.clone(), env_finalize, env_extends_finalized);
@@ -199,7 +197,7 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
         let (parents_tx, parents_rx) = mpsc::unbounded_channel();
 
         let e = env.clone();
-        let best_block = Box::new(move || e.lock().best_block());
+        let best_block = Box::new(move || e.best_block());
         let creator = Some(Creator::<E>::new(
             conf.clone(),
             parents_rx,
@@ -208,7 +206,7 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
             Box::new(E::hashing()),
         ));
 
-        let check_available = Box::new(move |h| env.lock().check_available(h));
+        let check_available = Box::new(move |h| env.check_available(h));
 
         let mut terminal = Terminal::<E>::new(
             conf.node_id.clone(),
@@ -386,6 +384,7 @@ impl<B: HashT, H: HashT> Unit<B, H> {
 mod tests {
     use super::*;
     use crate::testing::environment::{self, BlockHash, Chain, Network, NodeId};
+    use parking_lot::Mutex;
 
     fn init_log() {
         let _ = env_logger::builder()
@@ -403,7 +402,7 @@ mod tests {
         let mut handles = Vec::new();
 
         for node_ix in 0..n_nodes {
-            let (mut env, rx) = environment::Environment::new(NodeId(node_ix), net.clone());
+            let (env, rx) = environment::Environment::new(NodeId(node_ix), net.clone());
             finalized_blocks_rxs.push(rx);
             env.gen_chain(vec![(0.into(), vec![1.into()])]);
             let conf = Config::new(
@@ -426,7 +425,7 @@ mod tests {
         init_log();
         let net = Network::new();
         let n_nodes = 7;
-        let n_blocks = 10;
+        let n_blocks = 10usize;
         let mut finalized_blocks_rxs = Vec::new();
         let mut handles = Vec::new();
 

@@ -56,7 +56,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
     async fn finalize_blocks() {
         let net = Network::new();
-        let (mut env, mut finalized_blocks_rx) = environment::Environment::new(NodeId(0), net);
+        let (env, mut finalized_blocks_rx) = environment::Environment::new(NodeId(0), net);
         env.import_block(1.into(), 0.into());
         env.import_block(2.into(), 1.into());
 
@@ -90,7 +90,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
     async fn ignore_block_not_extending_finalized() {
         let net = Network::new();
-        let (mut env, mut finalized_blocks_rx) = environment::Environment::new(NodeId(0), net);
+        let (env, mut finalized_blocks_rx) = environment::Environment::new(NodeId(0), net);
 
         // Block tree constructed below:
         //     5
