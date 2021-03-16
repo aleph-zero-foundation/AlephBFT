@@ -157,6 +157,10 @@ impl<NI: NodeIdT> Config<NI> {
     }
 }
 
+pub trait SpawnHandle {
+    fn spawn(&self, name: &str, task: impl Future<Output = ()> + Send + 'static);
+}
+
 pub struct Consensus<E: Environment + 'static> {
     conf: Config<E::NodeId>,
     creator: Option<Creator<E>>,
@@ -256,20 +260,22 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
     }
 }
 
-// This is to be called from within substrate
 impl<E: Environment> Consensus<E> {
-    pub async fn run(mut self) {
+    pub async fn run(mut self, spawn_handle: impl SpawnHandle) {
         debug!(target: "rush-init", "{:?} Starting all services...", self.conf.node_id);
         let mut creator = self.creator.take().unwrap();
-        let _creator_handle = tokio::spawn(async move { creator.create().await });
+        spawn_handle.spawn("consensus/creator", async move { creator.create().await });
         let mut terminal = self.terminal.take().unwrap();
-        let _terminal_handle = tokio::spawn(async move { terminal.run().await });
+        spawn_handle.spawn("consensus/terminal", async move { terminal.run().await });
         let mut extender = self.extender.take().unwrap();
-        let _extender_handle = tokio::spawn(async move { extender.extend().await });
+        spawn_handle.spawn("consensus/extender", async move { extender.extend().await });
         let mut syncer = self.syncer.take().unwrap();
-        let _syncer_handle = tokio::spawn(async move { syncer.sync().await });
+        spawn_handle.spawn("consensus/syncer", async move { syncer.sync().await });
         let mut finalizer = self.finalizer.take().unwrap();
-        let _finalizer_handle = tokio::spawn(async move { finalizer.finalize().await });
+        spawn_handle.spawn(
+            "consensus/finalizer",
+            async move { finalizer.finalize().await },
+        );
 
         debug!(target: "rush-init", "{:?} All services started.", self.conf.node_id);
 
@@ -393,13 +399,24 @@ mod tests {
             .try_init();
     }
 
+    #[derive(Default, Clone)]
+    struct Spawner {
+        handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+    }
+
+    impl SpawnHandle for Spawner {
+        fn spawn(&self, _name: &str, task: impl Future<Output = ()> + Send + 'static) {
+            self.handles.lock().push(tokio::spawn(task))
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn dummy() {
         init_log();
         let net = Network::new();
         let n_nodes = 16;
         let mut finalized_blocks_rxs = Vec::new();
-        let mut handles = Vec::new();
+        let spawner = Spawner::default();
 
         for node_ix in 0..n_nodes {
             let (env, rx) = environment::Environment::new(NodeId(node_ix), net.clone());
@@ -411,13 +428,15 @@ mod tests {
                 EpochId(0),
                 Duration::from_millis(10),
             );
-            handles.push(tokio::spawn(Consensus::new(conf, env).run()));
+            spawner.spawn("consensus", Consensus::new(conf, env).run(spawner.clone()));
         }
 
         for mut rx in finalized_blocks_rxs.drain(..) {
             let h = rx.recv().await.unwrap().hash();
             assert_eq!(h, BlockHash(1));
         }
+
+        // TODO after adding stop signal to consensus await on handles in spawner
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -427,7 +446,7 @@ mod tests {
         let n_nodes = 7;
         let n_blocks = 10usize;
         let mut finalized_blocks_rxs = Vec::new();
-        let mut handles = Vec::new();
+        let spawner = Spawner::default();
 
         for node_ix in 0..n_nodes {
             let node_chain = Arc::new(Mutex::new(Chain::new()));
@@ -445,7 +464,7 @@ mod tests {
                 EpochId(0),
                 Duration::from_millis(15),
             );
-            handles.push(tokio::spawn(Consensus::new(conf, env).run()));
+            spawner.spawn("consensus", Consensus::new(conf, env).run(spawner.clone()));
         }
         let mut blocks_per_node = Vec::new();
         for mut rx in finalized_blocks_rxs.drain(..) {
@@ -460,5 +479,7 @@ mod tests {
         for blocks in blocks_per_node {
             assert_eq!(blocks, blocks_node_0);
         }
+
+        // TODO after adding stop signal to consensus await on handles in spawner
     }
 }
