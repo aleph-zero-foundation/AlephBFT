@@ -3,8 +3,7 @@ pub mod environment {
     use crate::{Hashing, MyIndex, NodeIndex, NotificationIn, NotificationOut, Round, Unit};
     use codec::{Decode, Encode, Error as CodecError, Input, Output};
     use derive_more::{Display, From, Into};
-    use futures::{Future, Sink, Stream};
-    use log::debug;
+    use futures::{Sink, Stream};
     use parking_lot::Mutex;
     use rand::{rngs::StdRng, Rng, SeedableRng};
     use tokio::time::{sleep, Duration};
@@ -17,7 +16,7 @@ pub mod environment {
         sync::Arc,
         task::{Context, Poll},
     };
-    use tokio::sync::{mpsc::*, oneshot};
+    use tokio::sync::mpsc::*;
 
     type Error = ();
 
@@ -147,21 +146,6 @@ pub mod environment {
             }
         }
 
-        fn check_available(
-            &self,
-            h: Self::BlockHash,
-        ) -> Box<dyn Future<Output = Result<(), Self::Error>> + Send + Sync + Unpin> {
-            let mut chain = self.chain.lock();
-            if chain.block(&h).is_some() {
-                return Box::new(futures::future::ok(()));
-            }
-            debug!("{} Block {:?} not yet available.", self.node_id, h);
-            let (tx, rx) = oneshot::channel();
-            chain.add_observer(&h, tx);
-
-            Box::new(Box::pin(async move { rx.await.map_err(|_| ()) }))
-        }
-
         fn check_extends_finalized(&self, h: Self::BlockHash) -> bool {
             let chain = self.chain.lock();
             let last_finalized = chain.best_finalized();
@@ -203,7 +187,6 @@ pub mod environment {
         pub(crate) tree: HashMap<BlockHash, Block>,
         best_finalized: BlockHash,
         longest_chain: BlockHash,
-        to_notify: Arc<Mutex<HashMap<BlockHash, Vec<oneshot::Sender<()>>>>>,
         finalized_chain: Vec<BlockHash>,
     }
 
@@ -223,7 +206,6 @@ pub mod environment {
                 tree,
                 best_finalized: genesis_hash,
                 longest_chain: genesis_hash,
-                to_notify: Arc::new(Mutex::new(HashMap::new())),
                 finalized_chain,
             }
         }
@@ -259,14 +241,6 @@ pub mod environment {
             }
         }
 
-        fn add_observer(&mut self, block_hash: &BlockHash, tx: oneshot::Sender<()>) {
-            self.to_notify
-                .lock()
-                .entry(*block_hash)
-                .or_default()
-                .push(tx);
-        }
-
         pub(crate) fn import_block(&mut self, block_hash: BlockHash, parent_hash: BlockHash) {
             let parent_block = self
                 .tree
@@ -284,14 +258,6 @@ pub mod environment {
             };
             self.tree.insert(block_hash, new_block);
             self.update_longest_chain(&block_hash);
-
-            let mut to_notify = self.to_notify.lock();
-            if let Some(mut notifiers) = to_notify.remove(&block_hash) {
-                notifiers.drain(0..).for_each(|n| {
-                    n.send(())
-                        .expect("should send a notification that a block arrived")
-                })
-            };
         }
 
         pub(crate) fn import_branch(&mut self, base: BlockHash, branch: Vec<BlockHash>) {
@@ -314,10 +280,6 @@ pub mod environment {
                 child_block = self.tree.get(&child_block.parent.unwrap()).unwrap();
             }
             child_block.hash == parent_block.hash
-        }
-
-        fn block(&self, h: &BlockHash) -> Option<Block> {
-            self.tree.get(h).copied()
         }
 
         fn best_block(&self) -> BlockHash {

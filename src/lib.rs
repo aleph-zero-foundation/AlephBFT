@@ -79,14 +79,6 @@ pub trait Environment {
     /// descendant of the most recently finalized block (to guarantee liveness).
     fn best_block(&self) -> Self::BlockHash;
 
-    /// Checks whether a given block is "available" meaning that its content has been downloaded
-    /// by the current node. This is required as consensus messages from other committee members
-    /// referring to unavailable blocks must be ignored (at least till the block shows).
-    fn check_available(
-        &self,
-        h: Self::BlockHash,
-    ) -> Box<dyn Future<Output = Result<(), Self::Error>> + Send + Sync + Unpin>;
-
     /// Outputs two channel endpoints: transmitter of outgoing messages and receiver if incoming
     /// messages.
     fn consensus_data(&self) -> (Self::Out, Self::In);
@@ -204,8 +196,7 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
 
         let (parents_tx, parents_rx) = mpsc::unbounded_channel();
 
-        let e = env.clone();
-        let best_block = Box::new(move || e.best_block());
+        let best_block = Box::new(move || env.best_block());
         let creator = Some(Creator::<E>::new(
             conf.clone(),
             parents_rx,
@@ -214,13 +205,10 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
             Box::new(E::hashing()),
         ));
 
-        let check_available = Box::new(move |h| env.check_available(h));
-
         let mut terminal = Terminal::<E>::new(
             conf.node_id.clone(),
             incoming_units_rx,
             requests_tx.clone(),
-            check_available,
             Box::new(E::hashing()),
         );
 

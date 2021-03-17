@@ -7,7 +7,6 @@ use crate::{
     Sender, Unit,
 };
 use log::{debug, error};
-use std::future::Future;
 
 /// An enum describing the status of a Unit in the Terminal pipeline.
 #[derive(Clone, Debug, PartialEq)]
@@ -90,12 +89,6 @@ impl<B: HashT, H: HashT> TerminalUnit<B, H> {
 pub enum TerminalEvent<H: HashT> {
     ParentsReconstructed(H),
     ParentsInDag(H),
-    BlockAvailable(H),
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Task<H: HashT> {
-    BlockAvailable(H),
 }
 
 type SyncClosure<X, Y> = Box<dyn Fn(X) -> Y + Sync + Send + 'static>;
@@ -113,17 +106,8 @@ pub(crate) struct Terminal<E: Environment + 'static> {
     new_units_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
     // A channel to push unit requests.
     requests_tx: Sender<NotificationOut<E::BlockHash, E::Hash>>,
-    // An oracle for checking if a given block hash h is available. This is needed to check for a new unit
-    // U whether the block it carries is available, and hence the unit U should be accepted (or held aside
-    // till the block is available).
-    check_available: SyncClosure<
-        E::BlockHash,
-        Box<dyn Future<Output = Result<(), E::Error>> + Send + Sync + Unpin>,
-    >,
     // A Queue that is necessary to deal with cascading updates to the Dag/Store
     event_queue: VecDeque<TerminalEvent<E::Hash>>,
-    task_queue: Receiver<Task<E::Hash>>,
-    task_notifier: Sender<Task<E::Hash>>,
     post_insert: Vec<SyncClosure<TerminalUnit<E::BlockHash, E::Hash>, ()>>,
     // Here we store all the units -- the one in Dag and the ones "hanging".
     unit_store: HashMap<E::Hash, TerminalUnit<E::BlockHash, E::Hash>>,
@@ -148,21 +132,13 @@ impl<E: Environment + 'static> Terminal<E> {
         node_id: E::NodeId,
         new_units_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
         requests_tx: Sender<NotificationOut<E::BlockHash, E::Hash>>,
-        check_available: SyncClosure<
-            E::BlockHash,
-            Box<dyn Future<Output = Result<(), E::Error>> + Send + Sync + Unpin>,
-        >,
         hashing: Hashing<E::Hash>,
     ) -> Self {
-        let (task_notifier, task_queue) = tokio::sync::mpsc::unbounded_channel();
         Terminal {
             node_id,
             new_units_rx,
             requests_tx,
-            check_available,
             event_queue: VecDeque::new(),
-            task_queue,
-            task_notifier,
             post_insert: Vec::new(),
             unit_store: HashMap::new(),
             hashing,
@@ -311,37 +287,13 @@ impl<E: Environment + 'static> Terminal<E> {
                         // TODO: should trigger some immediate action here
                     }
                 }
-                TerminalEvent::BlockAvailable(u_hash) => {
+                TerminalEvent::ParentsInDag(u_hash) => {
                     let u = self.unit_store.get_mut(&u_hash).unwrap();
                     u.status = UnitStatus::InDag;
                     debug!(target: "rush-terminal", "{:?} Adding to Dag {:?} r {:?} ix {:?}.", self.node_id, u_hash, u.unit.round, u.unit.creator);
                     self.update_on_dag_add(&u_hash);
                 }
-                TerminalEvent::ParentsInDag(u_hash) => {
-                    let block = self.unit_store.get(&u_hash).unwrap().unit.best_block;
-                    let available = (self.check_available)(block);
-                    let notify = self.task_notifier.clone();
-                    // TODO this is needed for debugging, try to remove the clone later
-                    let node_id = self.node_id.clone();
-                    let _ = tokio::spawn(async move {
-                        if available.await.is_ok() {
-                            if let Err(e) = notify.send(Task::BlockAvailable(u_hash)) {
-                                debug!(target: "rush-terminal", "{:?} Error while sending BlockAvailable notification {}", node_id, e);
-                            }
-                        } else {
-                            debug!(target: "rush-terminal", "{:?} Error while checking block availability for unit {:?}", node_id, u_hash);
-                        }
-                    });
-                }
             }
-        }
-    }
-
-    fn process_task(&mut self, task: Task<E::Hash>) {
-        match task {
-            Task::BlockAvailable(u_hash) => self
-                .event_queue
-                .push_back(TerminalEvent::BlockAvailable(u_hash)),
         }
     }
 
@@ -354,13 +306,8 @@ impl<E: Environment + 'static> Terminal<E> {
 
     pub(crate) async fn run(&mut self) {
         loop {
-            tokio::select! {
-                Some(u) = self.new_units_rx.recv() => {
-                    self.add_to_store(u);
-                },
-                Some(task) = self.task_queue.recv() =>{
-                    self.process_task(task);
-                },
+            if let Some(u) = self.new_units_rx.recv().await {
+                self.add_to_store(u);
             }
             self.handle_events();
         }
