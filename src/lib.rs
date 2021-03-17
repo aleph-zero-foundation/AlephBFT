@@ -115,6 +115,10 @@ impl RequestAuxData {
     fn new(child_creator: NodeIndex) -> Self {
         RequestAuxData { child_creator }
     }
+
+    pub fn child_creator(&self) -> NodeIndex {
+        self.child_creator
+    }
 }
 
 /// Type for incoming notifications: Environment to Consensus.
