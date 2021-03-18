@@ -118,7 +118,7 @@ impl RequestAuxData {
 pub enum NotificationIn<B: HashT, H: HashT> {
     /// A notification carrying a single unit. This might come either from multicast or
     /// from a response to a request. This is of no importance at this layer.
-    NewUnit(Unit<B, H>),
+    NewUnits(Vec<Unit<B, H>>),
     // TODO: ResponseParents(H, Vec<B, H>) and Alert() notifications
 }
 
