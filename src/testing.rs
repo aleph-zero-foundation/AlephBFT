@@ -454,7 +454,7 @@ pub mod environment {
                 NotificationOut::CreatedUnit(u) => {
                     let coord = (u.round(), u.creator());
                     self.units.lock().insert(coord, u.clone());
-                    self.send_to_all(NotificationIn::NewUnit(u));
+                    self.send_to_all(NotificationIn::NewUnits(vec![u]));
                 }
                 NotificationOut::MissingUnits(coords, _aux_data) => {
                     let units: Vec<Unit<BlockHash, Hash>> = coords
@@ -462,7 +462,7 @@ pub mod environment {
                         .map(|coord| self.units.lock().get(coord).cloned().unwrap())
                         .collect();
                     for u in units {
-                        let response = NotificationIn::NewUnit(u);
+                        let response = NotificationIn::NewUnits(vec![u]);
                         self.send_to_peer(response, self.node_id);
                     }
                 }
@@ -500,12 +500,12 @@ mod tests {
 
         let u = u0.clone();
         let h0 = tokio::spawn(async move {
-            assert_eq!(in0.next().await.unwrap(), NotificationIn::NewUnit(u),);
+            assert_eq!(in0.next().await.unwrap(), NotificationIn::NewUnits(vec![u]),);
         });
 
         let u = u0.clone();
         let h1 = tokio::spawn(async move {
-            assert_eq!(in1.next().await.unwrap(), NotificationIn::NewUnit(u));
+            assert_eq!(in1.next().await.unwrap(), NotificationIn::NewUnits(vec![u]));
         });
 
         assert!(out0

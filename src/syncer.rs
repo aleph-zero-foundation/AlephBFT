@@ -55,11 +55,13 @@ impl<E: Environment> Syncer<E> {
                 }
                 Some(m) = self.messages_rx.next() => {
                     match m {
-                        NotificationIn::NewUnit(u) => {
-                            debug!(target: "rush-syncer", "{:?} Received a unit {:?} from Environment.", self.node_id, u.hash());
-                            let send_result = self.units_tx.send(u);
-                            if let Err(e) =send_result {
-                                error!(target: "rush-syncer", "{:?} Unable to send a unit to Terminal: {:?}.", self.node_id, e);
+                        NotificationIn::NewUnits(units) => {
+                            for u in units {
+                                debug!(target: "rush-syncer", "{:?} Received a unit {:?} from Environment.", self.node_id, u.hash());
+                                let send_result = self.units_tx.send(u);
+                                if let Err(e) =send_result {
+                                    error!(target: "rush-syncer", "{:?} Unable to send a unit to Terminal: {:?}.", self.node_id, e);
+                                }
                             }
                         }
                     }
