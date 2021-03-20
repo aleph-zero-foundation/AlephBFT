@@ -24,7 +24,7 @@ pub mod environment {
     pub struct NodeId(pub usize);
 
     impl Encode for NodeId {
-        fn encode_to<T: Output>(&self, dest: &mut T) {
+        fn encode_to<T: Output + ?Sized>(&self, dest: &mut T) {
             let val = self.0 as u64;
             let bytes = val.to_le_bytes().to_vec();
             Encode::encode_to(&bytes, dest)
