@@ -10,7 +10,10 @@ use std::{
     hash::Hash,
     sync::Arc,
 };
-use tokio::{sync::mpsc, time::Duration};
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::Duration,
+};
 
 use crate::{
     creator::Creator,
@@ -253,25 +256,53 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
 }
 
 impl<E: Environment> Consensus<E> {
-    pub async fn run(mut self, spawn_handle: impl SpawnHandle) {
-        debug!(target: "rush-init", "{:?} Starting all services...", self.conf.node_id);
+    pub async fn run(mut self, spawn_handle: impl SpawnHandle, exit: oneshot::Receiver<()>) {
+        debug!(target: "rush-root", "{:?} Starting all services...", self.conf.node_id);
+
+        let (creator_exit, exit_rx) = oneshot::channel();
         let mut creator = self.creator.take().unwrap();
-        spawn_handle.spawn("consensus/creator", async move { creator.create().await });
-        let mut terminal = self.terminal.take().unwrap();
-        spawn_handle.spawn("consensus/terminal", async move { terminal.run().await });
-        let mut extender = self.extender.take().unwrap();
-        spawn_handle.spawn("consensus/extender", async move { extender.extend().await });
-        let mut syncer = self.syncer.take().unwrap();
-        spawn_handle.spawn("consensus/syncer", async move { syncer.sync().await });
-        let mut finalizer = self.finalizer.take().unwrap();
         spawn_handle.spawn(
-            "consensus/finalizer",
-            async move { finalizer.finalize().await },
+            "consensus/creator",
+            async move { creator.create(exit_rx).await },
         );
 
-        debug!(target: "rush-init", "{:?} All services started.", self.conf.node_id);
+        let (terminal_exit, exit_rx) = oneshot::channel();
+        let mut terminal = self.terminal.take().unwrap();
+        spawn_handle.spawn(
+            "consensus/terminal",
+            async move { terminal.run(exit_rx).await },
+        );
 
-        // TODO add close signal
+        let (extender_exit, exit_rx) = oneshot::channel();
+        let mut extender = self.extender.take().unwrap();
+        spawn_handle.spawn("consensus/extender", async move {
+            extender.extend(exit_rx).await
+        });
+
+        let (syncer_exit, exit_rx) = oneshot::channel();
+        let mut syncer = self.syncer.take().unwrap();
+        spawn_handle.spawn(
+            "consensus/syncer",
+            async move { syncer.sync(exit_rx).await },
+        );
+
+        let (finalizer_exit, exit_rx) = oneshot::channel();
+        let mut finalizer = self.finalizer.take().unwrap();
+        spawn_handle.spawn("consensus/finalizer", async move {
+            finalizer.finalize(exit_rx).await
+        });
+
+        debug!(target: "rush-root", "{:?} All services started.", self.conf.node_id);
+
+        let _ = exit.await;
+        // we stop no matter if received Ok or Err
+        let _ = creator_exit.send(());
+        let _ = terminal_exit.send(());
+        let _ = extender_exit.send(());
+        let _ = syncer_exit.send(());
+        let _ = finalizer_exit.send(());
+
+        debug!(target: "rush-root", "{:?} All services started.", self.conf.node_id);
     }
 }
 
@@ -402,12 +433,21 @@ mod tests {
         }
     }
 
+    impl Spawner {
+        async fn wait(&self) {
+            for h in self.handles.lock().iter_mut() {
+                let _ = h.await;
+            }
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn dummy() {
         init_log();
         let net = Network::new();
         let n_nodes = 16;
-        let mut finalized_blocks_rxs = Vec::new();
+        let mut finalized_blocks_rxs = vec![];
+        let mut exits = vec![];
         let spawner = Spawner::default();
 
         for node_ix in 0..n_nodes {
@@ -420,7 +460,12 @@ mod tests {
                 EpochId(0),
                 Duration::from_millis(10),
             );
-            spawner.spawn("consensus", Consensus::new(conf, env).run(spawner.clone()));
+            let (exit_tx, exit_rx) = oneshot::channel();
+            exits.push(exit_tx);
+            spawner.spawn(
+                "consensus",
+                Consensus::new(conf, env).run(spawner.clone(), exit_rx),
+            );
         }
 
         for mut rx in finalized_blocks_rxs.drain(..) {
@@ -428,7 +473,10 @@ mod tests {
             assert_eq!(h, BlockHash(1));
         }
 
-        // TODO after adding stop signal to consensus await on handles in spawner
+        exits.into_iter().for_each(|tx| {
+            let _ = tx.send(());
+        });
+        spawner.wait().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -438,6 +486,7 @@ mod tests {
         let n_nodes = 7;
         let n_blocks = 10usize;
         let mut finalized_blocks_rxs = Vec::new();
+        let mut exits = vec![];
         let spawner = Spawner::default();
 
         for node_ix in 0..n_nodes {
@@ -456,7 +505,12 @@ mod tests {
                 EpochId(0),
                 Duration::from_millis(15),
             );
-            spawner.spawn("consensus", Consensus::new(conf, env).run(spawner.clone()));
+            let (exit_tx, exit_rx) = oneshot::channel();
+            exits.push(exit_tx);
+            spawner.spawn(
+                "consensus",
+                Consensus::new(conf, env).run(spawner.clone(), exit_rx),
+            );
         }
         let mut blocks_per_node = Vec::new();
         for mut rx in finalized_blocks_rxs.drain(..) {
@@ -472,6 +526,9 @@ mod tests {
             assert_eq!(blocks, blocks_node_0);
         }
 
-        // TODO after adding stop signal to consensus await on handles in spawner
+        exits.into_iter().for_each(|tx| {
+            let _ = tx.send(());
+        });
+        spawner.wait().await;
     }
 }

@@ -2,8 +2,12 @@ use crate::{
     nodes::{NodeCount, NodeIndex, NodeMap},
     Config, Environment, EpochId, Hashing, MyIndex, Receiver, Round, Sender, Unit,
 };
+use futures::{FutureExt, StreamExt};
 use log::{debug, error};
-use tokio::time::{sleep, Duration};
+use tokio::{
+    sync::oneshot,
+    time::{sleep, Duration},
+};
 
 /// A process responsible for creating new units. It receives all the units added locally to the Dag
 /// via the parents_rx channel endpoint. It creates units according to an internal strategy respecting
@@ -119,14 +123,21 @@ impl<E: Environment> Creator<E> {
             && self.candidates_by_round[prev_round][self.node_id.my_index().unwrap()].is_some()
     }
 
-    pub(crate) async fn create(&mut self) {
+    pub(crate) async fn create(&mut self, exit: oneshot::Receiver<()>) {
         self.create_unit();
+        let mut exit = exit.into_stream();
         loop {
-            while let Some(u) = self.parents_rx.recv().await {
-                self.add_unit(u.round(), u.creator(), u.hash());
-                if self.check_ready() {
-                    self.create_unit();
-                    sleep(self.create_lag).await;
+            tokio::select! {
+                Some(u) = self.parents_rx.recv() => {
+                    self.add_unit(u.round(), u.creator(), u.hash());
+                    if self.check_ready() {
+                        self.create_unit();
+                        sleep(self.create_lag).await;
+                    }
+                }
+                _ = exit.next() => {
+                    debug!(target: "rush-creator", "{:?} received exit signal.", self.node_id);
+                    break
                 }
             }
         }
