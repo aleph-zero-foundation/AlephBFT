@@ -1,7 +1,7 @@
 use crate::{Environment, NotificationIn, NotificationOut, Receiver, Sender, Unit};
-use futures::{SinkExt, StreamExt};
+use futures::{FutureExt, SinkExt, StreamExt};
 use log::{debug, error};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 /// A process responsible for managing input and output messages.
 pub(crate) struct Syncer<E: Environment> {
@@ -44,7 +44,8 @@ impl<E: Environment> Syncer<E> {
             units_tx,
         )
     }
-    pub(crate) async fn sync(&mut self) {
+    pub(crate) async fn sync(&mut self, exit: oneshot::Receiver<()>) {
+        let mut exit = exit.into_stream();
         loop {
             tokio::select! {
                 Some(m) = self.requests_rx.recv() => {
@@ -65,6 +66,10 @@ impl<E: Environment> Syncer<E> {
                             }
                         }
                     }
+                }
+                _ = exit.next() => {
+                    debug!(target: "rush-syncer", "{:?} received exit signal.", self.node_id);
+                    break
                 }
             }
         }

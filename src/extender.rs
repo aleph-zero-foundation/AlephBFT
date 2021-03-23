@@ -1,4 +1,6 @@
+use futures::{FutureExt, StreamExt};
 use std::collections::{HashMap, VecDeque};
+use tokio::sync::oneshot;
 
 use log::{debug, error};
 
@@ -291,12 +293,19 @@ impl<E: Environment> Extender<E> {
         }
     }
 
-    pub(crate) async fn extend(&mut self) {
+    pub(crate) async fn extend(&mut self, exit: oneshot::Receiver<()>) {
+        let mut exit = exit.into_stream();
         loop {
-            if let Some(v) = self.electors.recv().await {
-                let v_hash = v.hash;
-                if self.add_unit(v) {
-                    self.progress(v_hash);
+            tokio::select! {
+                Some(v) = self.electors.recv() =>{
+                    let v_hash = v.hash;
+                    if self.add_unit(v) {
+                        self.progress(v_hash);
+                    }
+                }
+                _ = exit.next() => {
+                    debug!(target: "rush-extender", "{:?} received exit signal.", self.node_id);
+                    break
                 }
             }
         }
@@ -350,7 +359,8 @@ mod tests {
             batch_tx,
             NodeCount(n_members),
         );
-        let _extender_handle = tokio::spawn(async move { extender.extend().await });
+        let (exit_tx, exit_rx) = oneshot::channel();
+        let extender_handle = tokio::spawn(async move { extender.extend(exit_rx).await });
 
         for round in 0..rounds {
             for creator in 0..n_members {
@@ -372,5 +382,7 @@ mod tests {
                 BlockHash(1004)
             ]
         );
+        let _ = exit_tx.send(());
+        let _ = extender_handle.await;
     }
 }

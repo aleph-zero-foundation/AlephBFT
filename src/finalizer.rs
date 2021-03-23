@@ -1,4 +1,5 @@
-use tokio::sync::mpsc;
+use futures::{FutureExt, StreamExt};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::{Environment, Receiver, Sender};
 use log::debug;
@@ -32,14 +33,21 @@ impl<E: Environment> Finalizer<E> {
             batch_tx,
         )
     }
-    pub(crate) async fn finalize(&mut self) {
+    pub(crate) async fn finalize(&mut self, exit: oneshot::Receiver<()>) {
+        let mut exit = exit.into_stream();
         loop {
-            if let Some(batch) = self.batch_rx.recv().await {
-                for h in batch {
-                    if (self.extends_finalized)(h) {
-                        (self.finalize)(h);
-                        debug!(target: "rush-finalizer", "{:?} Finalized block hash {:?}.", self.node_id, h);
+            tokio::select! {
+                Some(batch) = self.batch_rx.recv() =>{
+                    for h in batch {
+                        if (self.extends_finalized)(h) {
+                            (self.finalize)(h);
+                            debug!(target: "rush-finalizer", "{:?} Finalized block hash {:?}.", self.node_id, h);
+                        }
                     }
+                }
+                _ = exit.next() => {
+                    debug!(target: "rush-extender", "{:?} received exit signal.", self.node_id);
+                    break
                 }
             }
         }
@@ -72,7 +80,8 @@ mod tests {
             env_finalize,
             env_extends_finalized,
         );
-        let _ = tokio::spawn(async move { finalizer.finalize().await });
+        let (exit_tx, exit_rx) = oneshot::channel();
+        let finalizer = tokio::spawn(async move { finalizer.finalize(exit_rx).await });
 
         let _ = batch_tx.send(vec![BlockHash(1)]);
         let _ = batch_tx.send(vec![BlockHash(1), BlockHash(2)]);
@@ -85,6 +94,9 @@ mod tests {
             env.lock().get_log_finalize_calls(),
             vec![BlockHash(1), BlockHash(2)]
         );
+
+        let _ = exit_tx.send(());
+        let _ = finalizer.await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
@@ -120,7 +132,8 @@ mod tests {
             env_finalize,
             env_extends_finalized,
         );
-        let _ = tokio::spawn(async move { finalizer.finalize().await });
+        let (exit_tx, exit_rx) = oneshot::channel();
+        let finalizer = tokio::spawn(async move { finalizer.finalize(exit_rx).await });
 
         let _ = batch_tx.send(vec![
             BlockHash(1),
@@ -143,5 +156,8 @@ mod tests {
             env.lock().get_log_finalize_calls(),
             vec![BlockHash(1), BlockHash(2), BlockHash(3), BlockHash(5)]
         );
+
+        let _ = exit_tx.send(());
+        let _ = finalizer.await;
     }
 }

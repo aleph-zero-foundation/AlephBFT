@@ -1,4 +1,6 @@
+use futures::{FutureExt, StreamExt};
 use std::collections::{hash_map::Entry, HashMap, VecDeque};
+use tokio::sync::oneshot;
 
 use crate::{
     extender::ExtenderUnit,
@@ -304,12 +306,19 @@ impl<E: Environment + 'static> Terminal<E> {
         self.post_insert.push(hook);
     }
 
-    pub(crate) async fn run(&mut self) {
+    pub(crate) async fn run(&mut self, exit: oneshot::Receiver<()>) {
+        let mut exit = exit.into_stream();
         loop {
-            if let Some(u) = self.new_units_rx.recv().await {
-                self.add_to_store(u);
+            tokio::select! {
+                Some(u) = self.new_units_rx.recv() => {
+                    self.add_to_store(u);
+                    self.handle_events();
+                }
+                _ = exit.next() => {
+                    debug!(target: "rush-terminal", "{:?} received exit signal.", self.node_id);
+                    break
+                }
             }
-            self.handle_events();
         }
     }
 }
