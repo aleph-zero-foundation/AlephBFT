@@ -58,7 +58,7 @@ impl<E: Environment> Syncer<E> {
                     match m {
                         NotificationIn::NewUnits(units) => {
                             for u in units {
-                                debug!(target: "rush-syncer", "{:?} Received a unit {:?} from Environment.", self.node_id, u.hash());
+                                debug!(target: "rush-syncer", "{} Received a unit {} from Environment.", self.node_id, u.hash());
                                 let send_result = self.units_tx.send(u);
                                 if let Err(e) =send_result {
                                     error!(target: "rush-syncer", "{:?} Unable to send a unit to Terminal: {:?}.", self.node_id, e);
@@ -68,7 +68,7 @@ impl<E: Environment> Syncer<E> {
                     }
                 }
                 _ = exit.next() => {
-                    debug!(target: "rush-syncer", "{:?} received exit signal.", self.node_id);
+                    debug!(target: "rush-syncer", "{} received exit signal.", self.node_id);
                     break
                 }
             }

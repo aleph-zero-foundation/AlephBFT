@@ -88,7 +88,7 @@ impl<E: Environment> Creator<E> {
             (self.best_block)(),
             &self.hashing,
         );
-        debug!(target: "rush-creator", "{:?} Created a new unit {:?} at round {}.", self.node_id, new_unit, self.current_round);
+        debug!(target: "rush-creator", "{} Created a new unit {:?} at round {}.", self.node_id, new_unit, self.current_round);
         let send_result = self.new_units_tx.send(new_unit);
         if let Err(e) = send_result {
             error!(target: "rush-creator", "{:?} Unable to send a newly created unit: {:?}.", self.node_id, e);
@@ -136,7 +136,7 @@ impl<E: Environment> Creator<E> {
                     }
                 }
                 _ = exit.next() => {
-                    debug!(target: "rush-creator", "{:?} received exit signal.", self.node_id);
+                    debug!(target: "rush-creator", "{} received exit signal.", self.node_id);
                     break
                 }
             }

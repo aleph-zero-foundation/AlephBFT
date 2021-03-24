@@ -98,12 +98,12 @@ impl<E: Environment> Extender<E> {
     }
 
     fn add_unit(&mut self, u: ExtenderUnit<E::BlockHash, E::Hash>) -> bool {
-        debug!(target: "rush-extender", "{:?} New unit in Extender {:?}.", self.node_id, u.hash);
+        debug!(target: "rush-extender", "{} New unit in Extender {}.", self.node_id, u.hash);
         let round = u.round;
         if round > self.state.highest_round {
             self.state.highest_round = round;
         }
-        debug!(target: "rush-extender", "{:?} unit round {:?} state current_round {:?}", self.node_id, u.round, self.state.current_round);
+        debug!(target: "rush-extender", "{} unit round {:?} state current_round {:?}", self.node_id, u.round, self.state.current_round);
         // need to extend the vector first to the required length
         if self.units_by_round.len() <= round {
             self.units_by_round.push(vec![]);
@@ -164,7 +164,7 @@ impl<E: Environment> Extender<E> {
         if let Err(e) = send_result {
             error!(target: "rush-extender", "{:?} Unable to send a batch to Finalizer: {:?}.", self.node_id, e);
         }
-        debug!(target: "rush-extender", "{:?} Finalized round {}.", self.node_id, round);
+        debug!(target: "rush-extender", "{} Finalized round {}.", self.node_id, round);
         self.units_by_round[round].clear();
     }
 
@@ -304,7 +304,7 @@ impl<E: Environment> Extender<E> {
                     }
                 }
                 _ = exit.next() => {
-                    debug!(target: "rush-extender", "{:?} received exit signal.", self.node_id);
+                    debug!(target: "rush-extender", "{} received exit signal.", self.node_id);
                     break
                 }
             }

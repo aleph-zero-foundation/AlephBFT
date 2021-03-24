@@ -221,7 +221,7 @@ impl<E: Environment + 'static> Terminal<E> {
             }
             if !coords_to_request.is_empty() {
                 let aux_data = RequestAuxData::new(u.creator);
-                debug!(target: "rush-terminal", "{:?} Missing coords {:?} aux {:?}", self.node_id, coords_to_request, aux_data);
+                debug!(target: "rush-terminal", "{} Missing coords {:?} aux {:?}", self.node_id, coords_to_request, aux_data);
                 let send_result = self
                     .requests_tx
                     .send(NotificationOut::MissingUnits(coords_to_request, aux_data));
@@ -243,7 +243,7 @@ impl<E: Environment + 'static> Terminal<E> {
     }
 
     fn add_to_store(&mut self, u: Unit<E::BlockHash, E::Hash>) {
-        debug!(target: "rush-terminal", "{:?} Adding to store {:?} r {:?} ix {:?}", self.node_id, u.hash(), u.round, u.creator);
+        debug!(target: "rush-terminal", "{} Adding to store {} round {:?} index {:?}", self.node_id, u.hash(), u.round, u.creator);
         if let Entry::Vacant(entry) = self.unit_store.entry(u.hash()) {
             entry.insert(TerminalUnit::<E::BlockHash, E::Hash>::blank_from_unit(&u));
             self.update_on_store_add(u);
@@ -285,14 +285,14 @@ impl<E: Environment + 'static> Terminal<E> {
                         self.inspect_parents_in_dag(&u_hash);
                     } else {
                         u.status = UnitStatus::WrongControlHash;
-                        debug!(target: "rush-terminal", "{:?} wrong control hash", self.node_id);
+                        debug!(target: "rush-terminal", "{} wrong control hash", self.node_id);
                         // TODO: should trigger some immediate action here
                     }
                 }
                 TerminalEvent::ParentsInDag(u_hash) => {
                     let u = self.unit_store.get_mut(&u_hash).unwrap();
                     u.status = UnitStatus::InDag;
-                    debug!(target: "rush-terminal", "{:?} Adding to Dag {:?} r {:?} ix {:?}.", self.node_id, u_hash, u.unit.round, u.unit.creator);
+                    debug!(target: "rush-terminal", "{} Adding to Dag {} round {:?} index {}.", self.node_id, u_hash, u.unit.round, u.unit.creator);
                     self.update_on_dag_add(&u_hash);
                 }
             }
@@ -315,7 +315,7 @@ impl<E: Environment + 'static> Terminal<E> {
                     self.handle_events();
                 }
                 _ = exit.next() => {
-                    debug!(target: "rush-terminal", "{:?} received exit signal.", self.node_id);
+                    debug!(target: "rush-terminal", "{} received exit signal.", self.node_id);
                     break
                 }
             }

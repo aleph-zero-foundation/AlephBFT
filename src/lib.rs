@@ -35,10 +35,15 @@ mod testing;
 pub trait MyIndex {
     fn my_index(&self) -> Option<NodeIndex>;
 }
-pub trait NodeIdT: Clone + Debug + Send + Eq + Hash + Encode + Decode + MyIndex + 'static {}
+pub trait NodeIdT:
+    Clone + Debug + Display + Send + Eq + Hash + Encode + Decode + MyIndex + 'static
+{
+}
 
-impl<I> NodeIdT for I where I: Clone + Debug + Send + Eq + Hash + Encode + Decode + MyIndex + 'static
-{}
+impl<I> NodeIdT for I where
+    I: Clone + Debug + Display + Send + Eq + Hash + Encode + Decode + MyIndex + 'static
+{
+}
 
 /// A hash, as an identifier for a block or unit.
 pub trait HashT:
@@ -257,7 +262,7 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
 
 impl<E: Environment> Consensus<E> {
     pub async fn run(mut self, spawn_handle: impl SpawnHandle, exit: oneshot::Receiver<()>) {
-        debug!(target: "rush-root", "{:?} Starting all services...", self.conf.node_id);
+        debug!(target: "rush-root", "{} Starting all services...", self.conf.node_id);
 
         let (creator_exit, exit_rx) = oneshot::channel();
         let mut creator = self.creator.take().unwrap();
@@ -292,7 +297,7 @@ impl<E: Environment> Consensus<E> {
             finalizer.finalize(exit_rx).await
         });
 
-        debug!(target: "rush-root", "{:?} All services started.", self.conf.node_id);
+        debug!(target: "rush-root", "{} All services started.", self.conf.node_id);
 
         let _ = exit.await;
         // we stop no matter if received Ok or Err
@@ -302,7 +307,7 @@ impl<E: Environment> Consensus<E> {
         let _ = syncer_exit.send(());
         let _ = finalizer_exit.send(());
 
-        debug!(target: "rush-root", "{:?} All services started.", self.conf.node_id);
+        debug!(target: "rush-root", "{} All services started.", self.conf.node_id);
     }
 }
 
