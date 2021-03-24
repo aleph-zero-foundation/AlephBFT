@@ -13,8 +13,8 @@ pub struct NodeIndex(pub usize);
 impl Encode for NodeIndex {
     fn encode_to<T: Output + ?Sized>(&self, dest: &mut T) {
         let val = self.0 as u64;
-        let bytes = val.to_le_bytes().to_vec();
-        Encode::encode_to(&bytes, dest)
+        let bytes = val.to_le_bytes();
+        dest.write(&bytes);
     }
 }
 
@@ -128,5 +128,20 @@ impl<'a, T> IntoIterator for &'a NodeMap<T> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::nodes::NodeIndex;
+    use codec::{Decode, Encode};
+    #[test]
+    fn decoding_works() {
+        for i in 0..1000 {
+            let node_index = NodeIndex(i);
+            let mut encoded: &[u8] = &node_index.encode();
+            let decoded = NodeIndex::decode(&mut encoded);
+            assert_eq!(node_index, decoded.unwrap());
+        }
     }
 }
