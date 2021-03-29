@@ -6,7 +6,7 @@ use futures::{FutureExt, StreamExt};
 use log::{debug, error};
 use tokio::{
     sync::oneshot,
-    time::{sleep, Duration},
+    time::{delay_for, Duration},
 };
 
 /// A process responsible for creating new units. It receives all the units added locally to the Dag
@@ -132,7 +132,7 @@ impl<E: Environment> Creator<E> {
                     self.add_unit(u.round(), u.creator(), u.hash());
                     if self.check_ready() {
                         self.create_unit();
-                        sleep(self.create_lag).await;
+                        delay_for(self.create_lag).await;
                     }
                 }
                 _ = exit.next() => {

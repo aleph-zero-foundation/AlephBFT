@@ -61,7 +61,7 @@ mod tests {
     use parking_lot::Mutex;
     use std::sync::Arc;
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+    #[tokio::test(max_threads = 3)]
     async fn finalize_blocks() {
         let net = Network::new();
         let (env, mut finalized_blocks_rx) = environment::Environment::new(NodeId(0), net);
@@ -99,7 +99,7 @@ mod tests {
         let _ = finalizer.await;
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+    #[tokio::test(max_threads = 3)]
     async fn ignore_block_not_extending_finalized() {
         let net = Network::new();
         let (env, mut finalized_blocks_rx) = environment::Environment::new(NodeId(0), net);

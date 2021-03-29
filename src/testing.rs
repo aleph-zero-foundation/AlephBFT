@@ -6,7 +6,7 @@ pub mod environment {
     use futures::{Sink, Stream};
     use parking_lot::Mutex;
     use rand::{rngs::StdRng, Rng, SeedableRng};
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{delay_for, Duration};
 
     use std::{
         collections::{hash_map::DefaultHasher, HashMap},
@@ -355,14 +355,14 @@ pub mod environment {
                                 break;
                             }
                         }
-                        sleep(Duration::from_millis(
+                        delay_for(Duration::from_millis(
                             rng_delay.gen_range(0..2 * expected_delay_ms),
                         ))
                         .await;
                     }
                     tip_height += 1;
                 }
-                sleep(Duration::from_millis(
+                delay_for(Duration::from_millis(
                     rng_delay.gen_range(0..2 * expected_delay_ms),
                 ))
                 .await;
@@ -488,7 +488,7 @@ mod tests {
     use crate::{NotificationIn, NotificationOut, Unit};
     use futures::{sink::SinkExt, stream::StreamExt};
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+    #[tokio::test(max_threads = 3)]
     async fn comm() {
         let n = Network::new();
         let (mut out0, mut in0) = n.consensus_data(NodeId(0));

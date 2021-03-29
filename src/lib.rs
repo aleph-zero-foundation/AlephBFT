@@ -446,7 +446,7 @@ mod tests {
         }
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    #[tokio::test(max_threads = 1)]
     async fn dummy() {
         init_log();
         let net = Network::new();
@@ -484,7 +484,7 @@ mod tests {
         spawner.wait().await;
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    #[tokio::test(max_threads = 1)]
     async fn finalize_blocks_random_chain() {
         init_log();
         let net = Network::new();
