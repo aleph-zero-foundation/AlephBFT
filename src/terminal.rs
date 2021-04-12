@@ -5,8 +5,7 @@ use tokio::sync::oneshot;
 use crate::{
     extender::ExtenderUnit,
     nodes::{NodeCount, NodeIndex, NodeMap},
-    ControlHash, Environment, HashT, Hashing, NotificationOut, Receiver, RequestAuxData, Round,
-    Sender, Unit,
+    ControlHash, HashT, NodeIdT, NotificationOut, Receiver, RequestAuxData, Round, Sender, Unit,
 };
 use log::{debug, error};
 
@@ -28,35 +27,29 @@ impl Default for UnitStatus {
 /// A Unit struct used in the Terminal. It stores a copy of a unit and apart from that some
 /// information on its status, i.e., already reconstructed parents etc.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct TerminalUnit<B: HashT, H: HashT> {
-    unit: Unit<B, H>,
+pub struct TerminalUnit<H: HashT> {
+    unit: Unit<H>,
     parents: NodeMap<Option<H>>,
     n_miss_par_store: NodeCount,
     n_miss_par_dag: NodeCount,
     status: UnitStatus,
 }
 
-impl<B: HashT, H: HashT> From<TerminalUnit<B, H>> for ExtenderUnit<B, H> {
-    fn from(u: TerminalUnit<B, H>) -> ExtenderUnit<B, H> {
-        ExtenderUnit::new(
-            u.unit.creator,
-            u.unit.round(),
-            u.unit.hash,
-            u.parents,
-            u.unit.best_block,
-        )
+impl<H: HashT> From<TerminalUnit<H>> for ExtenderUnit<H> {
+    fn from(u: TerminalUnit<H>) -> ExtenderUnit<H> {
+        ExtenderUnit::new(u.unit.creator, u.unit.round(), u.unit.hash, u.parents)
     }
 }
 
-impl<B: HashT, H: HashT> From<TerminalUnit<B, H>> for Unit<B, H> {
-    fn from(u: TerminalUnit<B, H>) -> Unit<B, H> {
+impl<H: HashT> From<TerminalUnit<H>> for Unit<H> {
+    fn from(u: TerminalUnit<H>) -> Unit<H> {
         u.unit
     }
 }
 
-impl<B: HashT, H: HashT> TerminalUnit<B, H> {
+impl<H: HashT> TerminalUnit<H> {
     // creates a unit from a Control Hash Unit, that has no parents reconstructed yet
-    pub(crate) fn blank_from_unit(unit: &Unit<B, H>) -> Self {
+    pub(crate) fn blank_from_unit(unit: &Unit<H>) -> Self {
         let n_members = unit.control_hash.n_members();
         let n_parents = unit.control_hash.n_parents();
         TerminalUnit {
@@ -66,9 +59,6 @@ impl<B: HashT, H: HashT> TerminalUnit<B, H> {
             n_miss_par_dag: n_parents,
             status: UnitStatus::ReconstructingParents,
         }
-    }
-    pub(crate) fn creator(&self) -> NodeIndex {
-        self.unit.creator
     }
 
     pub(crate) fn _round(&self) -> Round {
@@ -102,48 +92,47 @@ type SyncClosure<X, Y> = Box<dyn Fn(X) -> Y + Sync + Send + 'static>;
 /// received by all honest nodes in the network.
 /// The Terminal receives new units via the new_units_rx channel endpoint and pushes requests for units
 /// to the requests_tx channel endpoint.
-pub(crate) struct Terminal<E: Environment + 'static> {
-    node_id: E::NodeId,
+pub(crate) struct Terminal<H: HashT, NI: NodeIdT> {
+    node_id: NI,
+    hashing: Box<dyn Fn(&[u8]) -> H + Send>,
     // A channel for receiving new units (they might also come from the local node).
-    new_units_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
+    new_units_rx: Receiver<Unit<H>>,
     // A channel to push unit requests.
-    requests_tx: Sender<NotificationOut<E::BlockHash, E::Hash>>,
+    requests_tx: Sender<NotificationOut<H>>,
     // A Queue that is necessary to deal with cascading updates to the Dag/Store
-    event_queue: VecDeque<TerminalEvent<E::Hash>>,
-    post_insert: Vec<SyncClosure<TerminalUnit<E::BlockHash, E::Hash>, ()>>,
+    event_queue: VecDeque<TerminalEvent<H>>,
+    post_insert: Vec<SyncClosure<TerminalUnit<H>, ()>>,
     // Here we store all the units -- the one in Dag and the ones "hanging".
-    unit_store: HashMap<E::Hash, TerminalUnit<E::BlockHash, E::Hash>>,
-    // Hashing function
-    hashing: Hashing<E::Hash>,
+    unit_store: HashMap<H, TerminalUnit<H>>,
 
-    // TODO: get rid of HashMaps below and just use Vec<Vec<E::Hash>> for efficiency
+    // TODO: get rid of HashMaps below and just use Vec<Vec<H>> for efficiency
 
     // In this Map, for each pair (r, pid) we store the first unit made by pid at round r that we ever received.
     // In case of forks, we still store only the first one -- others are ignored (but stored in store anyway of course).
-    unit_by_coord: HashMap<(Round, NodeIndex), E::Hash>,
+    unit_by_coord: HashMap<(Round, NodeIndex), H>,
     // This stores, for a pair (r, pid) the list of all units (by hash) that await a unit made by pid at
     // round r, as their parent. Once such a unit arrives, we notify all these children.
-    children_coord: HashMap<(Round, NodeIndex), Vec<E::Hash>>,
+    children_coord: HashMap<(Round, NodeIndex), Vec<H>>,
     // The same as above, but this time we await for a unit (with a particular hash) to be added to the Dag.
     // Once this happens, we notify all the children.
-    children_hash: HashMap<E::Hash, Vec<E::Hash>>,
+    children_hash: HashMap<H, Vec<H>>,
 }
 
-impl<E: Environment + 'static> Terminal<E> {
+impl<H: HashT, NI: NodeIdT> Terminal<H, NI> {
     pub(crate) fn new(
-        node_id: E::NodeId,
-        new_units_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
-        requests_tx: Sender<NotificationOut<E::BlockHash, E::Hash>>,
-        hashing: Hashing<E::Hash>,
+        node_id: NI,
+        hashing: impl Fn(&[u8]) -> H + Send + 'static,
+        new_units_rx: Receiver<Unit<H>>,
+        requests_tx: Sender<NotificationOut<H>>,
     ) -> Self {
         Terminal {
             node_id,
+            hashing: Box::new(hashing),
             new_units_rx,
             requests_tx,
             event_queue: VecDeque::new(),
             post_insert: Vec::new(),
             unit_store: HashMap::new(),
-            hashing,
             unit_by_coord: HashMap::new(),
             children_coord: HashMap::new(),
             children_hash: HashMap::new(),
@@ -151,7 +140,7 @@ impl<E: Environment + 'static> Terminal<E> {
     }
 
     // Reconstruct the parent of a unit u (given by hash u_hash) at position pid as p (given by hash p_hash)
-    fn reconstruct_parent(&mut self, u_hash: &E::Hash, pid: NodeIndex, p_hash: &E::Hash) {
+    fn reconstruct_parent(&mut self, u_hash: &H, pid: NodeIndex, p_hash: &H) {
         let u = self.unit_store.get_mut(u_hash).unwrap();
         // the above unwraps must succeed, should probably add some debug messages here...
 
@@ -165,7 +154,7 @@ impl<E: Environment + 'static> Terminal<E> {
 
     // update u's count (u given by hash u_hash) of parents present in Dag and trigger the event of
     // adding u itself to the Dag
-    fn new_parent_in_dag(&mut self, u_hash: &E::Hash) {
+    fn new_parent_in_dag(&mut self, u_hash: &H) {
         let u = self.unit_store.get_mut(u_hash).unwrap();
         u.n_miss_par_dag -= NodeCount(1);
         if u.n_miss_par_dag == NodeCount(0) {
@@ -174,7 +163,7 @@ impl<E: Environment + 'static> Terminal<E> {
         }
     }
 
-    fn add_coord_trigger(&mut self, round: Round, pid: NodeIndex, u_hash: E::Hash) {
+    fn add_coord_trigger(&mut self, round: Round, pid: NodeIndex, u_hash: H) {
         let coord = (round, pid);
         if !self.children_coord.contains_key(&coord) {
             self.children_coord.insert((round, pid), Vec::new());
@@ -183,7 +172,7 @@ impl<E: Environment + 'static> Terminal<E> {
         wait_list.push(u_hash);
     }
 
-    fn add_hash_trigger(&mut self, p_hash: &E::Hash, u_hash: &E::Hash) {
+    fn add_hash_trigger(&mut self, p_hash: &H, u_hash: &H) {
         if !self.children_hash.contains_key(p_hash) {
             self.children_hash.insert(*p_hash, Vec::new());
         }
@@ -191,7 +180,7 @@ impl<E: Environment + 'static> Terminal<E> {
         wait_list.push(*u_hash);
     }
 
-    fn update_on_store_add(&mut self, u: Unit<E::BlockHash, E::Hash>) {
+    fn update_on_store_add(&mut self, u: Unit<H>) {
         let u_hash = u.hash;
         let (u_round, pid) = (u.round(), u.creator);
         //TODO: should check for forks at this very place and possibly trigger Alarm
@@ -214,7 +203,7 @@ impl<E: Environment + 'static> Terminal<E> {
                         Some(v_hash) => self.reconstruct_parent(&u_hash, i, &v_hash),
                         None => {
                             self.add_coord_trigger(u_round - 1, i, u_hash);
-                            coords_to_request.push((u.round() - 1, i));
+                            coords_to_request.push((u.round() - 1, i).into());
                         }
                     }
                 }
@@ -232,7 +221,7 @@ impl<E: Environment + 'static> Terminal<E> {
         }
     }
 
-    fn update_on_dag_add(&mut self, u_hash: &E::Hash) {
+    fn update_on_dag_add(&mut self, u_hash: &H) {
         let u = self.unit_store.get(u_hash).unwrap();
         self.post_insert.iter().for_each(|f| f(u.clone()));
         if let Some(children) = self.children_hash.remove(u_hash) {
@@ -242,15 +231,15 @@ impl<E: Environment + 'static> Terminal<E> {
         }
     }
 
-    fn add_to_store(&mut self, u: Unit<E::BlockHash, E::Hash>) {
+    fn add_to_store(&mut self, u: Unit<H>) {
         debug!(target: "rush-terminal", "{} Adding to store {} round {:?} index {:?}", self.node_id, u.hash(), u.round, u.creator);
         if let Entry::Vacant(entry) = self.unit_store.entry(u.hash()) {
-            entry.insert(TerminalUnit::<E::BlockHash, E::Hash>::blank_from_unit(&u));
+            entry.insert(TerminalUnit::<H>::blank_from_unit(&u));
             self.update_on_store_add(u);
         }
     }
 
-    fn inspect_parents_in_dag(&mut self, u_hash: &E::Hash) {
+    fn inspect_parents_in_dag(&mut self, u_hash: &H) {
         let u_parents = self.unit_store.get(&u_hash).unwrap().parents.clone();
         let mut n_parents_in_dag = NodeCount(0);
         for p_hash in u_parents.into_iter().flatten() {
@@ -299,10 +288,7 @@ impl<E: Environment + 'static> Terminal<E> {
         }
     }
 
-    pub(crate) fn register_post_insert_hook(
-        &mut self,
-        hook: SyncClosure<TerminalUnit<E::BlockHash, E::Hash>, ()>,
-    ) {
+    pub(crate) fn register_post_insert_hook(&mut self, hook: SyncClosure<TerminalUnit<H>, ()>) {
         self.post_insert.push(hook);
     }
 

@@ -1,47 +1,44 @@
-use crate::{Environment, NotificationIn, NotificationOut, Receiver, Sender, Unit};
-use futures::{FutureExt, SinkExt, StreamExt};
+use crate::{HashT, NodeIdT, NotificationIn, NotificationOut, Receiver, Sender, Unit};
+use futures::{FutureExt, Sink, SinkExt, Stream, StreamExt};
 use log::{debug, error};
 use tokio::sync::{mpsc, oneshot};
 
-/// A process responsible for managing input and output messages.
-pub(crate) struct Syncer<E: Environment> {
+/// A process responsible for managing input and output notifications.
+pub(crate) struct Syncer<H: HashT, NI: NodeIdT> {
     /// The id of the Node
-    node_id: E::NodeId,
-    /// Outgoing messages.
-    messages_tx: E::Out,
-    /// Incoming messages.
-    messages_rx: E::In,
+    node_id: NI,
+    /// Outgoing notifications.
+    ntfct_rx: Box<dyn Stream<Item = NotificationIn<H>> + Send + Unpin>,
+    /// Incoming notifications.
+    ntfct_tx: Box<dyn Sink<NotificationOut<H>, Error = Box<dyn std::error::Error>> + Send + Unpin>,
     /// A channel for sending units to the [Terminal].
-    units_tx: Sender<Unit<E::BlockHash, E::Hash>>,
-    /// A channel for receiving messages to be sent out to the outside world.
-    requests_rx: Receiver<NotificationOut<E::BlockHash, E::Hash>>,
+    units_tx: Sender<Unit<H>>,
+    /// A channel for receiving notifications to be sent out to the outside world.
+    requests_rx: Receiver<NotificationOut<H>>,
 }
 
-impl<E: Environment> Syncer<E> {
+impl<H: HashT, NI: NodeIdT> Syncer<H, NI> {
     pub(crate) fn new(
-        node_id: E::NodeId,
-        messages_tx: E::Out,
-        messages_rx: E::In,
-    ) -> (
-        Self,
-        Sender<NotificationOut<E::BlockHash, E::Hash>>,
-        Receiver<Unit<E::BlockHash, E::Hash>>,
-        Sender<Unit<E::BlockHash, E::Hash>>,
-    ) {
+        node_id: NI,
+        ntfct_tx: impl Sink<NotificationOut<H>, Error = Box<dyn std::error::Error>>
+            + Send
+            + Unpin
+            + 'static,
+        ntfct_rx: impl Stream<Item = NotificationIn<H>> + Send + Unpin + 'static,
+    ) -> (Self, Sender<NotificationOut<H>>, Receiver<Unit<H>>) {
         let (units_tx, units_rx) = mpsc::unbounded_channel();
 
         let (requests_tx, requests_rx) = mpsc::unbounded_channel();
         (
             Syncer {
                 node_id,
-                messages_tx,
-                messages_rx,
-                units_tx: units_tx.clone(),
+                ntfct_tx: Box::new(ntfct_tx),
+                ntfct_rx: Box::new(ntfct_rx),
+                units_tx,
                 requests_rx,
             },
             requests_tx,
             units_rx,
-            units_tx,
         )
     }
     pub(crate) async fn sync(&mut self, exit: oneshot::Receiver<()>) {
@@ -49,12 +46,11 @@ impl<E: Environment> Syncer<E> {
         loop {
             tokio::select! {
                 Some(m) = self.requests_rx.recv() => {
-                    let send_result = self.messages_tx.send(m).await;
-                    if let Err(e) = send_result {
+                    if let Err(e) = self.ntfct_tx.send(m).await {
                         error!(target: "rush-syncer", "{:?} Unable to send a message: {:?}.", self.node_id, e);
                     }
                 }
-                Some(m) = self.messages_rx.next() => {
+                Some(m) = self.ntfct_rx.next() => {
                     match m {
                         NotificationIn::NewUnits(units) => {
                             for u in units {

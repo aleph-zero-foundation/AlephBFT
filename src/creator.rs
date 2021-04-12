@@ -1,6 +1,6 @@
 use crate::{
     nodes::{NodeCount, NodeIndex, NodeMap},
-    Config, Environment, EpochId, Hashing, MyIndex, Receiver, Round, Sender, Unit,
+    Config, HashT, NodeIdT, NotificationOut, PreUnit, Receiver, Round, Sender, Unit,
 };
 use futures::{FutureExt, StreamExt};
 use log::{debug, error};
@@ -18,45 +18,39 @@ use tokio::{
 /// - U has > floor(2*N/3) parents.
 /// The currently implemented strategy creates the unit U at the very first moment when enough
 /// candidates for parents are available for all the above constraints to be satisfied.
-pub(crate) struct Creator<E: Environment> {
-    node_id: E::NodeId,
-    parents_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
-    new_units_tx: Sender<Unit<E::BlockHash, E::Hash>>,
-    epoch_id: EpochId,
+pub(crate) struct Creator<H: HashT, NI: NodeIdT> {
+    node_id: NI,
+    parents_rx: Receiver<Unit<H>>,
+    new_units_tx: Sender<NotificationOut<H>>,
     n_members: NodeCount,
     current_round: Round, // current_round is the round number of our next unit
-    candidates_by_round: Vec<NodeMap<Option<E::Hash>>>,
+    candidates_by_round: Vec<NodeMap<Option<H>>>,
     n_candidates_by_round: Vec<NodeCount>,
-    best_block: Box<dyn Fn() -> E::BlockHash + Send + Sync + 'static>,
-    hashing: Hashing<E::Hash>,
+    hashing: Box<dyn Fn(&[u8]) -> H + Send>,
     create_lag: Duration,
 }
 
-impl<E: Environment> Creator<E> {
+impl<H: HashT, NI: NodeIdT> Creator<H, NI> {
     pub(crate) fn new(
-        conf: Config<E::NodeId>,
-        parents_rx: Receiver<Unit<E::BlockHash, E::Hash>>,
-        new_units_tx: Sender<Unit<E::BlockHash, E::Hash>>,
-        best_block: Box<dyn Fn() -> E::BlockHash + Send + Sync + 'static>,
-        hashing: Hashing<E::Hash>,
+        conf: Config<NI>,
+        parents_rx: Receiver<Unit<H>>,
+        new_units_tx: Sender<NotificationOut<H>>,
+        hashing: impl Fn(&[u8]) -> H + Send + 'static,
     ) -> Self {
         let Config {
             node_id,
             n_members,
-            epoch_id,
             create_lag,
         } = conf;
         Creator {
             node_id,
             parents_rx,
             new_units_tx,
-            epoch_id,
             n_members,
             current_round: 0,
             candidates_by_round: vec![NodeMap::new_with_len(n_members)],
             n_candidates_by_round: vec![NodeCount(0)],
-            best_block,
-            hashing,
+            hashing: Box::new(hashing),
             create_lag,
         }
     }
@@ -80,16 +74,14 @@ impl<E: Environment> Creator<E> {
             }
         };
 
-        let new_unit = Unit::new_from_parents(
+        let new_preunit = PreUnit::new_from_parents(
             self.node_id.my_index().unwrap(),
             round,
-            self.epoch_id,
             parents,
-            (self.best_block)(),
             &self.hashing,
         );
-        debug!(target: "rush-creator", "{} Created a new unit {:?} at round {}.", self.node_id, new_unit, self.current_round);
-        let send_result = self.new_units_tx.send(new_unit);
+        debug!(target: "rush-creator", "{} Created a new unit {:?} at round {}.", self.node_id, new_preunit, self.current_round);
+        let send_result = self.new_units_tx.send(new_preunit.into());
         if let Err(e) = send_result {
             error!(target: "rush-creator", "{:?} Unable to send a newly created unit: {:?}.", self.node_id, e);
         }
@@ -98,7 +90,7 @@ impl<E: Environment> Creator<E> {
         self.init_round(self.current_round);
     }
 
-    fn add_unit(&mut self, round: Round, pid: NodeIndex, hash: E::Hash) {
+    fn add_unit(&mut self, round: Round, pid: NodeIndex, hash: H) {
         // units that are too old are of no interest to us
         if round + 1 >= self.current_round {
             self.init_round(round);
