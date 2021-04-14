@@ -8,7 +8,6 @@ use log::{debug, error};
 use std::{
     fmt::{Debug, Display},
     hash::Hash,
-    sync::Arc,
 };
 use tokio::{
     sync::{mpsc, oneshot},
@@ -18,7 +17,6 @@ use tokio::{
 use crate::{
     creator::Creator,
     extender::Extender,
-    finalizer::Finalizer,
     nodes::{NodeCount, NodeIndex, NodeMap},
     syncer::Syncer,
     terminal::Terminal,
@@ -26,7 +24,6 @@ use crate::{
 
 mod creator;
 mod extender;
-mod finalizer;
 pub mod nodes;
 mod syncer;
 mod terminal;
@@ -56,53 +53,10 @@ impl<H> HashT for H where
 {
 }
 
-pub type Hashing<H> = Box<dyn Fn(&[u8]) -> H + Send + Sync + 'static>;
-
-/// A trait that describes the interaction of the [Consensus] component with the external world.
-pub trait Environment {
-    /// Unique identifiers for nodes
-    type NodeId: NodeIdT;
-    /// Hash type for units.
-    type Hash: HashT;
-    /// Hash type for blocks.
-    type BlockHash: HashT;
-    /// The ID of a consensus protocol instance.
-    type InstanceId: HashT;
-
-    type Crypto;
-    type In: Stream<Item = NotificationIn<Self::BlockHash, Self::Hash>> + Send + Unpin;
-    type Out: Sink<NotificationOut<Self::BlockHash, Self::Hash>, Error = Self::Error> + Send + Unpin;
-    type Error: Send + Sync + std::fmt::Debug;
-
-    /// Supposed to be called whenever a new block is finalized according to the protocol.
-    /// If [finalize_block] is called first with `h1` and then with `h2` then necessarily
-    /// `h2` must be a strict descendant of `h1`.
-    fn finalize_block(&self, _h: Self::BlockHash);
-
-    /// Checks if a particular block has been already finalized.
-    fn check_extends_finalized(&self, _h: Self::BlockHash) -> bool;
-
-    /// Outputs a block that the node should vote for. There is no concrete specification on
-    /// what [best_block] should be only that it should guarantee that its output is always a
-    /// descendant of the most recently finalized block (to guarantee liveness).
-    fn best_block(&self) -> Self::BlockHash;
-
-    /// Outputs two channel endpoints: transmitter of outgoing messages and receiver if incoming
-    /// messages.
-    fn consensus_data(&self) -> (Self::Out, Self::In);
-    fn hashing() -> Hashing<Self::Hash>;
-}
-
 pub enum Error {}
 
 /// A round.
 pub type Round = usize;
-
-/// A newtype of an epoch id.
-///
-/// This will be eventually moved to the Environment.
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Decode, Encode)]
-pub struct EpochId(pub u64);
 
 /// Type used in NotificationOut::MissingUnits to give additional info about the missing units that might
 /// help the Environment to fetch them (currently this is the node_ix of the unit whose parents are missing).
@@ -121,41 +75,75 @@ impl RequestAuxData {
     }
 }
 
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode)]
+pub struct UnitCoord {
+    pub creator: NodeIndex,
+    pub round: u64,
+}
+
+impl<H: HashT> From<Unit<H>> for UnitCoord {
+    fn from(unit: Unit<H>) -> Self {
+        UnitCoord {
+            creator: unit.creator(),
+            round: unit.round() as u64,
+        }
+    }
+}
+
+impl<H: HashT> From<&Unit<H>> for UnitCoord {
+    fn from(unit: &Unit<H>) -> Self {
+        UnitCoord {
+            creator: unit.creator(),
+            round: unit.round() as u64,
+        }
+    }
+}
+
+impl From<(usize, NodeIndex)> for UnitCoord {
+    fn from(coord: (usize, NodeIndex)) -> Self {
+        UnitCoord {
+            creator: coord.1,
+            round: coord.0 as u64,
+        }
+    }
+}
+
 /// Type for incoming notifications: Environment to Consensus.
 #[derive(Clone, Debug, PartialEq)]
-pub enum NotificationIn<B: HashT, H: HashT> {
+pub enum NotificationIn<H: HashT> {
     /// A notification carrying a single unit. This might come either from multicast or
     /// from a response to a request. This is of no importance at this layer.
-    NewUnits(Vec<Unit<B, H>>),
-    // TODO: ResponseParents(H, Vec<B, H>) and Alert() notifications
+    NewUnits(Vec<Unit<H>>),
+    // TODO: ResponseParents(H, Vec<H>) and Alert() notifications
 }
 
 /// Type for outgoing notifications: Consensus to Environment.
 #[derive(Clone, Debug, PartialEq)]
-pub enum NotificationOut<B: HashT, H: HashT> {
-    // Notification about a unit created by this Consensus Node. Environment is meant to
-    // disseminate this unit among other nodes.
-    CreatedUnit(Unit<B, H>),
+pub enum NotificationOut<H: HashT> {
+    // Notification about a preunit created by this Consensus Node. Environment is meant to
+    // disseminate this preunit among other nodes.
+    CreatedPreUnit(PreUnit<H>),
     /// Notification that some units are needed but missing. The role of the Environment
     /// is to fetch these unit (somehow). Auxiliary data is provided to help handle this request.
-    MissingUnits(Vec<(Round, NodeIndex)>, RequestAuxData),
+    MissingUnits(Vec<UnitCoord>, RequestAuxData),
     // TODO: RequestParents(H) and Alert() notifications
 }
+
+/// Type for sending a new ordered batch of units
+pub type OrderedBatch<H> = Vec<H>;
 
 #[derive(Clone)]
 pub struct Config<NI: NodeIdT> {
     pub(crate) node_id: NI,
     n_members: NodeCount,
-    epoch_id: EpochId,
     create_lag: Duration,
 }
 
 impl<NI: NodeIdT> Config<NI> {
-    pub fn new(node_id: NI, n_members: NodeCount, epoch_id: EpochId, create_lag: Duration) -> Self {
+    pub fn new(node_id: NI, n_members: NodeCount, create_lag: Duration) -> Self {
         Config {
             node_id,
             n_members,
-            epoch_id,
             create_lag,
         }
     }
@@ -165,72 +153,57 @@ pub trait SpawnHandle {
     fn spawn(&self, name: &'static str, task: impl Future<Output = ()> + Send + 'static);
 }
 
-pub struct Consensus<E: Environment + 'static> {
-    conf: Config<E::NodeId>,
-    creator: Option<Creator<E>>,
-    terminal: Option<Terminal<E>>,
-    extender: Option<Extender<E>>,
-    syncer: Option<Syncer<E>>,
-    finalizer: Option<Finalizer<E>>,
+pub struct Consensus<H: HashT, NI: NodeIdT> {
+    conf: Config<NI>,
+    creator: Option<Creator<H, NI>>,
+    terminal: Option<Terminal<H, NI>>,
+    extender: Option<Extender<H, NI>>,
+    syncer: Option<Syncer<H, NI>>,
 }
 
 pub(crate) type Receiver<T> = mpsc::UnboundedReceiver<T>;
 pub(crate) type Sender<T> = mpsc::UnboundedSender<T>;
 
-impl<E: Environment + Send + Sync + 'static> Consensus<E> {
-    pub fn new(conf: Config<E::NodeId>, env: Arc<E>) -> Self {
-        let (o, i) = env.consensus_data();
-
-        let e = env.clone();
-        let env_finalize = Box::new(move |h| e.finalize_block(h));
-        let e = env.clone();
-        let env_extends_finalized = Box::new(move |h| e.check_extends_finalized(h));
-
-        let (finalizer, batch_tx) =
-            Finalizer::<E>::new(conf.node_id.clone(), env_finalize, env_extends_finalized);
-
+impl<H: HashT + 'static, NI: NodeIdT> Consensus<H, NI> {
+    pub fn new(
+        conf: Config<NI>,
+        ntfct_rx: impl Stream<Item = NotificationIn<H>> + Send + Unpin + 'static,
+        ntfct_tx: impl Sink<NotificationOut<H>, Error = Box<dyn std::error::Error>>
+            + Send
+            + Unpin
+            + 'static,
+        ordered_batch_tx: Sender<OrderedBatch<H>>,
+        hashing: impl Fn(&[u8]) -> H + Send + Copy + 'static,
+    ) -> Self {
         let n_members = conf.n_members;
 
         let (electors_tx, electors_rx) = mpsc::unbounded_channel();
-        let extender = Some(Extender::<E>::new(
+        let extender = Some(Extender::<H, NI>::new(
             conf.node_id.clone(),
-            electors_rx,
-            batch_tx,
             n_members,
+            electors_rx,
+            ordered_batch_tx,
         ));
 
-        let (syncer, requests_tx, incoming_units_rx, created_units_tx) =
-            Syncer::<E>::new(conf.node_id.clone(), o, i);
+        let (syncer, requests_tx, incoming_units_rx) =
+            Syncer::new(conf.node_id.clone(), ntfct_tx, ntfct_rx);
 
         let (parents_tx, parents_rx) = mpsc::unbounded_channel();
-
-        let best_block = Box::new(move || env.best_block());
-        let creator = Some(Creator::<E>::new(
+        let new_units_tx = requests_tx.clone();
+        let creator = Some(Creator::new(
             conf.clone(),
             parents_rx,
-            created_units_tx,
-            best_block,
-            Box::new(E::hashing()),
+            new_units_tx,
+            hashing,
         ));
 
-        let mut terminal = Terminal::<E>::new(
+        let mut terminal = Terminal::new(
             conf.node_id.clone(),
+            hashing,
             incoming_units_rx,
-            requests_tx.clone(),
-            Box::new(E::hashing()),
+            requests_tx,
         );
 
-        // send a multicast request
-        let my_ix = conf.node_id.my_index().unwrap();
-        terminal.register_post_insert_hook(Box::new(move |u| {
-            if my_ix == u.creator() {
-                // send unit u corresponding to v
-                let send_result = requests_tx.send(NotificationOut::CreatedUnit(u.into()));
-                if let Err(e) = send_result {
-                    error!(target:"rush-init", "Unable to place a Multicast request: {:?}.", e);
-                }
-            }
-        }));
         // send a new parent candidate to the creator
         terminal.register_post_insert_hook(Box::new(move |u| {
             let send_result = parents_tx.send(u.into());
@@ -245,7 +218,6 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
                 error!(target:"rush-terminal", "Unable to send a unit to Extender: {:?}.", e);
             }
         }));
-        let finalizer = Some(finalizer);
         let syncer = Some(syncer);
         let terminal = Some(terminal);
 
@@ -255,12 +227,11 @@ impl<E: Environment + Send + Sync + 'static> Consensus<E> {
             terminal,
             extender,
             syncer,
-            finalizer,
         }
     }
 }
 
-impl<E: Environment> Consensus<E> {
+impl<H: HashT + 'static, NI: NodeIdT> Consensus<H, NI> {
     pub async fn run(mut self, spawn_handle: impl SpawnHandle, exit: oneshot::Receiver<()>) {
         debug!(target: "rush-root", "{} Starting all services...", self.conf.node_id);
 
@@ -291,12 +262,6 @@ impl<E: Environment> Consensus<E> {
             async move { syncer.sync(exit_rx).await },
         );
 
-        let (finalizer_exit, exit_rx) = oneshot::channel();
-        let mut finalizer = self.finalizer.take().unwrap();
-        spawn_handle.spawn("consensus/finalizer", async move {
-            finalizer.finalize(exit_rx).await
-        });
-
         debug!(target: "rush-root", "{} All services started.", self.conf.node_id);
 
         let _ = exit.await;
@@ -305,7 +270,6 @@ impl<E: Environment> Consensus<E> {
         let _ = terminal_exit.send(());
         let _ = extender_exit.send(());
         let _ = syncer_exit.send(());
-        let _ = finalizer_exit.send(());
 
         debug!(target: "rush-root", "{} All services started.", self.conf.node_id);
     }
@@ -319,16 +283,16 @@ pub struct ControlHash<H: HashT> {
 }
 
 impl<H: HashT> ControlHash<H> {
-    fn new<Hashing: Fn(&[u8]) -> H>(parent_map: &NodeMap<Option<H>>, hashing: &Hashing) -> Self {
+    fn new(parent_map: &NodeMap<Option<H>>, hashing: impl Fn(&[u8]) -> H) -> Self {
         let hash = Self::combine_hashes(&parent_map, hashing);
         let parents = parent_map.iter().map(|h| h.is_some()).collect();
 
         ControlHash { parents, hash }
     }
 
-    pub(crate) fn combine_hashes<Hashing: Fn(&[u8]) -> H>(
+    pub(crate) fn combine_hashes(
         parent_map: &NodeMap<Option<H>>,
-        hashing: &Hashing,
+        hashing: impl Fn(&[u8]) -> H,
     ) -> H {
         parent_map.using_encoded(hashing)
     }
@@ -345,71 +309,85 @@ impl<H: HashT> ControlHash<H> {
 type UnitRound = u64;
 
 #[derive(Clone, Debug, Default, PartialEq, Encode, Decode)]
-pub struct Unit<B: HashT, H: HashT> {
+pub struct PreUnit<H: HashT> {
     pub(crate) creator: NodeIndex,
     round: UnitRound,
-    pub(crate) epoch_id: EpochId,
-    pub(crate) hash: H,
     pub(crate) control_hash: ControlHash<H>,
-    pub(crate) best_block: B,
 }
 
-impl<B: HashT, H: HashT> Unit<B, H> {
+impl<H: HashT> PreUnit<H> {
+    pub fn creator(&self) -> NodeIndex {
+        self.creator
+    }
+
+    pub fn round(&self) -> Round {
+        self.round as Round
+    }
+
+    pub(crate) fn new_from_parents(
+        creator: NodeIndex,
+        round: Round,
+        parents: NodeMap<Option<H>>,
+        hashing: impl Fn(&[u8]) -> H,
+    ) -> Self {
+        let control_hash = ControlHash::new(&parents, &hashing);
+        PreUnit {
+            creator,
+            round: round as u64,
+            control_hash,
+        }
+    }
+
+    pub fn new(creator: NodeIndex, round: Round, control_hash: ControlHash<H>) -> Self {
+        PreUnit {
+            creator,
+            round: round as UnitRound,
+            control_hash,
+        }
+    }
+}
+
+impl<H: HashT> From<PreUnit<H>> for NotificationOut<H> {
+    fn from(pu: PreUnit<H>) -> Self {
+        NotificationOut::CreatedPreUnit(pu)
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Encode, Decode)]
+pub struct Unit<H: HashT> {
+    pub(crate) creator: NodeIndex,
+    round: UnitRound,
+    pub(crate) hash: H,
+    pub(crate) control_hash: ControlHash<H>,
+}
+
+impl<H: HashT> Unit<H> {
     pub fn hash(&self) -> H {
         self.hash
     }
+
     pub fn creator(&self) -> NodeIndex {
         self.creator
     }
     pub fn round(&self) -> Round {
         self.round as Round
     }
-    pub fn epoch_id(&self) -> EpochId {
-        self.epoch_id
-    }
 
-    pub(crate) fn new_from_parents<Hashing: Fn(&[u8]) -> H>(
-        creator: NodeIndex,
-        round: Round,
-        epoch_id: EpochId,
-        parents: NodeMap<Option<H>>,
-        best_block: B,
-        hashing: &Hashing,
-    ) -> Self {
-        let control_hash = ControlHash::new(&parents, &hashing);
-        let hash = (
-            creator.0 as u64,
-            round as u64,
-            epoch_id.0 as u64,
-            parents,
-            best_block,
-        )
-            .using_encoded(hashing);
-        Unit {
-            creator,
-            round: round as u64,
-            epoch_id,
-            hash,
-            control_hash,
-            best_block,
-        }
-    }
-
-    pub fn new(
-        creator: NodeIndex,
-        round: Round,
-        epoch_id: EpochId,
-        hash: H,
-        control_hash: ControlHash<H>,
-        best_block: B,
-    ) -> Self {
+    pub fn new(creator: NodeIndex, round: Round, hash: H, control_hash: ControlHash<H>) -> Self {
         Unit {
             creator,
             round: round as UnitRound,
-            epoch_id,
             hash,
             control_hash,
-            best_block,
+        }
+    }
+
+    pub fn new_from_preunit(pu: PreUnit<H>, hash: H) -> Self {
+        Unit {
+            creator: pu.creator,
+            round: pu.round,
+            hash,
+            control_hash: pu.control_hash,
         }
     }
 }
@@ -417,8 +395,9 @@ impl<B: HashT, H: HashT> Unit<B, H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::environment::{self, BlockHash, Chain, Network, NodeId};
+    use crate::testing::mock::{hashing, Network, NodeId};
     use parking_lot::Mutex;
+    use std::sync::Arc;
 
     fn init_log() {
         let _ = env_logger::builder()
@@ -447,35 +426,38 @@ mod tests {
     }
 
     #[tokio::test(max_threads = 1)]
-    async fn dummy() {
+    async fn small() {
         init_log();
         let net = Network::new();
         let n_nodes = 16;
-        let mut finalized_blocks_rxs = vec![];
         let mut exits = vec![];
+        let mut batch_rxs = vec![];
         let spawner = Spawner::default();
 
         for node_ix in 0..n_nodes {
-            let (env, rx) = environment::Environment::new(NodeId(node_ix), net.clone());
-            finalized_blocks_rxs.push(rx);
-            env.gen_chain(vec![(0.into(), vec![1.into()])]);
-            let conf = Config::new(
-                node_ix.into(),
-                n_nodes.into(),
-                EpochId(0),
-                Duration::from_millis(10),
-            );
+            let (o, i) = net.consensus_data(node_ix.into());
+            let conf =
+                Config::<NodeId>::new(node_ix.into(), n_nodes.into(), Duration::from_millis(10));
             let (exit_tx, exit_rx) = oneshot::channel();
             exits.push(exit_tx);
+            let (batch_tx, batch_rx) = mpsc::unbounded_channel();
+            batch_rxs.push(batch_rx);
             spawner.spawn(
                 "consensus",
-                Consensus::new(conf, env).run(spawner.clone(), exit_rx),
+                Consensus::new(conf, i, o, batch_tx, hashing).run(spawner.clone(), exit_rx),
             );
         }
 
-        for mut rx in finalized_blocks_rxs.drain(..) {
-            let h = rx.recv().await.unwrap().hash();
-            assert_eq!(h, BlockHash(1));
+        let mut batches = vec![];
+        for mut rx in batch_rxs.drain(..) {
+            let batch = rx.recv().await.unwrap();
+            assert!(!batch.is_empty());
+            batches.push(batch);
+        }
+
+        // TODO add better checks
+        for node_ix in 1..n_nodes {
+            assert_eq!(batches[0], batches[node_ix]);
         }
 
         exits.into_iter().for_each(|tx| {
@@ -484,56 +466,51 @@ mod tests {
         spawner.wait().await;
     }
 
-    #[tokio::test(max_threads = 1)]
-    async fn finalize_blocks_random_chain() {
-        init_log();
-        let net = Network::new();
-        let n_nodes = 7;
-        let n_blocks = 10usize;
-        let mut finalized_blocks_rxs = Vec::new();
-        let mut exits = vec![];
-        let spawner = Spawner::default();
+    // #[tokio::test(max_threads = 1)]
+    // async fn finalize_blocks_random_chain() {
+    //     init_log();
+    //     let net = Network::new();
+    //     let n_nodes = 7;
+    //     let n_blocks = 10usize;
+    //     let mut finalized_blocks_rxs = Vec::new();
+    //     let mut exits = vec![];
+    //     let spawner = Spawner::default();
 
-        for node_ix in 0..n_nodes {
-            let node_chain = Arc::new(Mutex::new(Chain::new()));
-            let seed_delay = node_ix as u64;
-            let _ = tokio::spawn(Chain::grow_chain(node_chain.clone(), 5, seed_delay));
-            let (env, rx) = environment::Environment::new_with_chain(
-                NodeId(node_ix),
-                net.clone(),
-                node_chain.clone(),
-            );
-            finalized_blocks_rxs.push(rx);
-            let conf = Config::new(
-                node_ix.into(),
-                n_nodes.into(),
-                EpochId(0),
-                Duration::from_millis(15),
-            );
-            let (exit_tx, exit_rx) = oneshot::channel();
-            exits.push(exit_tx);
-            spawner.spawn(
-                "consensus",
-                Consensus::new(conf, env).run(spawner.clone(), exit_rx),
-            );
-        }
-        let mut blocks_per_node = Vec::new();
-        for mut rx in finalized_blocks_rxs.drain(..) {
-            let mut initial_blocks = Vec::new();
-            for _ in 0..n_blocks {
-                let block = rx.recv().await;
-                initial_blocks.push(block.unwrap().hash());
-            }
-            blocks_per_node.push(initial_blocks);
-        }
-        let blocks_node_0 = blocks_per_node[0].clone();
-        for blocks in blocks_per_node {
-            assert_eq!(blocks, blocks_node_0);
-        }
+    //     for node_ix in 0..n_nodes {
+    //         let node_chain = Arc::new(Mutex::new(Chain::new()));
+    //         let seed_delay = node_ix as u64;
+    //         let _ = tokio::spawn(Chain::grow_chain(node_chain.clone(), 5, seed_delay));
+    //         let (env, rx) = environment::Environment::new_with_chain(
+    //             NodeId(node_ix),
+    //             net.clone(),
+    //             node_chain.clone(),
+    //         );
+    //         finalized_blocks_rxs.push(rx);
+    //         let conf = Config::new(node_ix.into(), n_nodes.into(), Duration::from_millis(15));
+    //         let (exit_tx, exit_rx) = oneshot::channel();
+    //         exits.push(exit_tx);
+    //         spawner.spawn(
+    //             "consensus",
+    //             Consensus::new(conf, env).run(spawner.clone(), exit_rx),
+    //         );
+    //     }
+    //     let mut blocks_per_node = Vec::new();
+    //     for mut rx in finalized_blocks_rxs.drain(..) {
+    //         let mut initial_blocks = Vec::new();
+    //         for _ in 0..n_blocks {
+    //             let block = rx.recv().await;
+    //             initial_blocks.push(block.unwrap().hash());
+    //         }
+    //         blocks_per_node.push(initial_blocks);
+    //     }
+    //     let blocks_node_0 = blocks_per_node[0].clone();
+    //     for blocks in blocks_per_node {
+    //         assert_eq!(blocks, blocks_node_0);
+    //     }
 
-        exits.into_iter().for_each(|tx| {
-            let _ = tx.send(());
-        });
-        spawner.wait().await;
-    }
+    //     exits.into_iter().for_each(|tx| {
+    //         let _ = tx.send(());
+    //     });
+    //     spawner.wait().await;
+    // }
 }
