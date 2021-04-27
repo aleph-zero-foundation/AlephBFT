@@ -159,6 +159,13 @@ pub mod mock {
                         self.send_to_peer(response, self.node_id);
                     }
                 }
+                NotificationOut::WrongControlHash(_u_hash) => {
+                    panic!("No support for forks in testing.");
+                }
+                NotificationOut::AddedToDag(_u_hash, _hashes) => {
+                    // Safe to ignore in testing.
+                    // Normally this is used in environment to answer parents requests.
+                }
             }
             Ok(())
         }

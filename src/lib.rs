@@ -14,13 +14,9 @@ use tokio::{
     time::Duration,
 };
 
-use crate::{
-    creator::Creator,
-    extender::Extender,
-    nodes::{NodeCount, NodeIndex, NodeMap},
-    syncer::Syncer,
-    terminal::Terminal,
-};
+use crate::{creator::Creator, extender::Extender, syncer::Syncer, terminal::Terminal};
+
+pub use crate::nodes::{NodeCount, NodeIndex, NodeMap};
 
 mod creator;
 mod extender;
@@ -114,19 +110,23 @@ pub enum NotificationIn<H: HashT> {
     /// A notification carrying a single unit. This might come either from multicast or
     /// from a response to a request. This is of no importance at this layer.
     NewUnits(Vec<Unit<H>>),
-    // TODO: ResponseParents(H, Vec<H>) and Alert() notifications
+    /// Response to a request to decode parents when the control hash is wrong.
+    UnitParents(H, Vec<H>),
 }
 
 /// Type for outgoing notifications: Consensus to Environment.
 #[derive(Clone, Debug, PartialEq)]
 pub enum NotificationOut<H: HashT> {
-    // Notification about a preunit created by this Consensus Node. Environment is meant to
-    // disseminate this preunit among other nodes.
+    /// Notification about a preunit created by this Consensus Node. Environment is meant to
+    /// disseminate this preunit among other nodes.
     CreatedPreUnit(PreUnit<H>),
     /// Notification that some units are needed but missing. The role of the Environment
     /// is to fetch these unit (somehow). Auxiliary data is provided to help handle this request.
     MissingUnits(Vec<UnitCoord>, RequestAuxData),
-    // TODO: RequestParents(H) and Alert() notifications
+    /// Notification that Consensus has parents incompatible with the control hash.
+    WrongControlHash(H),
+    /// Notification that a new unit has been added to the DAG, list of decoded parents provided
+    AddedToDag(H, Vec<H>),
 }
 
 /// Type for sending a new ordered batch of units
@@ -167,8 +167,8 @@ pub(crate) type Sender<T> = mpsc::UnboundedSender<T>;
 impl<H: HashT + 'static, NI: NodeIdT> Consensus<H, NI> {
     pub fn new(
         conf: Config<NI>,
-        ntfct_rx: impl Stream<Item = NotificationIn<H>> + Send + Unpin + 'static,
-        ntfct_tx: impl Sink<NotificationOut<H>, Error = Box<dyn std::error::Error>>
+        ntfct_env_rx: impl Stream<Item = NotificationIn<H>> + Send + Unpin + 'static,
+        ntfct_env_tx: impl Sink<NotificationOut<H>, Error = Box<dyn std::error::Error>>
             + Send
             + Unpin
             + 'static,
@@ -185,11 +185,11 @@ impl<H: HashT + 'static, NI: NodeIdT> Consensus<H, NI> {
             ordered_batch_tx,
         ));
 
-        let (syncer, requests_tx, incoming_units_rx) =
-            Syncer::new(conf.node_id.clone(), ntfct_tx, ntfct_rx);
+        let (syncer, ntfct_common_tx, ntfct_term_rx) =
+            Syncer::new(conf.node_id.clone(), ntfct_env_tx, ntfct_env_rx);
 
         let (parents_tx, parents_rx) = mpsc::unbounded_channel();
-        let new_units_tx = requests_tx.clone();
+        let new_units_tx = ntfct_common_tx.clone();
         let creator = Some(Creator::new(
             conf.clone(),
             parents_rx,
@@ -200,8 +200,8 @@ impl<H: HashT + 'static, NI: NodeIdT> Consensus<H, NI> {
         let mut terminal = Terminal::new(
             conf.node_id.clone(),
             hashing,
-            incoming_units_rx,
-            requests_tx,
+            ntfct_term_rx,
+            ntfct_common_tx,
         );
 
         // send a new parent candidate to the creator
@@ -290,10 +290,7 @@ impl<H: HashT> ControlHash<H> {
         ControlHash { parents, hash }
     }
 
-    pub(crate) fn combine_hashes(
-        parent_map: &NodeMap<Option<H>>,
-        hashing: impl Fn(&[u8]) -> H,
-    ) -> H {
+    pub fn combine_hashes(parent_map: &NodeMap<Option<H>>, hashing: impl Fn(&[u8]) -> H) -> H {
         parent_map.using_encoded(hashing)
     }
 
@@ -310,9 +307,9 @@ type UnitRound = u64;
 
 #[derive(Clone, Debug, Default, PartialEq, Encode, Decode)]
 pub struct PreUnit<H: HashT> {
-    pub(crate) creator: NodeIndex,
+    pub creator: NodeIndex,
     round: UnitRound,
-    pub(crate) control_hash: ControlHash<H>,
+    pub control_hash: ControlHash<H>,
 }
 
 impl<H: HashT> PreUnit<H> {
@@ -395,7 +392,8 @@ impl<H: HashT> Unit<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::mock::{hashing, Network, NodeId};
+    use crate::testing::mock::{hashing, Hash, Network, NodeId};
+    use futures::{channel, sink::SinkExt, stream::StreamExt};
     use parking_lot::Mutex;
     use std::sync::Arc;
 
@@ -463,6 +461,46 @@ mod tests {
         exits.into_iter().for_each(|tx| {
             let _ = tx.send(());
         });
+        spawner.wait().await;
+    }
+
+    #[tokio::test(max_threads = 1)]
+    async fn catches_wrong_control_hash() {
+        init_log();
+        let n_nodes = 4;
+        let spawner = Spawner::default();
+        let node_ix = 0;
+        let (mut tx_in, rx_in) = channel::mpsc::unbounded();
+        let (tx_out, mut rx_out) = channel::mpsc::unbounded();
+        let tx_out = tx_out.sink_map_err(|e| e.into());
+        let conf = Config::<NodeId>::new(node_ix.into(), n_nodes.into(), Duration::from_millis(10));
+        let (exit_tx, exit_rx) = oneshot::channel();
+        let (batch_tx, _batch_rx) = mpsc::unbounded_channel();
+        spawner.spawn(
+            "consensus",
+            Consensus::new(conf, rx_in, tx_out, batch_tx, hashing).run(spawner.clone(), exit_rx),
+        );
+        let mut bad_pu =
+            PreUnit::new_from_parents(1.into(), 0, (vec![None; n_nodes]).into(), hashing);
+        let bad_control_hash = Hash(1111111);
+        assert!(
+            bad_control_hash != bad_pu.control_hash.hash,
+            "Bad control hash cannot be the correct one."
+        );
+        bad_pu.control_hash.hash = bad_control_hash;
+        let bad_hash = Hash(1234567);
+        let bad_unit = Unit::new_from_preunit(bad_pu, bad_hash);
+        let _ = tx_in.send(NotificationIn::NewUnits(vec![bad_unit])).await;
+        loop {
+            let notification = rx_out.next().await.unwrap();
+            debug!("notification {:?}", notification);
+            if let NotificationOut::WrongControlHash(h) = notification {
+                assert_eq!(h, bad_hash, "Expected notification for our bad unit.");
+                break;
+            }
+        }
+
+        let _ = exit_tx.send(());
         spawner.wait().await;
     }
 

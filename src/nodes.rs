@@ -46,7 +46,7 @@ impl Decode for NodeIndex {
     From,
     Into,
 )]
-pub struct NodeCount(pub(crate) usize);
+pub struct NodeCount(pub usize);
 
 // deriving Mul and Div is somehow cumbersome
 impl Mul<usize> for NodeCount {
@@ -77,17 +77,21 @@ impl<T> NodeMap<T> {
     }
 
     /// Returns the number of values. This must equal the number of nodes.
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.0.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// Returns an iterator over all values.
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &T> {
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.0.iter()
     }
 
     /// Returns an iterator over all values, by node index.
-    pub(crate) fn enumerate(&self) -> impl Iterator<Item = (NodeIndex, &T)> {
+    pub fn enumerate(&self) -> impl Iterator<Item = (NodeIndex, &T)> {
         self.iter()
             .enumerate()
             .map(|(idx, value)| (NodeIndex(idx), value))

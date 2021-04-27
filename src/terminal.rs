@@ -5,7 +5,8 @@ use tokio::sync::oneshot;
 use crate::{
     extender::ExtenderUnit,
     nodes::{NodeCount, NodeIndex, NodeMap},
-    ControlHash, HashT, NodeIdT, NotificationOut, Receiver, RequestAuxData, Round, Sender, Unit,
+    ControlHash, HashT, NodeIdT, NotificationIn, NotificationOut, Receiver, RequestAuxData, Round,
+    Sender, Unit,
 };
 use log::{debug, error};
 
@@ -30,7 +31,7 @@ impl Default for UnitStatus {
 pub struct TerminalUnit<H: HashT> {
     unit: Unit<H>,
     parents: NodeMap<Option<H>>,
-    n_miss_par_store: NodeCount,
+    n_miss_par_decoded: NodeCount,
     n_miss_par_dag: NodeCount,
     status: UnitStatus,
 }
@@ -55,7 +56,7 @@ impl<H: HashT> TerminalUnit<H> {
         TerminalUnit {
             unit: unit.clone(),
             parents: NodeMap::new_with_len(n_members),
-            n_miss_par_store: n_parents,
+            n_miss_par_decoded: n_parents,
             n_miss_par_dag: n_parents,
             status: UnitStatus::ReconstructingParents,
         }
@@ -91,14 +92,14 @@ type SyncClosure<X, Y> = Box<dyn Fn(X) -> Y + Sync + Send + 'static>;
 /// Importantly, our local Dag is a set of units that are *guaranteed* to be sooner or later
 /// received by all honest nodes in the network.
 /// The Terminal receives new units via the new_units_rx channel endpoint and pushes requests for units
-/// to the requests_tx channel endpoint.
+/// to the notification_tx channel endpoint.
 pub(crate) struct Terminal<H: HashT, NI: NodeIdT> {
     node_id: NI,
     hashing: Box<dyn Fn(&[u8]) -> H + Send>,
-    // A channel for receiving new units (they might also come from the local node).
-    new_units_rx: Receiver<Unit<H>>,
-    // A channel to push unit requests.
-    requests_tx: Sender<NotificationOut<H>>,
+    // A channel for receiving notifications (units mainly)
+    ntfct_rx: Receiver<NotificationIn<H>>,
+    // A channel to push outgoing notifications
+    ntfct_tx: Sender<NotificationOut<H>>,
     // A Queue that is necessary to deal with cascading updates to the Dag/Store
     event_queue: VecDeque<TerminalEvent<H>>,
     post_insert: Vec<SyncClosure<TerminalUnit<H>, ()>>,
@@ -122,14 +123,14 @@ impl<H: HashT, NI: NodeIdT> Terminal<H, NI> {
     pub(crate) fn new(
         node_id: NI,
         hashing: impl Fn(&[u8]) -> H + Send + 'static,
-        new_units_rx: Receiver<Unit<H>>,
-        requests_tx: Sender<NotificationOut<H>>,
+        ntfct_rx: Receiver<NotificationIn<H>>,
+        ntfct_tx: Sender<NotificationOut<H>>,
     ) -> Self {
         Terminal {
             node_id,
             hashing: Box::new(hashing),
-            new_units_rx,
-            requests_tx,
+            ntfct_rx,
+            ntfct_tx,
             event_queue: VecDeque::new(),
             post_insert: Vec::new(),
             unit_store: HashMap::new(),
@@ -145,8 +146,8 @@ impl<H: HashT, NI: NodeIdT> Terminal<H, NI> {
         // the above unwraps must succeed, should probably add some debug messages here...
 
         u.parents[pid] = Some(*p_hash);
-        u.n_miss_par_store -= NodeCount(1);
-        if u.n_miss_par_store == NodeCount(0) {
+        u.n_miss_par_decoded -= NodeCount(1);
+        if u.n_miss_par_decoded == NodeCount(0) {
             self.event_queue
                 .push_back(TerminalEvent::ParentsReconstructed(*u_hash));
         }
@@ -183,7 +184,6 @@ impl<H: HashT, NI: NodeIdT> Terminal<H, NI> {
     fn update_on_store_add(&mut self, u: Unit<H>) {
         let u_hash = u.hash;
         let (u_round, pid) = (u.round(), u.creator);
-        //TODO: should check for forks at this very place and possibly trigger Alarm
         self.unit_by_coord.insert((u_round, pid), u_hash);
         if let Some(children) = self.children_coord.remove(&(u_round, pid)) {
             for v_hash in children {
@@ -212,7 +212,7 @@ impl<H: HashT, NI: NodeIdT> Terminal<H, NI> {
                 let aux_data = RequestAuxData::new(u.creator);
                 debug!(target: "rush-terminal", "{} Missing coords {:?} aux {:?}", self.node_id, coords_to_request, aux_data);
                 let send_result = self
-                    .requests_tx
+                    .ntfct_tx
                     .send(NotificationOut::MissingUnits(coords_to_request, aux_data));
                 if let Err(e) = send_result {
                     error!(target: "rush-terminal", "{:?} Unable to place a Fetch request: {:?}.", self.node_id, e);
@@ -222,13 +222,44 @@ impl<H: HashT, NI: NodeIdT> Terminal<H, NI> {
     }
 
     fn update_on_dag_add(&mut self, u_hash: &H) {
-        let u = self.unit_store.get(u_hash).unwrap();
+        let u = self
+            .unit_store
+            .get(u_hash)
+            .expect("Unit to be added to dag must be in store")
+            .clone();
         self.post_insert.iter().for_each(|f| f(u.clone()));
         if let Some(children) = self.children_hash.remove(u_hash) {
             for v_hash in children {
                 self.new_parent_in_dag(&v_hash);
             }
         }
+        let mut parent_hashes = Vec::new();
+        for p_hash in u.parents.iter().flatten() {
+            parent_hashes.push(*p_hash);
+        }
+
+        let send_result = self
+            .ntfct_tx
+            .send(NotificationOut::AddedToDag(*u_hash, parent_hashes));
+        if let Err(e) = send_result {
+            error!(target: "rush-terminal", "{:?} Unable to place AddedToDag notification: {:?}.", self.node_id, e);
+        }
+    }
+    // We set the correct parent hashes for unit u.
+    fn update_on_wrong_hash_response(&mut self, u_hash: H, p_hashes: Vec<H>) {
+        let u = self
+            .unit_store
+            .get_mut(&u_hash)
+            .expect("unit with wrong control hash must be in store");
+        let mut counter = 0;
+        for (i, b) in u.unit.control_hash.parents.enumerate() {
+            if *b {
+                u.parents[i] = Some(p_hashes[counter]);
+                counter += 1;
+            }
+        }
+        u.n_miss_par_decoded = NodeCount(0);
+        self.inspect_parents_in_dag(&u_hash);
     }
 
     fn add_to_store(&mut self, u: Unit<H>) {
@@ -243,11 +274,15 @@ impl<H: HashT, NI: NodeIdT> Terminal<H, NI> {
         let u_parents = self.unit_store.get(&u_hash).unwrap().parents.clone();
         let mut n_parents_in_dag = NodeCount(0);
         for p_hash in u_parents.into_iter().flatten() {
-            let p = self.unit_store.get(&p_hash).unwrap();
-            if p.status == UnitStatus::InDag {
-                n_parents_in_dag += NodeCount(1);
-            } else {
-                self.add_hash_trigger(&p_hash, u_hash);
+            let maybe_p = self.unit_store.get(&p_hash);
+            // p might not be even in store because u might be a unit with wrong control hash
+            match maybe_p {
+                Some(p) if p.status == UnitStatus::InDag => {
+                    n_parents_in_dag += NodeCount(1);
+                }
+                _ => {
+                    self.add_hash_trigger(&p_hash, u_hash);
+                }
             }
         }
         let u = self.unit_store.get_mut(&u_hash).unwrap();
@@ -258,6 +293,15 @@ impl<H: HashT, NI: NodeIdT> Terminal<H, NI> {
         } else {
             u.status = UnitStatus::WaitingParentsInDag;
             // when the last parent is added an appropriate TerminalEvent will be triggered
+        }
+    }
+
+    fn on_wrong_hash_detected(&mut self, u_hash: H) {
+        let send_result = self
+            .ntfct_tx
+            .send(NotificationOut::WrongControlHash(u_hash));
+        if let Err(e) = send_result {
+            error!(target: "rush-terminal", "{:?} Unable to place a Fetch request: {:?}.", self.node_id, e);
         }
     }
 
@@ -275,7 +319,7 @@ impl<H: HashT, NI: NodeIdT> Terminal<H, NI> {
                     } else {
                         u.status = UnitStatus::WrongControlHash;
                         debug!(target: "rush-terminal", "{} wrong control hash", self.node_id);
-                        // TODO: should trigger some immediate action here
+                        self.on_wrong_hash_detected(u_hash);
                     }
                 }
                 TerminalEvent::ParentsInDag(u_hash) => {
@@ -296,9 +340,20 @@ impl<H: HashT, NI: NodeIdT> Terminal<H, NI> {
         let mut exit = exit.into_stream();
         loop {
             tokio::select! {
-                Some(u) = self.new_units_rx.recv() => {
-                    self.add_to_store(u);
-                    self.handle_events();
+                Some(n) = self.ntfct_rx.recv() => {
+                    match n {
+                        NotificationIn::NewUnits(units) => {
+                            for u in units {
+                                self.add_to_store(u);
+                                self.handle_events();
+                            }
+                        },
+                        NotificationIn::UnitParents(u_hash, p_hashes) => {
+                            self.update_on_wrong_hash_response(u_hash, p_hashes);
+                        }
+                    }
+
+
                 }
                 _ = exit.next() => {
                     debug!(target: "rush-terminal", "{} received exit signal.", self.node_id);
