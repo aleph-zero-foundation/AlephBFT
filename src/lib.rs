@@ -321,7 +321,7 @@ impl<H: HashT> PreUnit<H> {
         self.round as Round
     }
 
-    pub(crate) fn new_from_parents(
+    pub fn new_from_parents(
         creator: NodeIndex,
         round: Round,
         parents: NodeMap<Option<H>>,
