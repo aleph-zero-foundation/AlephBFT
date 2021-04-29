@@ -147,6 +147,10 @@ impl<NI: NodeIdT> Config<NI> {
             create_lag,
         }
     }
+
+    pub fn node_id(&self) -> NI {
+        self.node_id.clone()
+    }
 }
 
 pub trait SpawnHandle {
