@@ -346,6 +346,14 @@ impl<H: HashT> PreUnit<H> {
             control_hash,
         }
     }
+
+    pub fn n_parents(&self) -> NodeCount {
+        self.control_hash.n_parents()
+    }
+
+    pub fn n_members(&self) -> NodeCount {
+        self.control_hash.n_members()
+    }
 }
 
 impl<H: HashT> From<PreUnit<H>> for NotificationOut<H> {
