@@ -1,6 +1,8 @@
 use crate::{
+    member::{Config, NotificationOut},
     nodes::{NodeCount, NodeIndex, NodeMap},
-    Config, HashT, NodeIdT, NotificationOut, PreUnit, Receiver, Round, Sender, Unit,
+    units::{PreUnit, Unit},
+    Hash, NodeIdT, Receiver, Round, Sender,
 };
 use futures::{FutureExt, StreamExt};
 use log::{debug, error};
@@ -18,7 +20,7 @@ use tokio::{
 /// - U has > floor(2*N/3) parents.
 /// The currently implemented strategy creates the unit U at the very first moment when enough
 /// candidates for parents are available for all the above constraints to be satisfied.
-pub(crate) struct Creator<H: HashT, NI: NodeIdT> {
+pub(crate) struct Creator<H: Hash, NI: NodeIdT> {
     node_id: NI,
     parents_rx: Receiver<Unit<H>>,
     new_units_tx: Sender<NotificationOut<H>>,
@@ -30,7 +32,7 @@ pub(crate) struct Creator<H: HashT, NI: NodeIdT> {
     create_lag: Duration,
 }
 
-impl<H: HashT, NI: NodeIdT> Creator<H, NI> {
+impl<H: Hash, NI: NodeIdT> Creator<H, NI> {
     pub(crate) fn new(
         conf: Config<NI>,
         parents_rx: Receiver<Unit<H>>,
@@ -41,6 +43,7 @@ impl<H: HashT, NI: NodeIdT> Creator<H, NI> {
             node_id,
             n_members,
             create_lag,
+            ..
         } = conf;
         Creator {
             node_id,
@@ -74,12 +77,8 @@ impl<H: HashT, NI: NodeIdT> Creator<H, NI> {
             }
         };
 
-        let new_preunit = PreUnit::new_from_parents(
-            self.node_id.my_index().unwrap(),
-            round,
-            parents,
-            &self.hashing,
-        );
+        let new_preunit =
+            PreUnit::new_from_parents(self.node_id.index().unwrap(), round, parents, &self.hashing);
         debug!(target: "rush-creator", "{} Created a new unit {:?} at round {}.", self.node_id, new_preunit, self.current_round);
         let send_result = self.new_units_tx.send(new_preunit.into());
         if let Err(e) = send_result {
@@ -112,7 +111,7 @@ impl<H: HashT, NI: NodeIdT> Creator<H, NI> {
         let threshold = (self.n_members * 2) / 3;
 
         self.n_candidates_by_round[prev_round] > threshold
-            && self.candidates_by_round[prev_round][self.node_id.my_index().unwrap()].is_some()
+            && self.candidates_by_round[prev_round][self.node_id.index().unwrap()].is_some()
     }
 
     pub(crate) async fn create(&mut self, exit: oneshot::Receiver<()>) {

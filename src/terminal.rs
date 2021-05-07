@@ -4,9 +4,10 @@ use tokio::sync::oneshot;
 
 use crate::{
     extender::ExtenderUnit,
+    member::{NotificationIn, NotificationOut},
     nodes::{NodeCount, NodeIndex, NodeMap},
-    ControlHash, HashT, NodeIdT, NotificationIn, NotificationOut, Receiver, RequestAuxData, Round,
-    Sender, Unit,
+    units::{ControlHash, Unit},
+    Hash, NodeIdT, Receiver, RequestAuxData, Round, Sender,
 };
 use log::{debug, error};
 
@@ -28,7 +29,7 @@ impl Default for UnitStatus {
 /// A Unit struct used in the Terminal. It stores a copy of a unit and apart from that some
 /// information on its status, i.e., already reconstructed parents etc.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct TerminalUnit<H: HashT> {
+pub struct TerminalUnit<H: Hash> {
     unit: Unit<H>,
     // This represents the knowledge of what we think the parents of the unit are. It is initialized as all None
     // and hashes of parents are being added at the time we receive a given coord. Once the parents map is complete
@@ -40,19 +41,19 @@ pub struct TerminalUnit<H: HashT> {
     status: UnitStatus,
 }
 
-impl<H: HashT> From<TerminalUnit<H>> for ExtenderUnit<H> {
+impl<H: Hash> From<TerminalUnit<H>> for ExtenderUnit<H> {
     fn from(u: TerminalUnit<H>) -> ExtenderUnit<H> {
         ExtenderUnit::new(u.unit.creator, u.unit.round(), u.unit.hash, u.parents)
     }
 }
 
-impl<H: HashT> From<TerminalUnit<H>> for Unit<H> {
+impl<H: Hash> From<TerminalUnit<H>> for Unit<H> {
     fn from(u: TerminalUnit<H>) -> Unit<H> {
         u.unit
     }
 }
 
-impl<H: HashT> TerminalUnit<H> {
+impl<H: Hash> TerminalUnit<H> {
     // creates a unit from a Control Hash Unit, that has no parents reconstructed yet
     pub(crate) fn blank_from_unit(unit: &Unit<H>) -> Self {
         let n_members = unit.control_hash.n_members();
@@ -81,7 +82,7 @@ impl<H: HashT> TerminalUnit<H> {
     }
 }
 
-pub enum TerminalEvent<H: HashT> {
+pub enum TerminalEvent<H: Hash> {
     ParentsReconstructed(H),
     ParentsInDag(H),
 }
@@ -113,7 +114,7 @@ type SyncClosure<X, Y> = Box<dyn Fn(X) -> Y + Sync + Send + 'static>;
 ///    the remaining parents are added to Dag.
 /// 6) At the moment when all parents have been added to Dag, the unit itself is added to Dag.
 
-pub(crate) struct Terminal<H: HashT, NI: NodeIdT> {
+pub(crate) struct Terminal<H: Hash, NI: NodeIdT> {
     node_id: NI,
     hashing: Box<dyn Fn(&[u8]) -> H + Send>,
     // A channel for receiving notifications (units mainly)
@@ -141,7 +142,7 @@ pub(crate) struct Terminal<H: HashT, NI: NodeIdT> {
     children_hash: HashMap<H, Vec<H>>,
 }
 
-impl<H: HashT, NI: NodeIdT> Terminal<H, NI> {
+impl<H: Hash, NI: NodeIdT> Terminal<H, NI> {
     pub(crate) fn new(
         node_id: NI,
         hashing: impl Fn(&[u8]) -> H + Send + 'static,
@@ -293,7 +294,7 @@ impl<H: HashT, NI: NodeIdT> Terminal<H, NI> {
     }
 
     fn add_to_store(&mut self, u: Unit<H>) {
-        debug!(target: "rush-terminal", "{} Adding to store {} round {:?} index {:?}", self.node_id, u.hash(), u.round, u.creator);
+        debug!(target: "rush-terminal", "{} Adding to store {} round {:?} index {:?}", self.node_id, u.hash(), u.round(), u.creator);
         if let Entry::Vacant(entry) = self.unit_store.entry(u.hash()) {
             entry.insert(TerminalUnit::<H>::blank_from_unit(&u));
             self.update_on_store_add(u);
@@ -355,7 +356,7 @@ impl<H: HashT, NI: NodeIdT> Terminal<H, NI> {
                 TerminalEvent::ParentsInDag(u_hash) => {
                     let u = self.unit_store.get_mut(&u_hash).unwrap();
                     u.status = UnitStatus::InDag;
-                    debug!(target: "rush-terminal", "{} Adding to Dag {} round {:?} index {}.", self.node_id, u_hash, u.unit.round, u.unit.creator);
+                    debug!(target: "rush-terminal", "{} Adding to Dag {} round {:?} index {}.", self.node_id, u_hash, u.unit.round(), u.unit.creator);
                     self.update_on_dag_add(&u_hash);
                 }
             }
