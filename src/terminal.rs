@@ -30,6 +30,10 @@ impl Default for UnitStatus {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TerminalUnit<H: HashT> {
     unit: Unit<H>,
+    // This represents the knowledge of what we think the parents of the unit are. It is initialized as all None
+    // and hashes of parents are being added at the time we receive a given coord. Once the parents map is complete
+    // we test whether the hash of parents agains the control_hash in the unit. If the check fails, we request hashes
+    // of parents of this unit via a NotificationOut.
     parents: NodeMap<Option<H>>,
     n_miss_par_decoded: NodeCount,
     n_miss_par_dag: NodeCount,
@@ -77,8 +81,6 @@ impl<H: HashT> TerminalUnit<H> {
     }
 }
 
-// This enum could be simplified to just one option and consequently gotten rid off. However,
-// this has been made slightly more general (and thus complex) to add Alerts easily in the future.
 pub enum TerminalEvent<H: HashT> {
     ParentsReconstructed(H),
     ParentsInDag(H),
@@ -86,13 +88,31 @@ pub enum TerminalEvent<H: HashT> {
 
 type SyncClosure<X, Y> = Box<dyn Fn(X) -> Y + Sync + Send + 'static>;
 
-/// A process whose goal is to receive new units and place them in our local Dag. Towards this end
-/// this process must orchestrate fetching units from other nodes in case we are missing them and
-/// manage the `Alert` mechanism which makes sure `horizontal spam` (unit fork spam) is not possible.
+/// A process whose goal is to receive new units and place them in our local Dag.
 /// Importantly, our local Dag is a set of units that are *guaranteed* to be sooner or later
 /// received by all honest nodes in the network.
-/// The Terminal receives new units via the new_units_rx channel endpoint and pushes requests for units
-/// to the notification_tx channel endpoint.
+/// The Terminal receives notifications from the ntfct_rx channel endpoint and pushes requests for units
+/// and other notifications to the ntfct_tx channel endpoint.
+/// The path of a single unit u through the Terminal is as follows:
+/// 1) It is added to the unit_store.
+/// 2) For each parent coord (r, ix) if we have a unit v with such a coord in store then we "reconstruct" this parent
+///    by placing Some(v_hash), where v_hash is the hash of v in parents[ix] in the TerminalUnit object for u.
+/// 3) For each parent coord (r, ix) that is missing in the store, we request this unit by sending a
+///    suitable NotificationOut. Subsequently we wait for these units, whenever a unit of one of the
+///    missing coords is received, the parents field of the TerminalUnit object of u is updated.
+/// 4) At the moment when all parents have been reconstructed (which happens right away for round-0 units
+///    that have no parents) an appropriate Event is generated and we check whether the reconstructed parents
+///    list after hashing agrees with the control_hash in the unit.
+///    a) If yes, then the unit u gets status WaitingParentsInDag
+///    b) If no, then the unit gets status WrongControlHash and a notification is sent, requesting the list of parent
+///       hashes of u. At the moment when a response to this notification is received (which contains correct parent
+///       hashes of u), the parents field in the TerminalUnit object of u is updated accordingly, and the unit u
+///       gets status WaitingParentsInDag as in a)
+/// 5) Now we wait for all the parents of unit u to be in Dag (in order to add it to Dag). Initially, right after u gets
+///    gets this status, we mark all the parents that are already in the Dag and set appropriate triggers for when
+///    the remaining parents are added to Dag.
+/// 6) At the moment when all parents have been added to Dag, the unit itself is added to Dag.
+
 pub(crate) struct Terminal<H: HashT, NI: NodeIdT> {
     node_id: NI,
     hashing: Box<dyn Fn(&[u8]) -> H + Send>,
@@ -100,16 +120,18 @@ pub(crate) struct Terminal<H: HashT, NI: NodeIdT> {
     ntfct_rx: Receiver<NotificationIn<H>>,
     // A channel to push outgoing notifications
     ntfct_tx: Sender<NotificationOut<H>>,
-    // A Queue that is necessary to deal with cascading updates to the Dag/Store
+    // A Queue to handle events happening in the Terminal. The reason of this being a queue is because
+    // some events trigger other events and because of the Dag structure, these should be handled
+    // in a FIFO order (as in BFS) and not recursively (as in DFS).
     event_queue: VecDeque<TerminalEvent<H>>,
     post_insert: Vec<SyncClosure<TerminalUnit<H>, ()>>,
-    // Here we store all the units -- the one in Dag and the ones "hanging".
+    // Here we store all the units -- the ones in Dag and the ones "hanging".
     unit_store: HashMap<H, TerminalUnit<H>>,
 
     // TODO: get rid of HashMaps below and just use Vec<Vec<H>> for efficiency
 
     // In this Map, for each pair (r, pid) we store the first unit made by pid at round r that we ever received.
-    // In case of forks, we still store only the first one -- others are ignored (but stored in store anyway of course).
+    // In case of forks, we still store only the first one -- others are ignored (but stored in store under their hash).
     unit_by_coord: HashMap<(Round, NodeIndex), H>,
     // This stores, for a pair (r, pid) the list of all units (by hash) that await a unit made by pid at
     // round r, as their parent. Once such a unit arrives, we notify all these children.
@@ -164,6 +186,8 @@ impl<H: HashT, NI: NodeIdT> Terminal<H, NI> {
         }
     }
 
+    // Adds the unit u (u given by hash u_hash) to the list of units waiting for the coord (round, pid) to be
+    // added to store.
     fn add_coord_trigger(&mut self, round: Round, pid: NodeIndex, u_hash: H) {
         let coord = (round, pid);
         if !self.children_coord.contains_key(&coord) {
@@ -173,6 +197,8 @@ impl<H: HashT, NI: NodeIdT> Terminal<H, NI> {
         wait_list.push(u_hash);
     }
 
+    // Adds the unit u (u given by hash u_hash) to the list of units waiting for the unit p (p_hash) to be
+    // added to the Dag.
     fn add_hash_trigger(&mut self, p_hash: &H, u_hash: &H) {
         if !self.children_hash.contains_key(p_hash) {
             self.children_hash.insert(*p_hash, Vec::new());
@@ -184,8 +210,11 @@ impl<H: HashT, NI: NodeIdT> Terminal<H, NI> {
     fn update_on_store_add(&mut self, u: Unit<H>) {
         let u_hash = u.hash;
         let (u_round, pid) = (u.round(), u.creator);
+        // If u is a fork, then the below line will overwrite the previous unit at this coord, but this is intended
+        // and does not break correctness.
         self.unit_by_coord.insert((u_round, pid), u_hash);
         if let Some(children) = self.children_coord.remove(&(u_round, pid)) {
+            // We reconstruct the parent for each unit that waits for this coord.
             for v_hash in children {
                 self.reconstruct_parent(&v_hash, pid, &u_hash);
             }
@@ -245,6 +274,7 @@ impl<H: HashT, NI: NodeIdT> Terminal<H, NI> {
             error!(target: "rush-terminal", "{:?} Unable to place AddedToDag notification: {:?}.", self.node_id, e);
         }
     }
+
     // We set the correct parent hashes for unit u.
     fn update_on_wrong_hash_response(&mut self, u_hash: H, p_hashes: Vec<H>) {
         let u = self
