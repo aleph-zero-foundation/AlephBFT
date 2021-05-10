@@ -1,7 +1,7 @@
 [package]
 name = "rush"
-version = "0.1.0"
-authors = ["Michal Swietek <michal.swietek@cardinals.cc>"]
+version = "0.2.0"
+authors = ["Cardinal Cryptography"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -18,3 +18,4 @@ log = "0.4.14"
 env_logger = "0.8.3"
 codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive"] }
 rand = "0.8.3"
+async-trait = "0"

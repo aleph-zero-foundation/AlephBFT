@@ -6,11 +6,11 @@ use log::{debug, error};
 
 use crate::{
     nodes::{NodeCount, NodeIndex, NodeMap},
-    HashT, NodeIdT, Receiver, Round, Sender,
+    Hash, NodeIdT, Receiver, Round, Sender,
 };
 
 #[derive(Clone, Default, Debug)]
-pub(crate) struct ExtenderUnit<H: HashT> {
+pub(crate) struct ExtenderUnit<H: Hash> {
     creator: NodeIndex,
     round: Round,
     parents: NodeMap<Option<H>>,
@@ -18,7 +18,7 @@ pub(crate) struct ExtenderUnit<H: HashT> {
     vote: bool,
 }
 
-impl<H: HashT> ExtenderUnit<H> {
+impl<H: Hash> ExtenderUnit<H> {
     pub(crate) fn new(
         creator: NodeIndex,
         round: Round,
@@ -64,7 +64,7 @@ impl CacheState {
 /// units that should be finalized, unwraps them (leaving only a block hash per unit) and pushes
 /// such a batch to a channel via the finalizer_tx endpoint.
 
-pub(crate) struct Extender<H: HashT, NI: NodeIdT> {
+pub(crate) struct Extender<H: Hash, NI: NodeIdT> {
     node_id: NI,
     electors: Receiver<ExtenderUnit<H>>,
     state: CacheState,
@@ -75,7 +75,7 @@ pub(crate) struct Extender<H: HashT, NI: NodeIdT> {
     finalizer_tx: Sender<Vec<H>>,
 }
 
-impl<H: HashT, NI: NodeIdT> Extender<H, NI> {
+impl<H: Hash, NI: NodeIdT> Extender<H, NI> {
     pub(crate) fn new(
         node_id: NI,
         n_members: NodeCount,
