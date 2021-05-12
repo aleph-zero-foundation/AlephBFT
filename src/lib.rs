@@ -32,8 +32,8 @@ pub trait DataIO<Data> {
 }
 
 pub trait KeyBox<Signature>: Index {
-    fn sign(&self, msg: &Vec<u8>) -> Signature;
-    fn verify(&self, msg: &Vec<u8>, sgn: &Signature, index: NodeIndex) -> bool;
+    fn sign(&self, msg: &[u8]) -> Signature;
+    fn verify(&self, msg: &[u8], sgn: &Signature, index: NodeIndex) -> bool;
 }
 
 #[async_trait::async_trait]
@@ -82,7 +82,7 @@ impl<T> Hash for T where
 {
 }
 
-/// Data type that we want to sort.
+/// Data type that we want to order.
 pub trait Data:
     Eq + Ord + Copy + Clone + Send + Sync + Debug + Display + StdHash + Encode + Decode
 {

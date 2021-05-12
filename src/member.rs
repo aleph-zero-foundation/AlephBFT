@@ -679,7 +679,6 @@ where
                     .expect("Ordered units must be in store")
                     .unit
                     .data
-                    .clone()
             })
             .collect::<OrderedBatch<D>>();
         if let Err(e) = self.data_io.send_ordered_batch(batch) {

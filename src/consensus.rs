@@ -99,11 +99,15 @@ pub(crate) async fn run<H: Hash + 'static, NI: NodeIdT>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::mock::{hashing, Hash, Network, NodeId};
-    use crate::units::{PreUnit, Unit};
+    use crate::{
+        testing::mock::{hashing, Hash64 as Hash, HonestHub, NodeId},
+        units::{PreUnit, Unit},
+        NodeIndex,
+    };
     use futures::{channel, sink::SinkExt, stream::StreamExt, Future};
     use parking_lot::Mutex;
     use std::sync::Arc;
+    use tokio::time::Duration;
 
     fn init_log() {
         let _ = env_logger::builder()
@@ -118,41 +122,49 @@ mod tests {
     }
 
     impl SpawnHandle for Spawner {
-        fn spawn(&_name: &str, task: impl Future<Output = ()> + Send + 'static) {
-            handles.lock().push(tokio::spawn(task))
+        fn spawn(&self, _name: &str, task: impl Future<Output = ()> + Send + 'static) {
+            self.handles.lock().push(tokio::spawn(task))
         }
     }
 
     impl Spawner {
         async fn wait(&self) {
-            for h in handles.lock().iter_mut() {
+            for h in self.handles.lock().iter_mut() {
                 let _ = h.await;
             }
         }
     }
 
     #[tokio::test(max_threads = 1)]
-    async fn small() {
+    async fn agree_on_first_batch() {
         init_log();
-        let net = Network::new();
-        let n_nodes = 16;
+        let n_members: usize = 16;
+        let mut hub = HonestHub::new(n_members);
+
         let mut exits = vec![];
         let mut batch_rxs = vec![];
         let spawner = Spawner::default();
 
-        for node_ix in 0..n_nodes {
-            let (o, i) = net.consensus_data(node_ix.into());
-            let conf =
-                Config::<NodeId>::new(node_ix.into(), n_nodes.into(), Duration::from_millis(10));
+        for node_ix in 0..n_members {
+            let (tx, rx) = hub.connect(NodeIndex(node_ix));
+            let tx = tx.sink_map_err(|e| e.into());
+            let conf = Config::<NodeId> {
+                node_id: node_ix.into(),
+                session_id: 0u64,
+                n_members: n_members.into(),
+                create_lag: Duration::from_millis(10),
+            };
             let (exit_tx, exit_rx) = oneshot::channel();
             exits.push(exit_tx);
             let (batch_tx, batch_rx) = mpsc::unbounded_channel();
             batch_rxs.push(batch_rx);
             spawner.spawn(
                 "consensus",
-                Consensus::new(conf, i, o, batch_tx, hashing).run(spawner.clone(), exit_rx),
+                run(conf, rx, tx, batch_tx, hashing, spawner.clone(), exit_rx),
             );
         }
+
+        spawner.spawn("hub", hub);
 
         let mut batches = vec![];
         for mut rx in batch_rxs.drain(..) {
@@ -161,8 +173,7 @@ mod tests {
             batches.push(batch);
         }
 
-        // TODO add better checks
-        for node_ix in 1..n_nodes {
+        for node_ix in 1..n_members {
             assert_eq!(batches[0], batches[node_ix]);
         }
 
@@ -181,12 +192,27 @@ mod tests {
         let (mut tx_in, rx_in) = channel::mpsc::unbounded();
         let (tx_out, mut rx_out) = channel::mpsc::unbounded();
         let tx_out = tx_out.sink_map_err(|e| e.into());
-        let conf = Config::<NodeId>::new(node_ix.into(), n_nodes.into(), Duration::from_millis(10));
+
+        let conf = Config::<NodeId> {
+            node_id: node_ix.into(),
+            session_id: 0u64,
+            n_members: n_nodes.into(),
+            create_lag: Duration::from_millis(10),
+        };
         let (exit_tx, exit_rx) = oneshot::channel();
         let (batch_tx, _batch_rx) = mpsc::unbounded_channel();
+
         spawner.spawn(
             "consensus",
-            Consensus::new(conf, rx_in, tx_out, batch_tx, hashing).run(spawner.clone(), exit_rx),
+            run(
+                conf,
+                rx_in,
+                tx_out,
+                batch_tx,
+                hashing,
+                spawner.clone(),
+                exit_rx,
+            ),
         );
         let mut bad_pu =
             PreUnit::new_from_parents(1.into(), 0, (vec![None; n_nodes]).into(), hashing);
@@ -202,7 +228,7 @@ mod tests {
         loop {
             let notification = rx_out.next().await.unwrap();
             debug!("notification {:?}", notification);
-            if let NotificationOut::WrongControlStdHash(h) = notification {
+            if let NotificationOut::WrongControlHash(h) = notification {
                 assert_eq!(h, bad_hash, "Expected notification for our bad unit.");
                 break;
             }

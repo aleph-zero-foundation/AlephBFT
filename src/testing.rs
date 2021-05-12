@@ -1,20 +1,24 @@
 #[cfg(test)]
 pub mod mock {
-    use crate::{MyIndex, NodeIndex, NotificationIn, NotificationOut, Unit, UnitCoord};
+    use crate::{
+        member::{NotificationIn, NotificationOut},
+        units::{Unit, UnitCoord},
+        Index, NodeIndex,
+    };
     use codec::{Decode, Encode, Error as CodecError, Input, Output};
     use derive_more::{Display, From, Into};
-    use futures::{Sink, Stream};
-    use parking_lot::Mutex;
+    use futures::{
+        channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
+        Future, StreamExt,
+    };
 
     use std::{
         collections::{hash_map::DefaultHasher, HashMap},
         fmt,
         hash::Hasher,
         pin::Pin,
-        sync::Arc,
         task::{Context, Poll},
     };
-    use tokio::sync::mpsc::*;
 
     #[derive(Hash, From, Into, Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
     pub struct NodeId(pub usize);
@@ -42,8 +46,8 @@ pub mod mock {
         }
     }
 
-    impl MyIndex for NodeId {
-        fn my_index(&self) -> Option<NodeIndex> {
+    impl Index for NodeId {
+        fn index(&self) -> Option<NodeIndex> {
             Some(NodeIndex(self.0))
         }
     }
@@ -51,177 +55,142 @@ pub mod mock {
     #[derive(
         Hash, Debug, Default, Display, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Encode, Decode,
     )]
-    pub struct Hash(pub u32);
+    pub struct Hash64(pub u64);
 
-    impl From<u32> for Hash {
-        fn from(h: u32) -> Self {
-            Hash(h)
+    impl From<u64> for Hash64 {
+        fn from(h: u64) -> Self {
+            Hash64(h)
         }
     }
 
-    type Units = Arc<Mutex<HashMap<UnitCoord, Unit<Hash>>>>;
-
-    #[derive(Clone)]
-    pub(crate) struct Network {
-        senders: Senders,
-        units: Units,
+    // A hasher from the standard library that hashes to u64, should be enough to
+    // avoid collisions in testing.
+    pub(crate) fn hashing(x: &[u8]) -> Hash64 {
+        let mut hasher = DefaultHasher::new();
+        hasher.write(x);
+        Hash64(hasher.finish())
     }
 
-    impl Network {
-        pub(crate) fn new() -> Self {
-            Network {
-                senders: Arc::new(Mutex::new(vec![])),
-                units: Arc::new(Mutex::new(HashMap::new())),
+    // This struct allows to create a Hub to interconnect several instances of the Consensus engine, without
+    // requiring the Member wrapper. The Hub notifies all connected instances about newly created units and
+    // is able to answer unit requests as well. WrongControlHashes are not supported, which means that this
+    // Hub should be used to run simple tests in honest scenarios only.
+    // Usage: 1) create an instance using new(n_members), 2) connect all n_members instances, 0, 1, 2, ..., n_members - 1.
+    // 3) run the HonestHub instance as a Future.
+    pub(crate) struct HonestHub {
+        n_members: usize,
+        ntfct_out_rxs: HashMap<NodeIndex, UnboundedReceiver<NotificationOut<Hash64>>>,
+        ntfct_in_txs: HashMap<NodeIndex, UnboundedSender<NotificationIn<Hash64>>>,
+        units_by_coord: HashMap<UnitCoord, Unit<Hash64>>,
+    }
+
+    impl HonestHub {
+        pub(crate) fn new(n_members: usize) -> Self {
+            HonestHub {
+                n_members,
+                ntfct_out_rxs: HashMap::new(),
+                ntfct_in_txs: HashMap::new(),
+                units_by_coord: HashMap::new(),
             }
         }
-        pub(crate) fn consensus_data(
-            &self,
-            node_id: NodeId,
+
+        pub(crate) fn connect(
+            &mut self,
+            node_ix: NodeIndex,
         ) -> (
-            impl Sink<NotificationOut<Hash>, Error = Box<dyn std::error::Error>>,
-            impl Stream<Item = NotificationIn<Hash>> + Send + Unpin + 'static,
+            UnboundedSender<NotificationOut<Hash64>>,
+            UnboundedReceiver<NotificationIn<Hash64>>,
         ) {
-            let stream;
-            {
-                let (tx, rx) = unbounded_channel();
-                stream = BcastStream(rx);
-                self.senders.lock().push((node_id, tx));
+            let (tx_in, rx_in) = unbounded();
+            let (tx_out, rx_out) = unbounded();
+            self.ntfct_in_txs.insert(node_ix, tx_in);
+            self.ntfct_out_rxs.insert(node_ix, rx_out);
+            (tx_out, rx_in)
+        }
+
+        fn send_to_all(&mut self, ntfct: NotificationIn<Hash64>) {
+            assert!(
+                self.ntfct_in_txs.len() == self.n_members,
+                "Must connect to all nodes before running the hub."
+            );
+            for (_ix, tx) in self.ntfct_in_txs.iter() {
+                let _ = tx.unbounded_send(ntfct.clone());
             }
-            let sink = BcastSink {
-                node_id,
-                senders: self.senders.clone(),
-                units: self.units.clone(),
-            };
-
-            (sink, stream)
-        }
-    }
-
-    type Sender = (NodeId, UnboundedSender<NotificationIn<Hash>>);
-    type Senders = Arc<Mutex<Vec<Sender>>>;
-
-    #[derive(Clone)]
-    struct BcastSink {
-        node_id: NodeId,
-        senders: Senders,
-        units: Units,
-    }
-
-    impl BcastSink {
-        fn do_send(&self, msg: NotificationIn<Hash>, recipient: &Sender) {
-            let (_node_id, tx) = recipient;
-            let _ = tx.send(msg);
-        }
-        fn send_to_all(&self, msg: NotificationIn<Hash>) {
-            self.senders
-                .lock()
-                .iter()
-                .for_each(|r| self.do_send(msg.clone(), r));
-        }
-        fn send_to_peer(&self, msg: NotificationIn<Hash>, peer: NodeId) {
-            let _ = self.senders.lock().iter().for_each(|r| {
-                if r.0 == peer {
-                    self.do_send(msg.clone(), r);
-                }
-            });
-        }
-    }
-
-    impl Sink<NotificationOut<Hash>> for BcastSink {
-        type Error = Box<dyn std::error::Error>;
-        fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-            Poll::Ready(Ok(()))
         }
 
-        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-            Poll::Ready(Ok(()))
+        fn send_to_node(&mut self, node_ix: NodeIndex, ntfct: NotificationIn<Hash64>) {
+            let tx = self
+                .ntfct_in_txs
+                .get(&node_ix)
+                .expect("Must connect to all nodes before running the hub.");
+            let _ = tx.unbounded_send(ntfct);
         }
 
-        fn poll_close(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-            Poll::Ready(Ok(()))
-        }
-
-        fn start_send(self: Pin<&mut Self>, m: NotificationOut<Hash>) -> Result<(), Self::Error> {
-            match m {
+        fn on_notification(&mut self, node_ix: NodeIndex, ntfct: NotificationOut<Hash64>) {
+            match ntfct {
                 NotificationOut::CreatedPreUnit(pu) => {
                     let hash = pu.using_encoded(hashing);
-                    let u = Unit::new(pu.creator, pu.round(), hash, pu.control_hash);
-                    self.units.lock().insert(u.clone().into(), u.clone());
+                    let u = Unit::new_from_preunit(pu, hash);
+                    self.units_by_coord.insert(u.clone().into(), u.clone());
                     self.send_to_all(NotificationIn::NewUnits(vec![u]));
                 }
                 NotificationOut::MissingUnits(coords, _aux_data) => {
-                    let units: Vec<Unit<Hash>> = coords
-                        .iter()
-                        .map(|coord| self.units.lock().get(coord).cloned().unwrap())
-                        .collect();
-                    for u in units {
-                        let response = NotificationIn::NewUnits(vec![u]);
-                        self.send_to_peer(response, self.node_id);
+                    let mut response_units = Vec::new();
+                    for coord in coords {
+                        match self.units_by_coord.get(&coord) {
+                            Some(unit) => {
+                                response_units.push(unit.clone());
+                            }
+                            None => {
+                                panic!("Unit requested that the hub does not know.");
+                            }
+                        }
                     }
+                    let ntfct = NotificationIn::NewUnits(response_units);
+                    self.send_to_node(node_ix, ntfct);
                 }
                 NotificationOut::WrongControlHash(_u_hash) => {
                     panic!("No support for forks in testing.");
                 }
                 NotificationOut::AddedToDag(_u_hash, _hashes) => {
                     // Safe to ignore in testing.
-                    // Normally this is used in environment to answer parents requests.
+                    // Normally this is used in Member to answer parents requests.
                 }
             }
-            Ok(())
         }
     }
 
-    struct BcastStream(UnboundedReceiver<NotificationIn<Hash>>);
-
-    impl Stream for BcastStream {
-        type Item = NotificationIn<Hash>;
-        fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-            // here we may add custom logic for dropping/changing messages
-            self.0.poll_recv(cx)
+    impl Future for HonestHub {
+        type Output = ();
+        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            let mut ready_ixs: Vec<NodeIndex> = Vec::new();
+            let mut buffer = Vec::new();
+            for (ix, rx) in self.ntfct_out_rxs.iter_mut() {
+                loop {
+                    match rx.poll_next_unpin(cx) {
+                        Poll::Ready(Some(ntfct)) => {
+                            buffer.push((*ix, ntfct));
+                        }
+                        Poll::Ready(None) => {
+                            ready_ixs.push(*ix);
+                            break;
+                        }
+                        Poll::Pending => {
+                            break;
+                        }
+                    }
+                }
+            }
+            for (ix, ntfct) in buffer {
+                self.on_notification(ix, ntfct);
+            }
+            for ix in ready_ixs {
+                self.ntfct_out_rxs.remove(&ix);
+            }
+            if self.ntfct_out_rxs.is_empty() {
+                return Poll::Ready(());
+            }
+            Poll::Pending
         }
-    }
-
-    pub(crate) fn hashing(x: &[u8]) -> Hash {
-        let mut hasher = DefaultHasher::new();
-        hasher.write(x);
-        Hash(hasher.finish() as u32)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::mock::*;
-    use crate::{NotificationIn, PreUnit, Unit};
-    use codec::Encode;
-    use futures::{sink::SinkExt, stream::StreamExt};
-
-    #[tokio::test(max_threads = 3)]
-    async fn comm() {
-        let n = Network::new();
-        let (mut out0, mut in0) = n.consensus_data(NodeId(0));
-        let (mut out1, mut in1) = n.consensus_data(NodeId(1));
-        let pu0 = PreUnit {
-            creator: 0.into(),
-            ..PreUnit::default()
-        };
-
-        let hash = pu0.using_encoded(hashing);
-        let u = Unit::new(pu0.creator, pu0.round(), hash, pu0.control_hash.clone());
-        let u0 = u.clone();
-        let h0 = tokio::spawn(async move {
-            assert_eq!(
-                in0.next().await.unwrap(),
-                NotificationIn::NewUnits(vec![u0]),
-            );
-        });
-
-        let h1 = tokio::spawn(async move {
-            assert_eq!(in1.next().await.unwrap(), NotificationIn::NewUnits(vec![u]));
-        });
-
-        assert!(out0.send(pu0.clone().into()).await.is_ok());
-        assert!(out1.send(pu0.into()).await.is_ok());
-        assert!(h0.await.is_ok());
-        assert!(h1.await.is_ok());
     }
 }

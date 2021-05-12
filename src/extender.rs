@@ -314,7 +314,7 @@ mod tests {
     use super::*;
     use crate::{
         nodes::NodeCount,
-        testing::mock::{Hash, NodeId},
+        testing::mock::{Hash64 as Hash, NodeId},
     };
     use tokio::sync::mpsc;
 
@@ -326,14 +326,14 @@ mod tests {
         let mut parents = NodeMap::new_with_len(NodeCount(n_members));
         if round > 0 {
             for i in 0..n_members {
-                parents[NodeIndex(i)] = Some(Hash(coord_to_number(i, round - 1, n_members) as u32));
+                parents[NodeIndex(i)] = Some(Hash(coord_to_number(i, round - 1, n_members) as u64));
             }
         }
 
         ExtenderUnit::new(
             NodeIndex(creator),
             round,
-            Hash(coord_to_number(creator, round, n_members) as u32),
+            Hash(coord_to_number(creator, round, n_members) as u64),
             parents,
         )
     }
