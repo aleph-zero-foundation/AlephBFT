@@ -7,7 +7,7 @@ use crate::{
     member::{NotificationIn, NotificationOut},
     nodes::{NodeCount, NodeIndex, NodeMap},
     units::{ControlHash, Unit},
-    Hash, NodeIdT, Receiver, RequestAuxData, Round, Sender,
+    Hasher, NodeIdT, Receiver, RequestAuxData, Round, Sender,
 };
 use log::{debug, error};
 
@@ -29,31 +29,31 @@ impl Default for UnitStatus {
 /// A Unit struct used in the Terminal. It stores a copy of a unit and apart from that some
 /// information on its status, i.e., already reconstructed parents etc.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct TerminalUnit<H: Hash> {
+pub struct TerminalUnit<H: Hasher> {
     unit: Unit<H>,
     // This represents the knowledge of what we think the parents of the unit are. It is initialized as all None
     // and hashes of parents are being added at the time we receive a given coord. Once the parents map is complete
     // we test whether the hash of parents agains the control_hash in the unit. If the check fails, we request hashes
     // of parents of this unit via a NotificationOut.
-    parents: NodeMap<Option<H>>,
+    parents: NodeMap<Option<H::Hash>>,
     n_miss_par_decoded: NodeCount,
     n_miss_par_dag: NodeCount,
     status: UnitStatus,
 }
 
-impl<H: Hash> From<TerminalUnit<H>> for ExtenderUnit<H> {
+impl<H: Hasher> From<TerminalUnit<H>> for ExtenderUnit<H> {
     fn from(u: TerminalUnit<H>) -> ExtenderUnit<H> {
         ExtenderUnit::new(u.unit.creator, u.unit.round(), u.unit.hash, u.parents)
     }
 }
 
-impl<H: Hash> From<TerminalUnit<H>> for Unit<H> {
+impl<H: Hasher> From<TerminalUnit<H>> for Unit<H> {
     fn from(u: TerminalUnit<H>) -> Unit<H> {
         u.unit
     }
 }
 
-impl<H: Hash> TerminalUnit<H> {
+impl<H: Hasher> TerminalUnit<H> {
     // creates a unit from a Control Hash Unit, that has no parents reconstructed yet
     pub(crate) fn blank_from_unit(unit: &Unit<H>) -> Self {
         let n_members = unit.control_hash.n_members();
@@ -71,20 +71,20 @@ impl<H: Hash> TerminalUnit<H> {
         self.unit.round()
     }
 
-    pub(crate) fn _hash(&self) -> H {
+    pub(crate) fn _hash(&self) -> H::Hash {
         self.unit.hash
     }
 
-    pub(crate) fn verify_control_hash<Hashing: Fn(&[u8]) -> H>(&self, hashing: &Hashing) -> bool {
+    pub(crate) fn verify_control_hash(&self) -> bool {
         // this will be called only after all parents have been reconstructed
 
-        self.unit.control_hash.hash == ControlHash::combine_hashes(&self.parents, hashing)
+        self.unit.control_hash.hash == ControlHash::<H>::combine_hashes(&self.parents)
     }
 }
 
-pub enum TerminalEvent<H: Hash> {
-    ParentsReconstructed(H),
-    ParentsInDag(H),
+pub enum TerminalEvent<H: Hasher> {
+    ParentsReconstructed(H::Hash),
+    ParentsInDag(H::Hash),
 }
 
 type SyncClosure<X, Y> = Box<dyn Fn(X) -> Y + Sync + Send + 'static>;
@@ -114,9 +114,8 @@ type SyncClosure<X, Y> = Box<dyn Fn(X) -> Y + Sync + Send + 'static>;
 ///    the remaining parents are added to Dag.
 /// 6) At the moment when all parents have been added to Dag, the unit itself is added to Dag.
 
-pub(crate) struct Terminal<H: Hash, NI: NodeIdT> {
+pub(crate) struct Terminal<H: Hasher, NI: NodeIdT> {
     node_id: NI,
-    hashing: Box<dyn Fn(&[u8]) -> H + Send>,
     // A channel for receiving notifications (units mainly)
     ntfct_rx: Receiver<NotificationIn<H>>,
     // A channel to push outgoing notifications
@@ -127,31 +126,29 @@ pub(crate) struct Terminal<H: Hash, NI: NodeIdT> {
     event_queue: VecDeque<TerminalEvent<H>>,
     post_insert: Vec<SyncClosure<TerminalUnit<H>, ()>>,
     // Here we store all the units -- the ones in Dag and the ones "hanging".
-    unit_store: HashMap<H, TerminalUnit<H>>,
+    unit_store: HashMap<H::Hash, TerminalUnit<H>>,
 
-    // TODO: get rid of HashMaps below and just use Vec<Vec<H>> for efficiency
+    // TODO: get rid of HashMaps below and just use Vec<Vec<H::Hash>> for efficiency
 
     // In this Map, for each pair (r, pid) we store the first unit made by pid at round r that we ever received.
     // In case of forks, we still store only the first one -- others are ignored (but stored in store under their hash).
-    unit_by_coord: HashMap<(Round, NodeIndex), H>,
+    unit_by_coord: HashMap<(Round, NodeIndex), H::Hash>,
     // This stores, for a pair (r, pid) the list of all units (by hash) that await a unit made by pid at
     // round r, as their parent. Once such a unit arrives, we notify all these children.
-    children_coord: HashMap<(Round, NodeIndex), Vec<H>>,
+    children_coord: HashMap<(Round, NodeIndex), Vec<H::Hash>>,
     // The same as above, but this time we await for a unit (with a particular hash) to be added to the Dag.
     // Once this happens, we notify all the children.
-    children_hash: HashMap<H, Vec<H>>,
+    children_hash: HashMap<H::Hash, Vec<H::Hash>>,
 }
 
-impl<H: Hash, NI: NodeIdT> Terminal<H, NI> {
+impl<H: Hasher, NI: NodeIdT> Terminal<H, NI> {
     pub(crate) fn new(
         node_id: NI,
-        hashing: impl Fn(&[u8]) -> H + Send + 'static,
         ntfct_rx: Receiver<NotificationIn<H>>,
         ntfct_tx: Sender<NotificationOut<H>>,
     ) -> Self {
         Terminal {
             node_id,
-            hashing: Box::new(hashing),
             ntfct_rx,
             ntfct_tx,
             event_queue: VecDeque::new(),
@@ -164,7 +161,7 @@ impl<H: Hash, NI: NodeIdT> Terminal<H, NI> {
     }
 
     // Reconstruct the parent of a unit u (given by hash u_hash) at position pid as p (given by hash p_hash)
-    fn reconstruct_parent(&mut self, u_hash: &H, pid: NodeIndex, p_hash: &H) {
+    fn reconstruct_parent(&mut self, u_hash: &H::Hash, pid: NodeIndex, p_hash: &H::Hash) {
         let u = self.unit_store.get_mut(u_hash).unwrap();
         // the above unwraps must succeed, should probably add some debug messages here...
 
@@ -178,7 +175,7 @@ impl<H: Hash, NI: NodeIdT> Terminal<H, NI> {
 
     // update u's count (u given by hash u_hash) of parents present in Dag and trigger the event of
     // adding u itself to the Dag
-    fn new_parent_in_dag(&mut self, u_hash: &H) {
+    fn new_parent_in_dag(&mut self, u_hash: &H::Hash) {
         let u = self.unit_store.get_mut(u_hash).unwrap();
         u.n_miss_par_dag -= NodeCount(1);
         if u.n_miss_par_dag == NodeCount(0) {
@@ -189,7 +186,7 @@ impl<H: Hash, NI: NodeIdT> Terminal<H, NI> {
 
     // Adds the unit u (u given by hash u_hash) to the list of units waiting for the coord (round, pid) to be
     // added to store.
-    fn add_coord_trigger(&mut self, round: Round, pid: NodeIndex, u_hash: H) {
+    fn add_coord_trigger(&mut self, round: Round, pid: NodeIndex, u_hash: H::Hash) {
         let coord = (round, pid);
         if !self.children_coord.contains_key(&coord) {
             self.children_coord.insert((round, pid), Vec::new());
@@ -200,7 +197,7 @@ impl<H: Hash, NI: NodeIdT> Terminal<H, NI> {
 
     // Adds the unit u (u given by hash u_hash) to the list of units waiting for the unit p (p_hash) to be
     // added to the Dag.
-    fn add_hash_trigger(&mut self, p_hash: &H, u_hash: &H) {
+    fn add_hash_trigger(&mut self, p_hash: &H::Hash, u_hash: &H::Hash) {
         if !self.children_hash.contains_key(p_hash) {
             self.children_hash.insert(*p_hash, Vec::new());
         }
@@ -251,7 +248,7 @@ impl<H: Hash, NI: NodeIdT> Terminal<H, NI> {
         }
     }
 
-    fn update_on_dag_add(&mut self, u_hash: &H) {
+    fn update_on_dag_add(&mut self, u_hash: &H::Hash) {
         let u = self
             .unit_store
             .get(u_hash)
@@ -277,7 +274,7 @@ impl<H: Hash, NI: NodeIdT> Terminal<H, NI> {
     }
 
     // We set the correct parent hashes for unit u.
-    fn update_on_wrong_hash_response(&mut self, u_hash: H, p_hashes: Vec<H>) {
+    fn update_on_wrong_hash_response(&mut self, u_hash: H::Hash, p_hashes: Vec<H::Hash>) {
         let u = self
             .unit_store
             .get_mut(&u_hash)
@@ -294,14 +291,14 @@ impl<H: Hash, NI: NodeIdT> Terminal<H, NI> {
     }
 
     fn add_to_store(&mut self, u: Unit<H>) {
-        debug!(target: "rush-terminal", "{} Adding to store {} round {:?} index {:?}", self.node_id, u.hash(), u.round(), u.creator);
+        debug!(target: "rush-terminal", "{} Adding to store {:?} round {:?} index {:?}", self.node_id, u.hash(), u.round(), u.creator);
         if let Entry::Vacant(entry) = self.unit_store.entry(u.hash()) {
             entry.insert(TerminalUnit::<H>::blank_from_unit(&u));
             self.update_on_store_add(u);
         }
     }
 
-    fn inspect_parents_in_dag(&mut self, u_hash: &H) {
+    fn inspect_parents_in_dag(&mut self, u_hash: &H::Hash) {
         let u_parents = self.unit_store.get(&u_hash).unwrap().parents.clone();
         let mut n_parents_in_dag = NodeCount(0);
         for p_hash in u_parents.into_iter().flatten() {
@@ -327,7 +324,7 @@ impl<H: Hash, NI: NodeIdT> Terminal<H, NI> {
         }
     }
 
-    fn on_wrong_hash_detected(&mut self, u_hash: H) {
+    fn on_wrong_hash_detected(&mut self, u_hash: H::Hash) {
         let send_result = self
             .ntfct_tx
             .send(NotificationOut::WrongControlHash(u_hash));
@@ -345,7 +342,7 @@ impl<H: Hash, NI: NodeIdT> Terminal<H, NI> {
             match event {
                 TerminalEvent::ParentsReconstructed(u_hash) => {
                     let u = self.unit_store.get_mut(&u_hash).unwrap();
-                    if u.verify_control_hash(&self.hashing) {
+                    if u.verify_control_hash() {
                         self.inspect_parents_in_dag(&u_hash);
                     } else {
                         u.status = UnitStatus::WrongControlHash;
@@ -356,7 +353,7 @@ impl<H: Hash, NI: NodeIdT> Terminal<H, NI> {
                 TerminalEvent::ParentsInDag(u_hash) => {
                     let u = self.unit_store.get_mut(&u_hash).unwrap();
                     u.status = UnitStatus::InDag;
-                    debug!(target: "rush-terminal", "{} Adding to Dag {} round {:?} index {}.", self.node_id, u_hash, u.unit.round(), u.unit.creator);
+                    debug!(target: "rush-terminal", "{} Adding to Dag {:?} round {:?} index {}.", self.node_id, u_hash, u.unit.round(), u.unit.creator);
                     self.update_on_dag_add(&u_hash);
                 }
             }

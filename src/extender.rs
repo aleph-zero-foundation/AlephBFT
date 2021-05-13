@@ -6,24 +6,24 @@ use log::{debug, error};
 
 use crate::{
     nodes::{NodeCount, NodeIndex, NodeMap},
-    Hash, NodeIdT, Receiver, Round, Sender,
+    Hasher, NodeIdT, Receiver, Round, Sender,
 };
 
 #[derive(Clone, Default, Debug)]
-pub(crate) struct ExtenderUnit<H: Hash> {
+pub(crate) struct ExtenderUnit<H: Hasher> {
     creator: NodeIndex,
     round: Round,
-    parents: NodeMap<Option<H>>,
-    hash: H,
+    parents: NodeMap<Option<H::Hash>>,
+    hash: H::Hash,
     vote: bool,
 }
 
-impl<H: Hash> ExtenderUnit<H> {
+impl<H: Hasher> ExtenderUnit<H> {
     pub(crate) fn new(
         creator: NodeIndex,
         round: Round,
-        hash: H,
-        parents: NodeMap<Option<H>>,
+        hash: H::Hash,
+        parents: NodeMap<Option<H::Hash>>,
     ) -> Self {
         ExtenderUnit {
             creator,
@@ -64,23 +64,23 @@ impl CacheState {
 /// units that should be finalized, unwraps them (leaving only a block hash per unit) and pushes
 /// such a batch to a channel via the finalizer_tx endpoint.
 
-pub(crate) struct Extender<H: Hash, NI: NodeIdT> {
+pub(crate) struct Extender<H: Hasher, NI: NodeIdT> {
     node_id: NI,
     electors: Receiver<ExtenderUnit<H>>,
     state: CacheState,
-    units: HashMap<H, ExtenderUnit<H>>,
-    units_by_round: Vec<Vec<H>>,
+    units: HashMap<H::Hash, ExtenderUnit<H>>,
+    units_by_round: Vec<Vec<H::Hash>>,
     n_members: NodeCount,
-    candidates: Vec<H>,
-    finalizer_tx: Sender<Vec<H>>,
+    candidates: Vec<H::Hash>,
+    finalizer_tx: Sender<Vec<H::Hash>>,
 }
 
-impl<H: Hash, NI: NodeIdT> Extender<H, NI> {
+impl<H: Hasher, NI: NodeIdT> Extender<H, NI> {
     pub(crate) fn new(
         node_id: NI,
         n_members: NodeCount,
         electors: Receiver<ExtenderUnit<H>>,
-        finalizer_tx: Sender<Vec<H>>,
+        finalizer_tx: Sender<Vec<H::Hash>>,
     ) -> Self {
         Extender {
             node_id,
@@ -95,7 +95,7 @@ impl<H: Hash, NI: NodeIdT> Extender<H, NI> {
     }
 
     fn add_unit(&mut self, u: ExtenderUnit<H>) -> bool {
-        debug!(target: "rush-extender", "{} New unit in Extender {}.", self.node_id, u.hash);
+        debug!(target: "rush-extender", "{} New unit in Extender {:?}.", self.node_id, u.hash);
         let round = u.round;
         if round > self.state.highest_round {
             self.state.highest_round = round;
@@ -136,7 +136,7 @@ impl<H: Hash, NI: NodeIdT> Extender<H, NI> {
     }
 
     /// Prepares a batch and removes all unnecessary units from the data structures
-    fn finalize_round(&mut self, round: Round, head: &H) {
+    fn finalize_round(&mut self, round: Round, head: &H::Hash) {
         let mut batch = vec![];
         let mut queue = VecDeque::new();
         queue.push_back(self.units.remove(head).unwrap());
@@ -167,8 +167,8 @@ impl<H: Hash, NI: NodeIdT> Extender<H, NI> {
 
     fn vote_and_decision(
         &self,
-        candidate_hash: &H,
-        voter_hash: &H,
+        candidate_hash: &H::Hash,
+        voter_hash: &H::Hash,
         candidate_creator: NodeIndex,
         candidate_round: Round,
     ) -> (bool, Option<bool>) {
@@ -220,7 +220,7 @@ impl<H: Hash, NI: NodeIdT> Extender<H, NI> {
     }
 
     // Tries to make progress in extending the partial order after adding a new unit to the Dag.
-    fn progress(&mut self, u_new_hash: H) {
+    fn progress(&mut self, u_new_hash: H::Hash) {
         loop {
             if !self.state.round_initialized {
                 if self.state.highest_round >= self.state.current_round + 3 {
@@ -314,7 +314,7 @@ mod tests {
     use super::*;
     use crate::{
         nodes::NodeCount,
-        testing::mock::{Hash64 as Hash, NodeId},
+        testing::mock::{Hasher64, NodeId},
     };
     use tokio::sync::mpsc;
 
@@ -322,18 +322,18 @@ mod tests {
         round * n_members + creator
     }
 
-    fn construct_unit(creator: usize, round: usize, n_members: usize) -> ExtenderUnit<Hash> {
+    fn construct_unit(creator: usize, round: usize, n_members: usize) -> ExtenderUnit<Hasher64> {
         let mut parents = NodeMap::new_with_len(NodeCount(n_members));
         if round > 0 {
             for i in 0..n_members {
-                parents[NodeIndex(i)] = Some(Hash(coord_to_number(i, round - 1, n_members) as u64));
+                parents[NodeIndex(i)] = Some(coord_to_number(i, round - 1, n_members) as u64);
             }
         }
 
         ExtenderUnit::new(
             NodeIndex(creator),
             round,
-            Hash(coord_to_number(creator, round, n_members) as u64),
+            coord_to_number(creator, round, n_members) as u64,
             parents,
         )
     }
@@ -344,8 +344,12 @@ mod tests {
         let rounds = 6;
         let (batch_tx, mut batch_rx) = mpsc::unbounded_channel();
         let (electors_tx, electors_rx) = mpsc::unbounded_channel();
-        let mut extender =
-            Extender::<Hash, NodeId>::new(0.into(), NodeCount(n_members), electors_rx, batch_tx);
+        let mut extender = Extender::<Hasher64, NodeId>::new(
+            0.into(),
+            NodeCount(n_members),
+            electors_rx,
+            batch_tx,
+        );
         let (exit_tx, exit_rx) = oneshot::channel();
         let extender_handle = tokio::spawn(async move { extender.extend(exit_rx).await });
 

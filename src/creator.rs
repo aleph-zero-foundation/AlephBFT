@@ -2,7 +2,7 @@ use crate::{
     member::{Config, NotificationOut},
     nodes::{NodeCount, NodeIndex, NodeMap},
     units::{PreUnit, Unit},
-    Hash, NodeIdT, Receiver, Round, Sender,
+    Hasher, NodeIdT, Receiver, Round, Sender,
 };
 use futures::{FutureExt, StreamExt};
 use log::{debug, error};
@@ -20,24 +20,22 @@ use tokio::{
 /// - U has > floor(2*N/3) parents.
 /// The currently implemented strategy creates the unit U at the very first moment when enough
 /// candidates for parents are available for all the above constraints to be satisfied.
-pub(crate) struct Creator<H: Hash, NI: NodeIdT> {
+pub(crate) struct Creator<H: Hasher, NI: NodeIdT> {
     node_id: NI,
     parents_rx: Receiver<Unit<H>>,
     new_units_tx: Sender<NotificationOut<H>>,
     n_members: NodeCount,
     current_round: Round, // current_round is the round number of our next unit
-    candidates_by_round: Vec<NodeMap<Option<H>>>,
+    candidates_by_round: Vec<NodeMap<Option<H::Hash>>>,
     n_candidates_by_round: Vec<NodeCount>,
-    hashing: Box<dyn Fn(&[u8]) -> H + Send>,
     create_lag: Duration,
 }
 
-impl<H: Hash, NI: NodeIdT> Creator<H, NI> {
+impl<H: Hasher, NI: NodeIdT> Creator<H, NI> {
     pub(crate) fn new(
         conf: Config<NI>,
         parents_rx: Receiver<Unit<H>>,
         new_units_tx: Sender<NotificationOut<H>>,
-        hashing: impl Fn(&[u8]) -> H + Send + 'static,
     ) -> Self {
         let Config {
             node_id,
@@ -53,7 +51,6 @@ impl<H: Hash, NI: NodeIdT> Creator<H, NI> {
             current_round: 0,
             candidates_by_round: vec![NodeMap::new_with_len(n_members)],
             n_candidates_by_round: vec![NodeCount(0)],
-            hashing: Box::new(hashing),
             create_lag,
         }
     }
@@ -77,8 +74,7 @@ impl<H: Hash, NI: NodeIdT> Creator<H, NI> {
             }
         };
 
-        let new_preunit =
-            PreUnit::new_from_parents(self.node_id.index().unwrap(), round, parents, &self.hashing);
+        let new_preunit = PreUnit::new_from_parents(self.node_id.index().unwrap(), round, parents);
         debug!(target: "rush-creator", "{} Created a new unit {:?} at round {}.", self.node_id, new_preunit, self.current_round);
         let send_result = self.new_units_tx.send(new_preunit.into());
         if let Err(e) = send_result {
@@ -89,7 +85,7 @@ impl<H: Hash, NI: NodeIdT> Creator<H, NI> {
         self.init_round(self.current_round);
     }
 
-    fn add_unit(&mut self, round: Round, pid: NodeIndex, hash: H) {
+    fn add_unit(&mut self, round: Round, pid: NodeIndex, hash: H::Hash) {
         // units that are too old are of no interest to us
         if round + 1 >= self.current_round {
             self.init_round(round);

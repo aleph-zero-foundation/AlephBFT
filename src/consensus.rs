@@ -8,18 +8,17 @@ use crate::{
     member::{Config, NotificationIn, NotificationOut},
     syncer::Syncer,
     terminal::Terminal,
-    Hash, NodeIdT, OrderedBatch, Sender, SpawnHandle,
+    Hasher, NodeIdT, OrderedBatch, Sender, SpawnHandle,
 };
 
-pub(crate) async fn run<H: Hash + 'static, NI: NodeIdT>(
+pub(crate) async fn run<H: Hasher + 'static, NI: NodeIdT>(
     conf: Config<NI>,
     ntfct_env_rx: impl Stream<Item = NotificationIn<H>> + Send + Unpin + 'static,
     ntfct_env_tx: impl Sink<NotificationOut<H>, Error = Box<dyn std::error::Error>>
         + Send
         + Unpin
         + 'static,
-    ordered_batch_tx: Sender<OrderedBatch<H>>,
-    hashing: impl Fn(&[u8]) -> H + Send + Copy + 'static,
+    ordered_batch_tx: Sender<OrderedBatch<H::Hash>>,
     spawn_handle: impl SpawnHandle,
     exit: oneshot::Receiver<()>,
 ) {
@@ -49,7 +48,7 @@ pub(crate) async fn run<H: Hash + 'static, NI: NodeIdT>(
 
     let (parents_tx, parents_rx) = mpsc::unbounded_channel();
     let new_units_tx = ntfct_common_tx.clone();
-    let mut creator = Creator::new(conf.clone(), parents_rx, new_units_tx, hashing);
+    let mut creator = Creator::new(conf.clone(), parents_rx, new_units_tx);
 
     let (creator_exit, exit_rx) = oneshot::channel();
     spawn_handle.spawn(
@@ -57,12 +56,7 @@ pub(crate) async fn run<H: Hash + 'static, NI: NodeIdT>(
         async move { creator.create(exit_rx).await },
     );
 
-    let mut terminal = Terminal::new(
-        conf.node_id.clone(),
-        hashing,
-        ntfct_term_rx,
-        ntfct_common_tx,
-    );
+    let mut terminal = Terminal::new(conf.node_id.clone(), ntfct_term_rx, ntfct_common_tx);
 
     // send a new parent candidate to the creator
     terminal.register_post_insert_hook(Box::new(move |u| {
@@ -100,7 +94,7 @@ pub(crate) async fn run<H: Hash + 'static, NI: NodeIdT>(
 mod tests {
     use super::*;
     use crate::{
-        testing::mock::{hashing, Hash64 as Hash, HonestHub, NodeId},
+        testing::mock::{Hasher64, HonestHub, NodeId},
         units::{PreUnit, Unit},
         NodeIndex,
     };
@@ -160,7 +154,7 @@ mod tests {
             batch_rxs.push(batch_rx);
             spawner.spawn(
                 "consensus",
-                run(conf, rx, tx, batch_tx, hashing, spawner.clone(), exit_rx),
+                run(conf, rx, tx, batch_tx, spawner.clone(), exit_rx),
             );
         }
 
@@ -204,25 +198,17 @@ mod tests {
 
         spawner.spawn(
             "consensus",
-            run(
-                conf,
-                rx_in,
-                tx_out,
-                batch_tx,
-                hashing,
-                spawner.clone(),
-                exit_rx,
-            ),
+            run(conf, rx_in, tx_out, batch_tx, spawner.clone(), exit_rx),
         );
         let mut bad_pu =
-            PreUnit::new_from_parents(1.into(), 0, (vec![None; n_nodes]).into(), hashing);
-        let bad_control_hash = Hash(1111111);
+            PreUnit::<Hasher64>::new_from_parents(1.into(), 0, (vec![None; n_nodes]).into());
+        let bad_control_hash: <Hasher64 as Hasher>::Hash = 1111111;
         assert!(
             bad_control_hash != bad_pu.control_hash.hash,
             "Bad control hash cannot be the correct one."
         );
         bad_pu.control_hash.hash = bad_control_hash;
-        let bad_hash = Hash(1234567);
+        let bad_hash: <Hasher64 as Hasher>::Hash = 1234567;
         let bad_unit = Unit::new_from_preunit(bad_pu, bad_hash);
         let _ = tx_in.send(NotificationIn::NewUnits(vec![bad_unit])).await;
         loop {

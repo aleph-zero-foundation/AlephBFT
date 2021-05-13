@@ -1,5 +1,5 @@
 use crate::{
-    member::NotificationOut, Data, Hash, KeyBox, NodeCount, NodeIndex, NodeMap, Round, SessionId,
+    member::NotificationOut, Data, Hasher, KeyBox, NodeCount, NodeIndex, NodeMap, Round, SessionId,
 };
 use codec::{Decode, Encode};
 use log::{debug, error};
@@ -9,20 +9,20 @@ use std::{collections::HashMap, hash::Hash as StdHash};
 pub(crate) const MAX_ROUND: usize = 5000;
 
 #[derive(Debug, Clone, Encode, Decode)]
-pub(crate) struct FullUnit<H: Hash, D: Data> {
+pub(crate) struct FullUnit<H: Hasher, D: Data> {
     pub(crate) inner: PreUnit<H>,
     pub(crate) data: D,
     pub(crate) session_id: SessionId,
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
-pub(crate) struct SignedUnit<H: Hash, D: Data, Signature: Clone + Encode + Decode> {
+pub(crate) struct SignedUnit<H: Hasher, D: Data, Signature: Clone + Encode + Decode> {
     pub(crate) unit: FullUnit<H, D>,
     pub(crate) signature: Signature,
     creator_index: NodeIndex,
 }
 
-impl<H: Hash, D: Data, Signature: Clone + Encode + Decode> SignedUnit<H, D, Signature> {
+impl<H: Hasher, D: Data, Signature: Clone + Encode + Decode> SignedUnit<H, D, Signature> {
     /// Verifies the unit's signature. The signature is verified on creation, so this should always
     /// return true, but the method can be used to check integrity.
     pub(crate) fn verify_signature<KB: KeyBox<Signature>>(&self, keybox: &KB) -> bool {
@@ -33,8 +33,8 @@ impl<H: Hash, D: Data, Signature: Clone + Encode + Decode> SignedUnit<H, D, Sign
         true
     }
 
-    pub(crate) fn hash(&self, hashing: impl Fn(&[u8]) -> H) -> H {
-        hashing(&self.unit.encode())
+    pub(crate) fn hash(&self) -> H::Hash {
+        H::hash(&self.unit.encode())
     }
 
     pub(crate) fn coord(&self) -> UnitCoord {
@@ -78,7 +78,7 @@ pub(crate) struct UnitCoord {
     pub(crate) round: u64,
 }
 
-impl<H: Hash> From<Unit<H>> for UnitCoord {
+impl<H: Hasher> From<Unit<H>> for UnitCoord {
     fn from(unit: Unit<H>) -> Self {
         UnitCoord {
             creator: unit.creator(),
@@ -87,7 +87,7 @@ impl<H: Hash> From<Unit<H>> for UnitCoord {
     }
 }
 
-impl<H: Hash> From<&Unit<H>> for UnitCoord {
+impl<H: Hasher> From<&Unit<H>> for UnitCoord {
     fn from(unit: &Unit<H>) -> Self {
         UnitCoord {
             creator: unit.creator(),
@@ -107,14 +107,14 @@ impl From<(usize, NodeIndex)> for UnitCoord {
 
 type UnitRound = u64;
 
-#[derive(Clone, Debug, Default, PartialEq, Encode, Decode)]
-pub(crate) struct PreUnit<H: Hash> {
+#[derive(Clone, Debug, PartialEq, Encode, Decode)]
+pub(crate) struct PreUnit<H: Hasher> {
     pub(crate) creator: NodeIndex,
     pub(crate) round: UnitRound,
     pub(crate) control_hash: ControlHash<H>,
 }
 
-impl<H: Hash> PreUnit<H> {
+impl<H: Hasher> PreUnit<H> {
     pub(crate) fn creator(&self) -> NodeIndex {
         self.creator
     }
@@ -126,10 +126,9 @@ impl<H: Hash> PreUnit<H> {
     pub(crate) fn new_from_parents(
         creator: NodeIndex,
         round: Round,
-        parents: NodeMap<Option<H>>,
-        hashing: impl Fn(&[u8]) -> H,
+        parents: NodeMap<Option<H::Hash>>,
     ) -> Self {
-        let control_hash = ControlHash::new(&parents, &hashing);
+        let control_hash = ControlHash::new(&parents);
         PreUnit {
             creator,
             round: round as u64,
@@ -146,22 +145,22 @@ impl<H: Hash> PreUnit<H> {
     }
 }
 
-impl<H: Hash> From<PreUnit<H>> for NotificationOut<H> {
+impl<H: Hasher> From<PreUnit<H>> for NotificationOut<H> {
     fn from(pu: PreUnit<H>) -> Self {
         NotificationOut::CreatedPreUnit(pu)
     }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Encode, Decode)]
-pub(crate) struct Unit<H: Hash> {
+pub(crate) struct Unit<H: Hasher> {
     pub(crate) creator: NodeIndex,
     round: UnitRound,
-    pub(crate) hash: H,
+    pub(crate) hash: H::Hash,
     pub(crate) control_hash: ControlHash<H>,
 }
 
-impl<H: Hash> Unit<H> {
-    pub(crate) fn hash(&self) -> H {
+impl<H: Hasher> Unit<H> {
+    pub(crate) fn hash(&self) -> H::Hash {
         self.hash
     }
 
@@ -172,7 +171,7 @@ impl<H: Hash> Unit<H> {
         self.round as Round
     }
 
-    pub(crate) fn new_from_preunit(pu: PreUnit<H>, hash: H) -> Self {
+    pub(crate) fn new_from_preunit(pu: PreUnit<H>, hash: H::Hash) -> Self {
         Unit {
             creator: pu.creator,
             round: pu.round,
@@ -182,25 +181,22 @@ impl<H: Hash> Unit<H> {
     }
 }
 #[derive(Clone, Debug, Default, PartialEq, Encode, Decode)]
-pub(crate) struct ControlHash<H: Hash> {
+pub(crate) struct ControlHash<H: Hasher> {
     // TODO we need to optimize it for it to take O(N) bits of memory not O(N) words.
     pub(crate) parents: NodeMap<bool>,
-    pub(crate) hash: H,
+    pub(crate) hash: H::Hash,
 }
 
-impl<H: Hash> ControlHash<H> {
-    fn new(parent_map: &NodeMap<Option<H>>, hashing: impl Fn(&[u8]) -> H) -> Self {
-        let hash = Self::combine_hashes(&parent_map, hashing);
+impl<H: Hasher> ControlHash<H> {
+    fn new(parent_map: &NodeMap<Option<H::Hash>>) -> Self {
+        let hash = Self::combine_hashes(&parent_map);
         let parents = parent_map.iter().map(|h| h.is_some()).collect();
 
         ControlHash { parents, hash }
     }
 
-    pub(crate) fn combine_hashes(
-        parent_map: &NodeMap<Option<H>>,
-        hashing: impl Fn(&[u8]) -> H,
-    ) -> H {
-        parent_map.using_encoded(hashing)
+    pub(crate) fn combine_hashes(parent_map: &NodeMap<Option<H::Hash>>) -> H::Hash {
+        parent_map.using_encoded(H::hash)
     }
 
     pub(crate) fn n_parents(&self) -> NodeCount {
@@ -212,10 +208,10 @@ impl<H: Hash> ControlHash<H> {
     }
 }
 
-pub(crate) struct UnitStore<H: Hash, D: Data, Signature: Clone + Encode + Decode> {
+pub(crate) struct UnitStore<H: Hasher, D: Data, Signature: Clone + Encode + Decode> {
     by_coord: HashMap<UnitCoord, SignedUnit<H, D, Signature>>,
-    by_hash: HashMap<H, SignedUnit<H, D, Signature>>,
-    parents: HashMap<H, Vec<H>>,
+    by_hash: HashMap<H::Hash, SignedUnit<H, D, Signature>>,
+    parents: HashMap<H::Hash, Vec<H::Hash>>,
     //this is the smallest r, such that round r-1 is saturated, i.e., it has at least threshold (~(2/3)N) units
     round_in_progress: usize,
     threshold: NodeCount,
@@ -223,15 +219,10 @@ pub(crate) struct UnitStore<H: Hash, D: Data, Signature: Clone + Encode + Decode
     n_units_per_round: Vec<NodeCount>,
     is_forker: NodeMap<bool>,
     legit_buffer: Vec<SignedUnit<H, D, Signature>>,
-    hashing: Box<dyn Fn(&[u8]) -> H + Send>,
 }
 
-impl<H: Hash, D: Data, Signature: Clone + Encode + Decode> UnitStore<H, D, Signature> {
-    pub(crate) fn new(
-        n_nodes: NodeCount,
-        threshold: NodeCount,
-        hashing: impl Fn(&[u8]) -> H + Send + Copy + 'static,
-    ) -> Self {
+impl<H: Hasher, D: Data, Signature: Clone + Encode + Decode> UnitStore<H, D, Signature> {
+    pub(crate) fn new(n_nodes: NodeCount, threshold: NodeCount) -> Self {
         UnitStore {
             by_coord: HashMap::new(),
             by_hash: HashMap::new(),
@@ -242,7 +233,6 @@ impl<H: Hash, D: Data, Signature: Clone + Encode + Decode> UnitStore<H, D, Signa
             // is_forker is initialized with default values for bool, i.e., false
             is_forker: NodeMap::new_with_len(n_nodes),
             legit_buffer: Vec::new(),
-            hashing: Box::new(hashing),
         }
     }
 
@@ -250,11 +240,11 @@ impl<H: Hash, D: Data, Signature: Clone + Encode + Decode> UnitStore<H, D, Signa
         self.by_coord.get(&coord)
     }
 
-    pub(crate) fn unit_by_hash(&self, hash: &H) -> Option<&SignedUnit<H, D, Signature>> {
+    pub(crate) fn unit_by_hash(&self, hash: &H::Hash) -> Option<&SignedUnit<H, D, Signature>> {
         self.by_hash.get(hash)
     }
 
-    pub(crate) fn contains_hash(&self, hash: &H) -> bool {
+    pub(crate) fn contains_hash(&self, hash: &H::Hash) -> bool {
         self.by_hash.contains_key(hash)
     }
 
@@ -291,7 +281,7 @@ impl<H: Hash, D: Data, Signature: Clone + Encode + Decode> UnitStore<H, D, Signa
         su: &SignedUnit<H, D, Signature>,
     ) -> Option<SignedUnit<H, D, Signature>> {
         // TODO: optimize so that unit's hash is computed once only, after it is received
-        let hash = su.hash(&self.hashing);
+        let hash = su.hash();
         if self.contains_hash(&hash) {
             return None;
         }
@@ -327,7 +317,7 @@ impl<H: Hash, D: Data, Signature: Clone + Encode + Decode> UnitStore<H, D, Signa
                 // it arrives in an alert for the *first* time.
                 // If we didn't do that, then there would be some awkward issues with duplicates.
                 self.by_coord.remove(&coord);
-                let hash = su.hash(&self.hashing);
+                let hash = su.hash();
                 self.by_hash.remove(&hash);
                 self.parents.remove(&hash);
                 // Now we are in a state as if the unit never arrived.
@@ -338,7 +328,7 @@ impl<H: Hash, D: Data, Signature: Clone + Encode + Decode> UnitStore<H, D, Signa
 
     pub(crate) fn add_unit(&mut self, su: SignedUnit<H, D, Signature>, alert: bool) {
         // TODO: optimize so that unit's hash is computed once only, after it is received
-        let hash = su.hash(&self.hashing);
+        let hash = su.hash();
         let round = su.round();
         let creator = su.creator();
         if alert {
@@ -369,11 +359,11 @@ impl<H: Hash, D: Data, Signature: Clone + Encode + Decode> UnitStore<H, D, Signa
         self.update_round_in_progress(round);
     }
 
-    pub(crate) fn add_parents(&mut self, hash: H, parents: Vec<H>) {
+    pub(crate) fn add_parents(&mut self, hash: H::Hash, parents: Vec<H::Hash>) {
         self.parents.insert(hash, parents);
     }
 
-    pub(crate) fn get_parents(&mut self, hash: H) -> Option<&Vec<H>> {
+    pub(crate) fn get_parents(&mut self, hash: H::Hash) -> Option<&Vec<H::Hash>> {
         self.parents.get(&hash)
     }
 

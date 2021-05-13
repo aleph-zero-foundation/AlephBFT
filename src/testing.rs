@@ -3,10 +3,10 @@ pub mod mock {
     use crate::{
         member::{NotificationIn, NotificationOut},
         units::{Unit, UnitCoord},
-        Index, NodeIndex,
+        Hasher, Index, NodeIndex,
     };
     use codec::{Decode, Encode, Error as CodecError, Input, Output};
-    use derive_more::{Display, From, Into};
+    use derive_more::{From, Into};
     use futures::{
         channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
         Future, StreamExt,
@@ -15,7 +15,7 @@ pub mod mock {
     use std::{
         collections::{hash_map::DefaultHasher, HashMap},
         fmt,
-        hash::Hasher,
+        hash::Hasher as StdHasher,
         pin::Pin,
         task::{Context, Poll},
     };
@@ -52,23 +52,19 @@ pub mod mock {
         }
     }
 
-    #[derive(
-        Hash, Debug, Default, Display, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Encode, Decode,
-    )]
-    pub struct Hash64(pub u64);
-
-    impl From<u64> for Hash64 {
-        fn from(h: u64) -> Self {
-            Hash64(h)
-        }
-    }
-
     // A hasher from the standard library that hashes to u64, should be enough to
     // avoid collisions in testing.
-    pub(crate) fn hashing(x: &[u8]) -> Hash64 {
-        let mut hasher = DefaultHasher::new();
-        hasher.write(x);
-        Hash64(hasher.finish())
+    #[derive(PartialEq, Eq, Clone, Debug)]
+    pub struct Hasher64;
+
+    impl Hasher for Hasher64 {
+        type Hash = u64;
+
+        fn hash(x: &[u8]) -> Self::Hash {
+            let mut hasher = DefaultHasher::new();
+            hasher.write(x);
+            hasher.finish()
+        }
     }
 
     // This struct allows to create a Hub to interconnect several instances of the Consensus engine, without
@@ -79,9 +75,9 @@ pub mod mock {
     // 3) run the HonestHub instance as a Future.
     pub(crate) struct HonestHub {
         n_members: usize,
-        ntfct_out_rxs: HashMap<NodeIndex, UnboundedReceiver<NotificationOut<Hash64>>>,
-        ntfct_in_txs: HashMap<NodeIndex, UnboundedSender<NotificationIn<Hash64>>>,
-        units_by_coord: HashMap<UnitCoord, Unit<Hash64>>,
+        ntfct_out_rxs: HashMap<NodeIndex, UnboundedReceiver<NotificationOut<Hasher64>>>,
+        ntfct_in_txs: HashMap<NodeIndex, UnboundedSender<NotificationIn<Hasher64>>>,
+        units_by_coord: HashMap<UnitCoord, Unit<Hasher64>>,
     }
 
     impl HonestHub {
@@ -98,8 +94,8 @@ pub mod mock {
             &mut self,
             node_ix: NodeIndex,
         ) -> (
-            UnboundedSender<NotificationOut<Hash64>>,
-            UnboundedReceiver<NotificationIn<Hash64>>,
+            UnboundedSender<NotificationOut<Hasher64>>,
+            UnboundedReceiver<NotificationIn<Hasher64>>,
         ) {
             let (tx_in, rx_in) = unbounded();
             let (tx_out, rx_out) = unbounded();
@@ -108,7 +104,7 @@ pub mod mock {
             (tx_out, rx_in)
         }
 
-        fn send_to_all(&mut self, ntfct: NotificationIn<Hash64>) {
+        fn send_to_all(&mut self, ntfct: NotificationIn<Hasher64>) {
             assert!(
                 self.ntfct_in_txs.len() == self.n_members,
                 "Must connect to all nodes before running the hub."
@@ -118,7 +114,7 @@ pub mod mock {
             }
         }
 
-        fn send_to_node(&mut self, node_ix: NodeIndex, ntfct: NotificationIn<Hash64>) {
+        fn send_to_node(&mut self, node_ix: NodeIndex, ntfct: NotificationIn<Hasher64>) {
             let tx = self
                 .ntfct_in_txs
                 .get(&node_ix)
@@ -126,10 +122,10 @@ pub mod mock {
             let _ = tx.unbounded_send(ntfct);
         }
 
-        fn on_notification(&mut self, node_ix: NodeIndex, ntfct: NotificationOut<Hash64>) {
+        fn on_notification(&mut self, node_ix: NodeIndex, ntfct: NotificationOut<Hasher64>) {
             match ntfct {
                 NotificationOut::CreatedPreUnit(pu) => {
-                    let hash = pu.using_encoded(hashing);
+                    let hash = pu.using_encoded(Hasher64::hash);
                     let u = Unit::new_from_preunit(pu, hash);
                     self.units_by_coord.insert(u.clone().into(), u.clone());
                     self.send_to_all(NotificationIn::NewUnits(vec![u]));

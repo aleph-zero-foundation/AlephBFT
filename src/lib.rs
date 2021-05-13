@@ -71,15 +71,12 @@ impl<I> NodeIdT for I where
 {
 }
 
-/// A hash, as an identifier for a block or unit.
-pub trait Hash:
-    Eq + Ord + Copy + Clone + Send + Sync + Debug + Display + StdHash + Encode + Decode
-{
-}
+/// A hasher, used for creating identifiers for blocks or units.
+pub trait Hasher: Eq + Clone + Send + Sync + Debug + 'static {
+    /// A hash, as an identifier for a block or unit.
+    type Hash: Eq + Ord + Copy + Clone + Send + Debug + StdHash + Encode + Decode;
 
-impl<T> Hash for T where
-    T: Eq + Ord + Copy + Clone + Send + Sync + Debug + Display + StdHash + Encode + Decode
-{
+    fn hash(s: &[u8]) -> Self::Hash;
 }
 
 /// Data type that we want to order.

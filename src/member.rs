@@ -10,7 +10,7 @@ use crate::{
     bft::{Alert, ForkProof},
     consensus,
     units::{ControlHash, FullUnit, PreUnit, SignedUnit, Unit, UnitCoord, UnitStore},
-    Data, DataIO, Hash, KeyBox, Network, NetworkCommand, NetworkEvent, NodeCount, NodeIdT,
+    Data, DataIO, Hasher, KeyBox, Network, NetworkCommand, NetworkEvent, NodeCount, NodeIdT,
     NodeIndex, NodeMap, OrderedBatch, RequestAuxData, SessionId, SpawnHandle,
 };
 
@@ -30,7 +30,7 @@ const MAX_UNITS_ALERT: usize = 200;
 
 /// The kind of message that is being sent.
 #[derive(Debug, Encode, Decode)]
-pub(crate) enum ConsensusMessage<H: Hash, D: Data, Signature: Debug + Clone + Encode + Decode> {
+pub(crate) enum ConsensusMessage<H: Hasher, D: Data, Signature: Debug + Clone + Encode + Decode> {
     /// Fo disseminating newly created units.
     NewUnit(SignedUnit<H, D, Signature>),
     /// Request for a unit by its coord.
@@ -38,26 +38,26 @@ pub(crate) enum ConsensusMessage<H: Hash, D: Data, Signature: Debug + Clone + En
     /// Response to a request by coord.
     ResponseCoord(SignedUnit<H, D, Signature>),
     /// Request for the full list of parents of a unit.
-    RequestParents(H),
+    RequestParents(H::Hash),
     /// Response to a request for a full list of parents.
-    ResponseParents(H, Vec<SignedUnit<H, D, Signature>>),
+    ResponseParents(H::Hash, Vec<SignedUnit<H, D, Signature>>),
     /// Alert regarding forks,
     ForkAlert(Alert<H, D, Signature>),
 }
 
 /// Type for incoming notifications: Member to Consensus.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum NotificationIn<H: Hash> {
+pub(crate) enum NotificationIn<H: Hasher> {
     /// A notification carrying a single unit. This might come either from multicast or
     /// from a response to a request. This is of no importance at this layer.
     NewUnits(Vec<Unit<H>>),
     /// Response to a request to decode parents when the control hash is wrong.
-    UnitParents(H, Vec<H>),
+    UnitParents(H::Hash, Vec<H::Hash>),
 }
 
 /// Type for outgoing notifications: Consensus to Member.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum NotificationOut<H: Hash> {
+pub(crate) enum NotificationOut<H: Hasher> {
     /// Notification about a preunit created by this Consensus Node. Member is meant to
     /// disseminate this preunit among other nodes.
     CreatedPreUnit(PreUnit<H>),
@@ -65,26 +65,26 @@ pub(crate) enum NotificationOut<H: Hash> {
     /// is to fetch these unit (somehow). Auxiliary data is provided to help handle this request.
     MissingUnits(Vec<UnitCoord>, RequestAuxData),
     /// Notification that Consensus has parents incompatible with the control hash.
-    WrongControlHash(H),
+    WrongControlHash(H::Hash),
     /// Notification that a new unit has been added to the DAG, list of decoded parents provided
-    AddedToDag(H, Vec<H>),
+    AddedToDag(H::Hash, Vec<H::Hash>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum Task<H: Hash> {
+enum Task<H: Hasher> {
     CoordRequest(UnitCoord),
-    ParentsRequest(H),
+    ParentsRequest(H::Hash),
     // the hash of a unit, and the delay before repeating the multicast
-    UnitMulticast(H, time::Duration),
+    UnitMulticast(H::Hash, time::Duration),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ScheduledTask<H: Hash> {
+struct ScheduledTask<H: Hasher> {
     task: Task<H>,
     scheduled_time: time::Instant,
 }
 
-impl<H: Hash> ScheduledTask<H> {
+impl<H: Hasher> ScheduledTask<H> {
     fn new(task: Task<H>, scheduled_time: time::Instant) -> Self {
         ScheduledTask {
             task,
@@ -93,14 +93,14 @@ impl<H: Hash> ScheduledTask<H> {
     }
 }
 
-impl<H: Hash> Ord for ScheduledTask<H> {
+impl<H: Hasher> Ord for ScheduledTask<H> {
     fn cmp(&self, other: &Self) -> Ordering {
         // we want earlier times to come first when used in max-heap, hence the below:
         other.scheduled_time.cmp(&self.scheduled_time)
     }
 }
 
-impl<H: Hash> PartialOrd for ScheduledTask<H> {
+impl<H: Hasher> PartialOrd for ScheduledTask<H> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
@@ -114,19 +114,14 @@ pub struct Config<NI: NodeIdT> {
     pub create_lag: Duration,
 }
 
-pub trait HashingT<H>: Fn(&[u8]) -> H + Copy + Send {}
-
-impl<T, H> HashingT<H> for T where T: Fn(&[u8]) -> H + Copy + Send {}
-
 pub struct Member<
-    H: Hash,
+    H: Hasher,
     D: Data,
     Signature: Debug + Clone + Encode + Decode,
     DP: DataIO<D>,
     KB: KeyBox<Signature>,
     N: Network,
     NI: NodeIdT,
-    Hashing: HashingT<H>,
 > {
     config: Config<NI>,
     tx_consensus: Option<futures::channel::mpsc::UnboundedSender<NotificationIn<H>>>,
@@ -135,22 +130,20 @@ pub struct Member<
     network: N,
     store: UnitStore<H, D, Signature>,
     requests: BinaryHeap<ScheduledTask<H>>,
-    hashing: Hashing,
     threshold: NodeCount,
 }
 
-impl<H, D, Signature, DP, KB, N, NI, Hashing> Member<H, D, Signature, DP, KB, N, NI, Hashing>
+impl<H, D, Signature, DP, KB, N, NI> Member<H, D, Signature, DP, KB, N, NI>
 where
-    H: Hash + 'static,
+    H: Hasher,
     D: Data,
     Signature: Debug + Clone + Encode + Decode,
     DP: DataIO<D>,
     KB: KeyBox<Signature>,
     N: Network,
     NI: NodeIdT,
-    Hashing: HashingT<H> + 'static,
 {
-    pub fn new(data_io: DP, keybox: KB, network: N, config: Config<NI>, hashing: Hashing) -> Self {
+    pub fn new(data_io: DP, keybox: KB, network: N, config: Config<NI>) -> Self {
         let n_members = config.n_members;
         let threshold = (n_members * 2) / 3 + NodeCount(1);
         Member {
@@ -159,9 +152,8 @@ where
             data_io,
             keybox,
             network,
-            store: UnitStore::new(n_members, threshold, hashing),
+            store: UnitStore::new(n_members, threshold),
             requests: BinaryHeap::new(),
-            hashing,
             threshold,
         }
     }
@@ -188,7 +180,7 @@ where
         // TODO: beware: sign_unit blocks and is quite slow!
         let signed_unit = SignedUnit::sign(&self.keybox, full_unit);
         debug!(target: "rush-member", "On create notification post sign_unit.");
-        let hash = signed_unit.hash(&self.hashing);
+        let hash = signed_unit.hash();
         self.store.add_unit(signed_unit, false);
         let curr_time = time::Instant::now();
         let task = ScheduledTask::new(
@@ -222,18 +214,18 @@ where
         }
     }
 
-    fn schedule_parents_request(&mut self, u_hash: H, curr_time: time::Instant) {
+    fn schedule_parents_request(&mut self, u_hash: H::Hash, curr_time: time::Instant) {
         if self.store.get_parents(u_hash).is_none() {
             let message = ConsensusMessage::<H, D, Signature>::RequestParents(u_hash);
             let command = NetworkCommand::SendToRandPeer(message.encode());
             self.send_network_command(command);
-            debug!(target: "rush-member", "Fetch parents for {:} sent.", u_hash);
+            debug!(target: "rush-member", "Fetch parents for {:?} sent.", u_hash);
             self.requests.push(ScheduledTask::new(
                 Task::ParentsRequest(u_hash),
                 curr_time + FETCH_INTERVAL,
             ));
         } else {
-            debug!(target: "rush-member", "Request dropped as the parents are in store for {:}.", u_hash);
+            debug!(target: "rush-member", "Request dropped as the parents are in store for {:?}.", u_hash);
         }
     }
 
@@ -257,7 +249,7 @@ where
 
     fn schedule_unit_multicast(
         &mut self,
-        hash: H,
+        hash: H::Hash,
         interval: time::Duration,
         curr_time: time::Instant,
     ) {
@@ -267,7 +259,7 @@ where
             .expect("Our units are in store.");
         let message = ConsensusMessage::NewUnit(signed_unit.clone());
         let command = NetworkCommand::SendToAll(message.encode());
-        debug!(target: "rush-member", "Sending a unit {} over network after delay {:?}.", hash, interval);
+        debug!(target: "rush-member", "Sending a unit {:?} over network after delay {:?}.", hash, interval);
         self.send_network_command(command);
         // NOTE: we double the delay each time
         self.requests.push(ScheduledTask::new(
@@ -288,7 +280,7 @@ where
         self.trigger_tasks();
     }
 
-    fn on_wrong_control_hash(&mut self, u_hash: H) {
+    fn on_wrong_control_hash(&mut self, u_hash: H::Hash) {
         debug!(target: "rush-member", "Dealing with wrong control hash notification {:?}.", u_hash);
         if let Some(p_hashes) = self.store.get_parents(u_hash) {
             // We have the parents by some strange reason (someone sent us parents
@@ -401,7 +393,7 @@ where
     fn move_units_to_consensus(&mut self) {
         let mut units = Vec::new();
         for su in self.store.yield_buffer_units() {
-            let hash = su.hash(&self.hashing);
+            let hash = su.hash();
             let unit = Unit::new_from_preunit(su.unit.inner.clone(), hash);
             units.push(unit);
         }
@@ -439,7 +431,7 @@ where
         }
     }
 
-    fn on_request_parents(&mut self, peer_id: Vec<u8>, u_hash: H) {
+    fn on_request_parents(&mut self, peer_id: Vec<u8>, u_hash: H::Hash) {
         debug!(target: "rush-member", "Received parents request for hash {:?} from {:?}.", u_hash, peer_id);
         let maybe_p_hashes = self.store.get_parents(u_hash);
 
@@ -458,7 +450,7 @@ where
         }
     }
 
-    fn on_parents_response(&mut self, u_hash: H, parents: Vec<SignedUnit<H, D, Signature>>) {
+    fn on_parents_response(&mut self, u_hash: H::Hash, parents: Vec<SignedUnit<H, D, Signature>>) {
         // TODO: we *must* make sure that we have indeed sent such a request before accepting the response.
         let (u_round, u_control_hash, parent_ids) = match self.store.unit_by_hash(&u_hash) {
             Some(u) => (
@@ -482,7 +474,7 @@ where
             debug!(target: "rush-member", "In received parent response expected {} parents got {} for unit {:?}.", parents.len(), parent_ids.len(), u_hash);
         }
 
-        let mut p_hashes_node_map: NodeMap<Option<H>> =
+        let mut p_hashes_node_map: NodeMap<Option<H::Hash>> =
             NodeMap::new_with_len(self.config.n_members);
         for (i, su) in parents.into_iter().enumerate() {
             if su.round() + 1 != u_round {
@@ -497,18 +489,18 @@ where
                 debug!(target: "rush-member", "In received parent response received a unit that does not pass validation.");
                 return;
             }
-            let p_hash = su.hash(&self.hashing);
+            let p_hash = su.hash();
             p_hashes_node_map[NodeIndex(i)] = Some(p_hash);
             // There might be some optimization possible here to not validate twice, but overall
             // this piece of code should be executed extremely rarely.
             self.add_unit_to_store_unless_fork(su);
         }
 
-        if ControlHash::combine_hashes(&p_hashes_node_map, &self.hashing) != u_control_hash {
+        if ControlHash::<H>::combine_hashes(&p_hashes_node_map) != u_control_hash {
             debug!(target: "rush-member", "In received parent response the control hash is incorrect.");
             return;
         }
-        let p_hashes: Vec<H> = p_hashes_node_map.into_iter().flatten().collect();
+        let p_hashes: Vec<H::Hash> = p_hashes_node_map.into_iter().flatten().collect();
         self.store.add_parents(u_hash, p_hashes.clone());
         self.send_consensus_notification(NotificationIn::UnitParents(u_hash, p_hashes));
     }
@@ -653,11 +645,11 @@ where
                 self.on_unit_received(signed_unit, false);
             }
             RequestParents(u_hash) => {
-                debug!(target: "rush-member", "Parents request received {}.", u_hash);
+                debug!(target: "rush-member", "Parents request received {:?}.", u_hash);
                 self.on_request_parents(peer_id, u_hash);
             }
             ResponseParents(u_hash, parents) => {
-                debug!(target: "rush-member", "Response parents received {}.", u_hash);
+                debug!(target: "rush-member", "Response parents received {:?}.", u_hash);
                 // TODO: these responses are quite heavy, we should at some point add
                 // checks to make sure we are not processing responses to request we did not make.
                 // TODO: we need to check if the response (and alert) does not exceed some max message size in network.
@@ -670,7 +662,7 @@ where
         }
     }
 
-    fn on_ordered_batch(&mut self, batch: Vec<H>) {
+    fn on_ordered_batch(&mut self, batch: Vec<H::Hash>) {
         let batch = batch
             .iter()
             .map(|h| {
@@ -712,7 +704,6 @@ where
         let (consensus_exit, exit_rx) = oneshot::channel();
         let config = self.config.clone();
         let sh = spawn_handle.clone();
-        let hashing = self.hashing;
         debug!(target: "rush-member", "Spawning party for a session with config {:?}", self.config);
         spawn_handle.spawn("consensus/root", async move {
             consensus::run(
@@ -720,7 +711,6 @@ where
                 consensus_stream,
                 consensus_sink.sink_map_err(|e| e.into()),
                 ordered_batch_tx,
-                hashing,
                 sh,
                 exit_rx,
             )
