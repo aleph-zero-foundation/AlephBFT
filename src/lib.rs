@@ -20,6 +20,7 @@ mod creator;
 mod extender;
 mod member;
 pub mod nodes;
+pub mod signed;
 mod syncer;
 mod terminal;
 mod testing;
@@ -31,9 +32,10 @@ pub trait DataIO<Data> {
     fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), Self::Error>;
 }
 
-pub trait KeyBox<Signature>: Index {
-    fn sign(&self, msg: &[u8]) -> Signature;
-    fn verify(&self, msg: &[u8], sgn: &Signature, index: NodeIndex) -> bool;
+pub trait KeyBox: Index {
+    type Signature: Debug + Clone + Encode + Decode;
+    fn sign(&self, msg: &[u8]) -> Self::Signature;
+    fn verify(&self, msg: &[u8], sgn: &Self::Signature, index: NodeIndex) -> bool;
 }
 
 #[async_trait::async_trait]
@@ -59,7 +61,7 @@ pub enum NetworkEvent {
 pub type SessionId = u64;
 
 pub trait Index {
-    fn index(&self) -> Option<NodeIndex>;
+    fn index(&self) -> NodeIndex;
 }
 pub trait NodeIdT:
     Clone + Debug + Display + Send + Eq + StdHash + Encode + Decode + Index + 'static
@@ -74,7 +76,7 @@ impl<I> NodeIdT for I where
 /// A hasher, used for creating identifiers for blocks or units.
 pub trait Hasher: Eq + Clone + Send + Sync + Debug + 'static {
     /// A hash, as an identifier for a block or unit.
-    type Hash: Eq + Ord + Copy + Clone + Send + Debug + StdHash + Encode + Decode;
+    type Hash: AsRef<[u8]> + Eq + Ord + Copy + Clone + Send + Debug + StdHash + Encode + Decode;
 
     fn hash(s: &[u8]) -> Self::Hash;
 }

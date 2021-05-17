@@ -74,7 +74,7 @@ impl<H: Hasher, NI: NodeIdT> Creator<H, NI> {
             }
         };
 
-        let new_preunit = PreUnit::new_from_parents(self.node_id.index().unwrap(), round, parents);
+        let new_preunit = PreUnit::new_from_parents(self.node_id.index(), round, parents);
         debug!(target: "rush-creator", "{} Created a new unit {:?} at round {}.", self.node_id, new_preunit, self.current_round);
         let send_result = self.new_units_tx.send(new_preunit.into());
         if let Err(e) = send_result {
@@ -107,7 +107,7 @@ impl<H: Hasher, NI: NodeIdT> Creator<H, NI> {
         let threshold = (self.n_members * 2) / 3;
 
         self.n_candidates_by_round[prev_round] > threshold
-            && self.candidates_by_round[prev_round][self.node_id.index().unwrap()].is_some()
+            && self.candidates_by_round[prev_round][self.node_id.index()].is_some()
     }
 
     pub(crate) async fn create(&mut self, exit: oneshot::Receiver<()>) {

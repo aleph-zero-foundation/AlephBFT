@@ -1,8 +1,10 @@
 use crate::{
-    member::NotificationOut, Data, Hasher, KeyBox, NodeCount, NodeIndex, NodeMap, Round, SessionId,
+    member::NotificationOut,
+    signed::{Signable, Signed, UncheckedSigned},
+    Data, Hasher, Index, KeyBox, NodeCount, NodeIndex, NodeMap, Round, SessionId,
 };
 use codec::{Decode, Encode};
-use log::{debug, error};
+use log::error;
 use std::{collections::HashMap, hash::Hash as StdHash};
 
 // TODO: need to make sure we never accept units of round > MAX_ROUND
@@ -15,62 +17,39 @@ pub(crate) struct FullUnit<H: Hasher, D: Data> {
     pub(crate) session_id: SessionId,
 }
 
-#[derive(Debug, Clone, Encode, Decode)]
-pub(crate) struct SignedUnit<H: Hasher, D: Data, Signature: Clone + Encode + Decode> {
-    pub(crate) unit: FullUnit<H, D>,
-    pub(crate) signature: Signature,
-    creator_index: NodeIndex,
-}
-
-impl<H: Hasher, D: Data, Signature: Clone + Encode + Decode> SignedUnit<H, D, Signature> {
-    /// Verifies the unit's signature. The signature is verified on creation, so this should always
-    /// return true, but the method can be used to check integrity.
-    pub(crate) fn verify_signature<KB: KeyBox<Signature>>(&self, keybox: &KB) -> bool {
-        if !keybox.verify(&self.unit.encode(), &self.signature, self.creator_index) {
-            debug!(target: "rush-member", "Bad signature in a unit from {:?}", self.unit.inner.creator());
-            return false;
-        }
-        true
+impl<H: Hasher, D: Data> FullUnit<H, D> {
+    pub(crate) fn creator(&self) -> NodeIndex {
+        self.inner.creator
     }
-
-    pub(crate) fn hash(&self) -> H::Hash {
-        H::hash(&self.unit.encode())
+    pub(crate) fn round(&self) -> Round {
+        self.inner.round()
     }
 
     pub(crate) fn coord(&self) -> UnitCoord {
-        (self.unit.inner.round(), self.unit.inner.creator()).into()
+        (self.round(), self.creator()).into()
     }
 
-    pub(crate) fn round(&self) -> usize {
-        self.unit.inner.round()
-    }
-
-    pub(crate) fn creator(&self) -> NodeIndex {
-        self.unit.inner.creator()
-    }
-
-    pub(crate) fn n_parents(&self) -> NodeCount {
-        self.unit.inner.n_parents()
-    }
-
-    pub(crate) fn n_members(&self) -> NodeCount {
-        self.unit.inner.n_members()
-    }
-
-    pub(crate) fn sign<KB: KeyBox<Signature>>(
-        keybox: &KB,
-        unit: FullUnit<H, D>,
-    ) -> SignedUnit<H, D, Signature> {
-        let encoded = unit.encode();
-        let signature = keybox.sign(&encoded);
-
-        SignedUnit {
-            unit,
-            signature,
-            creator_index: keybox.index().expect("KeyBox is held by authority"),
-        }
+    pub(crate) fn hash(&self) -> H::Hash {
+        H::hash(&self.encode())
     }
 }
+
+impl<H: Hasher, D: Data> Signable for FullUnit<H, D> {
+    type Hash = H::Hash;
+    fn hash(&self) -> H::Hash {
+        self.using_encoded(H::hash)
+    }
+}
+
+impl<H: Hasher, D: Data> Index for FullUnit<H, D> {
+    fn index(&self) -> NodeIndex {
+        self.inner.creator
+    }
+}
+
+pub(crate) type UncheckedSignedUnit<H, D, S> = UncheckedSigned<FullUnit<H, D>, S>;
+
+pub(crate) type SignedUnit<'a, H, D, KB> = Signed<'a, FullUnit<H, D>, KB>;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Encode, Decode, StdHash)]
 pub(crate) struct UnitCoord {
@@ -208,9 +187,9 @@ impl<H: Hasher> ControlHash<H> {
     }
 }
 
-pub(crate) struct UnitStore<H: Hasher, D: Data, Signature: Clone + Encode + Decode> {
-    by_coord: HashMap<UnitCoord, SignedUnit<H, D, Signature>>,
-    by_hash: HashMap<H::Hash, SignedUnit<H, D, Signature>>,
+pub(crate) struct UnitStore<'a, H: Hasher, D: Data, KB: KeyBox> {
+    by_coord: HashMap<UnitCoord, SignedUnit<'a, H, D, KB>>,
+    by_hash: HashMap<H::Hash, SignedUnit<'a, H, D, KB>>,
     parents: HashMap<H::Hash, Vec<H::Hash>>,
     //this is the smallest r, such that round r-1 is saturated, i.e., it has at least threshold (~(2/3)N) units
     round_in_progress: usize,
@@ -218,10 +197,10 @@ pub(crate) struct UnitStore<H: Hasher, D: Data, Signature: Clone + Encode + Deco
     //the number of unique nodes that we hold units for a given round
     n_units_per_round: Vec<NodeCount>,
     is_forker: NodeMap<bool>,
-    legit_buffer: Vec<SignedUnit<H, D, Signature>>,
+    legit_buffer: Vec<SignedUnit<'a, H, D, KB>>,
 }
 
-impl<H: Hasher, D: Data, Signature: Clone + Encode + Decode> UnitStore<H, D, Signature> {
+impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
     pub(crate) fn new(n_nodes: NodeCount, threshold: NodeCount) -> Self {
         UnitStore {
             by_coord: HashMap::new(),
@@ -236,11 +215,11 @@ impl<H: Hasher, D: Data, Signature: Clone + Encode + Decode> UnitStore<H, D, Sig
         }
     }
 
-    pub(crate) fn unit_by_coord(&self, coord: UnitCoord) -> Option<&SignedUnit<H, D, Signature>> {
+    pub(crate) fn unit_by_coord(&self, coord: UnitCoord) -> Option<&SignedUnit<'a, H, D, KB>> {
         self.by_coord.get(&coord)
     }
 
-    pub(crate) fn unit_by_hash(&self, hash: &H::Hash) -> Option<&SignedUnit<H, D, Signature>> {
+    pub(crate) fn unit_by_hash(&self, hash: &H::Hash) -> Option<&SignedUnit<'a, H, D, KB>> {
         self.by_hash.get(hash)
     }
 
@@ -253,7 +232,7 @@ impl<H: Hasher, D: Data, Signature: Clone + Encode + Decode> UnitStore<H, D, Sig
     }
 
     // Outputs new legit units that are supposed to be sent to Consensus and emties the buffer.
-    pub(crate) fn yield_buffer_units(&mut self) -> Vec<SignedUnit<H, D, Signature>> {
+    pub(crate) fn yield_buffer_units(&mut self) -> Vec<SignedUnit<'a, H, D, KB>> {
         std::mem::take(&mut self.legit_buffer)
     }
 
@@ -278,14 +257,14 @@ impl<H: Hasher, D: Data, Signature: Clone + Encode + Decode> UnitStore<H, D, Sig
     // Outputs None if this is not a newly-discovered fork or Some(sv) where (su, sv) form a fork
     pub(crate) fn is_new_fork(
         &self,
-        su: &SignedUnit<H, D, Signature>,
-    ) -> Option<SignedUnit<H, D, Signature>> {
+        su: &SignedUnit<'a, H, D, KB>,
+    ) -> Option<SignedUnit<'a, H, D, KB>> {
         // TODO: optimize so that unit's hash is computed once only, after it is received
-        let hash = su.hash();
+        let hash = su.as_signable().hash();
         if self.contains_hash(&hash) {
             return None;
         }
-        let coord = su.coord();
+        let coord = su.as_signable().coord();
         self.unit_by_coord(coord).cloned()
     }
 
@@ -299,7 +278,7 @@ impl<H: Hasher, D: Data, Signature: Clone + Encode + Decode> UnitStore<H, D, Sig
 
     // Marks a node as a forker and outputs units in store of round <= round_in_progress created by this node.
     // The returned vector is sorted w.r.t. increasing rounds. Units of higher round created by this node are removed from store.
-    pub(crate) fn mark_forker(&mut self, forker: NodeIndex) -> Vec<SignedUnit<H, D, Signature>> {
+    pub(crate) fn mark_forker(&mut self, forker: NodeIndex) -> Vec<SignedUnit<'a, H, D, KB>> {
         if self.is_forker[forker] {
             error!(target: "env", "Trying to mark the node {:?} as forker for the second time.", forker);
         }
@@ -317,7 +296,7 @@ impl<H: Hasher, D: Data, Signature: Clone + Encode + Decode> UnitStore<H, D, Sig
                 // it arrives in an alert for the *first* time.
                 // If we didn't do that, then there would be some awkward issues with duplicates.
                 self.by_coord.remove(&coord);
-                let hash = su.hash();
+                let hash = su.as_signable().hash();
                 self.by_hash.remove(&hash);
                 self.parents.remove(&hash);
                 // Now we are in a state as if the unit never arrived.
@@ -326,11 +305,11 @@ impl<H: Hasher, D: Data, Signature: Clone + Encode + Decode> UnitStore<H, D, Sig
         forkers_units
     }
 
-    pub(crate) fn add_unit(&mut self, su: SignedUnit<H, D, Signature>, alert: bool) {
+    pub(crate) fn add_unit(&mut self, su: SignedUnit<'a, H, D, KB>, alert: bool) {
         // TODO: optimize so that unit's hash is computed once only, after it is received
-        let hash = su.hash();
-        let round = su.round();
-        let creator = su.creator();
+        let hash = su.as_signable().hash();
+        let round = su.as_signable().round();
+        let creator = su.as_signable().creator();
         if alert {
             assert!(
                 self.is_forker[creator],
@@ -342,7 +321,7 @@ impl<H: Hasher, D: Data, Signature: Clone + Encode + Decode> UnitStore<H, D, Sig
             return;
         }
         self.by_hash.insert(hash, su.clone());
-        let coord = su.coord();
+        let coord = su.as_signable().coord();
         // We do not store multiple forks of a unit by coord, as there is never a need to
         // fetch all units corresponding to a particular coord.
         if self.by_coord.insert(coord, su.clone()).is_none() {

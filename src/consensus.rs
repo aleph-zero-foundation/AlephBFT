@@ -202,13 +202,13 @@ mod tests {
         );
         let mut bad_pu =
             PreUnit::<Hasher64>::new_from_parents(1.into(), 0, (vec![None; n_nodes]).into());
-        let bad_control_hash: <Hasher64 as Hasher>::Hash = 1111111;
+        let bad_control_hash: <Hasher64 as Hasher>::Hash = [0, 1, 0, 1, 0, 1, 0, 1];
         assert!(
             bad_control_hash != bad_pu.control_hash.hash,
             "Bad control hash cannot be the correct one."
         );
         bad_pu.control_hash.hash = bad_control_hash;
-        let bad_hash: <Hasher64 as Hasher>::Hash = 1234567;
+        let bad_hash: <Hasher64 as Hasher>::Hash = [0, 1, 0, 1, 0, 1, 0, 1];
         let bad_unit = Unit::new_from_preunit(bad_pu, bad_hash);
         let _ = tx_in.send(NotificationIn::NewUnits(vec![bad_unit])).await;
         loop {

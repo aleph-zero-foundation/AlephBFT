@@ -326,14 +326,15 @@ mod tests {
         let mut parents = NodeMap::new_with_len(NodeCount(n_members));
         if round > 0 {
             for i in 0..n_members {
-                parents[NodeIndex(i)] = Some(coord_to_number(i, round - 1, n_members) as u64);
+                parents[NodeIndex(i)] =
+                    Some((coord_to_number(i, round - 1, n_members) as u64).to_ne_bytes());
             }
         }
 
         ExtenderUnit::new(
             NodeIndex(creator),
             round,
-            coord_to_number(creator, round, n_members) as u64,
+            (coord_to_number(creator, round, n_members) as u64).to_ne_bytes(),
             parents,
         )
     }
