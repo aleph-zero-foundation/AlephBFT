@@ -84,10 +84,6 @@ impl<'a, T: Signable, KB: KeyBox> Signed<'a, T, KB> {
         }
     }
 
-    pub(crate) fn as_unchecked(&self) -> &UncheckedSigned<T, KB::Signature> {
-        &self.unchecked
-    }
-
     pub(crate) fn into_unchecked(self) -> UncheckedSigned<T, KB::Signature> {
         self.unchecked
     }

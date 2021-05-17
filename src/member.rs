@@ -353,7 +353,7 @@ where
             return false;
         }
         if full_unit.creator().0 >= self.config.n_members.0 {
-            debug!(target: "rush-member", "A unit with too high creator index {}! {:?}", full_unit.creator().9, full_unit);
+            debug!(target: "rush-member", "A unit with too high creator index {}! {:?}", full_unit.creator().0, full_unit);
             return false;
         }
         if !self.validate_unit_parents(su) {
@@ -452,7 +452,7 @@ where
     fn on_parents_response(&mut self, u_hash: H::Hash, parents: Vec<SignedUnit<'a, H, D, KB>>) {
         // TODO: we *must* make sure that we have indeed sent such a request before accepting the response.
         let (u_round, u_control_hash, parent_ids) = match self.store.unit_by_hash(&u_hash) {
-            Some(u) => {
+            Some(su) => {
                 let full_unit = su.as_signable();
                 (
                     full_unit.round(),
@@ -465,7 +465,7 @@ where
                         .filter_map(|(i, b)| if *b { Some(i) } else { None })
                         .collect::<Vec<NodeIndex>>(),
                 )
-            },
+            }
             None => {
                 debug!(target: "rush-member", "We got parents but don't even know the unit. Ignoring.");
                 return;
@@ -534,7 +534,7 @@ where
             debug!(target: "rush-member", "One of the units creators in proof does not match.");
             return false;
         }
-        if full_unit1.as_signable().round() != full_unit2.as_signable().round() {
+        if full_unit1.round() != full_unit2.round() {
             debug!(target: "rush-member", "The rounds in proof's units do not match.");
             return false;
         }
@@ -664,23 +664,25 @@ where
         use ConsensusMessage::*;
         match message {
             NewUnit(unchecked) => {
-                debug!(target: "rush-member", "New unit received {:?}.", unchecked);
-                if let Ok(su) = unchecked.check(self.keybox) {
-                    self.on_unit_received(su, false);
-                } else {
-                    debug!(target: "rush-member", "Wrong signature received {:?}.", unchecked);
+                debug!(target: "rush-member", "New unit received {:?}.", &unchecked);
+                match unchecked.check(self.keybox) {
+                    Ok(su) => self.on_unit_received(su, false),
+                    Err(unchecked) => {
+                        debug!(target: "rush-member", "Wrong signature received {:?}.", &unchecked)
+                    }
                 }
             }
             RequestCoord(coord) => {
                 self.on_request_coord(peer_id, coord);
             }
             ResponseCoord(unchecked) => {
-                debug!(target: "rush-member", "Fetch response received {:?}.", unchecked);
+                debug!(target: "rush-member", "Fetch response received {:?}.", &unchecked);
 
-                if let Ok(su) = unchecked.check(self.keybox) {
-                    self.on_unit_received(su, false);
-                } else {
-                    debug!(target: "rush-member", "Wrong signature received {:?}.", unchecked);
+                match unchecked.check(self.keybox) {
+                    Ok(su) => self.on_unit_received(su, false),
+                    Err(unchecked) => {
+                        debug!(target: "rush-member", "Wrong signature received {:?}.", &unchecked)
+                    }
                 }
             }
             RequestParents(u_hash) => {
