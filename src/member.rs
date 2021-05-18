@@ -10,8 +10,8 @@ use crate::{
     bft::{Alert, ForkProof},
     consensus,
     units::{ControlHash, FullUnit, PreUnit, SignedUnit, Unit, UnitCoord, UnitStore},
-    Data, DataIO, Hasher, KeyBox, Network, NetworkCommand, NetworkEvent, NodeCount, NodeIdT,
-    NodeIndex, NodeMap, OrderedBatch, RequestAuxData, SessionId, SpawnHandle,
+    Data, DataIO, Hasher, KeyBox, Network, NetworkCommand, NetworkEvent, NodeCount, NodeIndex,
+    NodeMap, OrderedBatch, RequestAuxData, SessionId, SpawnHandle,
 };
 
 use crate::{
@@ -111,15 +111,15 @@ impl<H: Hasher> PartialOrd for ScheduledTask<H> {
 }
 
 #[derive(Clone, Debug)]
-pub struct Config<NI: NodeIdT> {
-    pub node_id: NI,
+pub struct Config {
+    pub node_id: NodeIndex,
     pub session_id: SessionId,
     pub n_members: NodeCount,
     pub create_lag: Duration,
 }
 
-pub struct Member<'a, H: Hasher, D: Data, DP: DataIO<D>, KB: KeyBox, N: Network, NI: NodeIdT> {
-    config: Config<NI>,
+pub struct Member<'a, H: Hasher, D: Data, DP: DataIO<D>, KB: KeyBox, N: Network> {
+    config: Config,
     tx_consensus: Option<futures::channel::mpsc::UnboundedSender<NotificationIn<H>>>,
     data_io: DP,
     keybox: &'a KB,
@@ -129,16 +129,15 @@ pub struct Member<'a, H: Hasher, D: Data, DP: DataIO<D>, KB: KeyBox, N: Network,
     threshold: NodeCount,
 }
 
-impl<'a, H, D, DP, KB, N, NI> Member<'a, H, D, DP, KB, N, NI>
+impl<'a, H, D, DP, KB, N> Member<'a, H, D, DP, KB, N>
 where
     H: Hasher,
     D: Data,
     DP: DataIO<D>,
     KB: KeyBox,
     N: Network,
-    NI: NodeIdT,
 {
-    pub fn new(data_io: DP, keybox: &'a KB, network: N, config: Config<NI>) -> Self {
+    pub fn new(data_io: DP, keybox: &'a KB, network: N, config: Config) -> Self {
         let n_members = config.n_members;
         let threshold = (n_members * 2) / 3 + NodeCount(1);
         Member {
@@ -616,7 +615,7 @@ where
         units: Vec<SignedUnit<'a, H, D, KB>>,
     ) -> Alert<H, D, KB::Signature> {
         Alert {
-            sender: self.config.node_id.index(),
+            sender: self.config.node_id,
             forker,
             proof,
             legit_units: units.into_iter().map(|signed| signed.into()).collect(),

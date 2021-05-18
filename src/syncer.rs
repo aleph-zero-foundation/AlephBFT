@@ -1,15 +1,15 @@
 use crate::{
     member::{NotificationIn, NotificationOut},
-    Hasher, NodeIdT, Receiver, Sender,
+    Hasher, NodeIndex, Receiver, Sender,
 };
 use futures::{FutureExt, Sink, SinkExt, Stream, StreamExt};
 use log::{debug, error};
 use tokio::sync::{mpsc, oneshot};
 
 /// A process responsible for managing input and output notifications.
-pub(crate) struct Syncer<H: Hasher, NI: NodeIdT> {
+pub(crate) struct Syncer<H: Hasher> {
     /// The id of the Node
-    node_id: NI,
+    node_id: NodeIndex,
     /// Endpoint for receiving notifications from Environment.
     ntfct_env_rx: Box<dyn Stream<Item = NotificationIn<H>> + Send + Unpin>,
     /// Endpoint for sending notifications to Environment.
@@ -21,9 +21,9 @@ pub(crate) struct Syncer<H: Hasher, NI: NodeIdT> {
     ntfct_common_rx: Receiver<NotificationOut<H>>,
 }
 
-impl<H: Hasher, NI: NodeIdT> Syncer<H, NI> {
+impl<H: Hasher> Syncer<H> {
     pub(crate) fn new(
-        node_id: NI,
+        node_id: NodeIndex,
         ntfct_env_tx: impl Sink<NotificationOut<H>, Error = Box<dyn std::error::Error>>
             + Send
             + Unpin

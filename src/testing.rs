@@ -3,10 +3,9 @@ pub mod mock {
     use crate::{
         member::{NotificationIn, NotificationOut},
         units::{Unit, UnitCoord},
-        Hasher, Index, NodeIndex,
+        Hasher, NodeIndex,
     };
-    use codec::{Decode, Encode, Error as CodecError, Input, Output};
-    use derive_more::{From, Into};
+    use codec::Encode;
     use futures::{
         channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
         Future, StreamExt,
@@ -14,43 +13,10 @@ pub mod mock {
 
     use std::{
         collections::{hash_map::DefaultHasher, HashMap},
-        fmt,
         hash::Hasher as StdHasher,
         pin::Pin,
         task::{Context, Poll},
     };
-
-    #[derive(Hash, From, Into, Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
-    pub struct NodeId(pub usize);
-
-    impl Encode for NodeId {
-        fn encode_to<T: Output + ?Sized>(&self, dest: &mut T) {
-            let val = self.0 as u64;
-            let bytes = val.to_le_bytes().to_vec();
-            Encode::encode_to(&bytes, dest)
-        }
-    }
-
-    impl Decode for NodeId {
-        fn decode<I: Input>(value: &mut I) -> Result<Self, CodecError> {
-            let mut arr = [0u8; 8];
-            value.read(&mut arr)?;
-            let val: u64 = u64::from_le_bytes(arr);
-            Ok(NodeId(val as usize))
-        }
-    }
-
-    impl fmt::Display for NodeId {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "Node-{}", self.0)
-        }
-    }
-
-    impl Index for NodeId {
-        fn index(&self) -> NodeIndex {
-            NodeIndex(self.0)
-        }
-    }
 
     // A hasher from the standard library that hashes to u64, should be enough to
     // avoid collisions in testing.

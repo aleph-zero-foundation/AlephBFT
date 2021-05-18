@@ -63,15 +63,6 @@ pub type SessionId = u64;
 pub trait Index {
     fn index(&self) -> NodeIndex;
 }
-pub trait NodeIdT:
-    Clone + Debug + Display + Send + Eq + StdHash + Encode + Decode + Index + 'static
-{
-}
-
-impl<I> NodeIdT for I where
-    I: Clone + Debug + Display + Send + Eq + StdHash + Encode + Decode + Index + 'static
-{
-}
 
 /// A hasher, used for creating identifiers for blocks or units.
 pub trait Hasher: Eq + Clone + Send + Sync + Debug + 'static {

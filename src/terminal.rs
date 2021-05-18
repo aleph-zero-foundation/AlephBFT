@@ -7,7 +7,7 @@ use crate::{
     member::{NotificationIn, NotificationOut},
     nodes::{NodeCount, NodeIndex, NodeMap},
     units::{ControlHash, Unit},
-    Hasher, NodeIdT, Receiver, RequestAuxData, Round, Sender,
+    Hasher, Receiver, RequestAuxData, Round, Sender,
 };
 use log::{debug, error};
 
@@ -114,8 +114,8 @@ type SyncClosure<X, Y> = Box<dyn Fn(X) -> Y + Sync + Send + 'static>;
 ///    the remaining parents are added to Dag.
 /// 6) At the moment when all parents have been added to Dag, the unit itself is added to Dag.
 
-pub(crate) struct Terminal<H: Hasher, NI: NodeIdT> {
-    node_id: NI,
+pub(crate) struct Terminal<H: Hasher> {
+    node_id: NodeIndex,
     // A channel for receiving notifications (units mainly)
     ntfct_rx: Receiver<NotificationIn<H>>,
     // A channel to push outgoing notifications
@@ -141,9 +141,9 @@ pub(crate) struct Terminal<H: Hasher, NI: NodeIdT> {
     children_hash: HashMap<H::Hash, Vec<H::Hash>>,
 }
 
-impl<H: Hasher, NI: NodeIdT> Terminal<H, NI> {
+impl<H: Hasher> Terminal<H> {
     pub(crate) fn new(
-        node_id: NI,
+        node_id: NodeIndex,
         ntfct_rx: Receiver<NotificationIn<H>>,
         ntfct_tx: Sender<NotificationOut<H>>,
     ) -> Self {

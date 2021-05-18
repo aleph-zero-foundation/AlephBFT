@@ -2,7 +2,7 @@ use crate::{
     member::{Config, NotificationOut},
     nodes::{NodeCount, NodeIndex, NodeMap},
     units::{PreUnit, Unit},
-    Hasher, NodeIdT, Receiver, Round, Sender,
+    Hasher, Receiver, Round, Sender,
 };
 use futures::{FutureExt, StreamExt};
 use log::{debug, error};
@@ -20,8 +20,8 @@ use tokio::{
 /// - U has > floor(2*N/3) parents.
 /// The currently implemented strategy creates the unit U at the very first moment when enough
 /// candidates for parents are available for all the above constraints to be satisfied.
-pub(crate) struct Creator<H: Hasher, NI: NodeIdT> {
-    node_id: NI,
+pub(crate) struct Creator<H: Hasher> {
+    node_id: NodeIndex,
     parents_rx: Receiver<Unit<H>>,
     new_units_tx: Sender<NotificationOut<H>>,
     n_members: NodeCount,
@@ -31,9 +31,9 @@ pub(crate) struct Creator<H: Hasher, NI: NodeIdT> {
     create_lag: Duration,
 }
 
-impl<H: Hasher, NI: NodeIdT> Creator<H, NI> {
+impl<H: Hasher> Creator<H> {
     pub(crate) fn new(
-        conf: Config<NI>,
+        conf: Config,
         parents_rx: Receiver<Unit<H>>,
         new_units_tx: Sender<NotificationOut<H>>,
     ) -> Self {
@@ -74,7 +74,7 @@ impl<H: Hasher, NI: NodeIdT> Creator<H, NI> {
             }
         };
 
-        let new_preunit = PreUnit::new_from_parents(self.node_id.index(), round, parents);
+        let new_preunit = PreUnit::new_from_parents(self.node_id, round, parents);
         debug!(target: "rush-creator", "{} Created a new unit {:?} at round {}.", self.node_id, new_preunit, self.current_round);
         let send_result = self.new_units_tx.send(new_preunit.into());
         if let Err(e) = send_result {
@@ -107,7 +107,7 @@ impl<H: Hasher, NI: NodeIdT> Creator<H, NI> {
         let threshold = (self.n_members * 2) / 3;
 
         self.n_candidates_by_round[prev_round] > threshold
-            && self.candidates_by_round[prev_round][self.node_id.index()].is_some()
+            && self.candidates_by_round[prev_round][self.node_id].is_some()
     }
 
     pub(crate) async fn create(&mut self, exit: oneshot::Receiver<()>) {

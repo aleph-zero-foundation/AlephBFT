@@ -8,11 +8,11 @@ use crate::{
     member::{Config, NotificationIn, NotificationOut},
     syncer::Syncer,
     terminal::Terminal,
-    Hasher, NodeIdT, OrderedBatch, Sender, SpawnHandle,
+    Hasher, OrderedBatch, Sender, SpawnHandle,
 };
 
-pub(crate) async fn run<H: Hasher + 'static, NI: NodeIdT>(
-    conf: Config<NI>,
+pub(crate) async fn run<H: Hasher + 'static>(
+    conf: Config,
     ntfct_env_rx: impl Stream<Item = NotificationIn<H>> + Send + Unpin + 'static,
     ntfct_env_tx: impl Sink<NotificationOut<H>, Error = Box<dyn std::error::Error>>
         + Send
@@ -27,19 +27,14 @@ pub(crate) async fn run<H: Hasher + 'static, NI: NodeIdT>(
     let n_members = conf.n_members;
 
     let (electors_tx, electors_rx) = mpsc::unbounded_channel();
-    let mut extender = Extender::<H, NI>::new(
-        conf.node_id.clone(),
-        n_members,
-        electors_rx,
-        ordered_batch_tx,
-    );
+    let mut extender = Extender::<H>::new(conf.node_id, n_members, electors_rx, ordered_batch_tx);
     let (extender_exit, exit_rx) = oneshot::channel();
     spawn_handle.spawn("consensus/extender", async move {
         extender.extend(exit_rx).await
     });
 
     let (mut syncer, ntfct_common_tx, ntfct_term_rx) =
-        Syncer::new(conf.node_id.clone(), ntfct_env_tx, ntfct_env_rx);
+        Syncer::new(conf.node_id, ntfct_env_tx, ntfct_env_rx);
     let (syncer_exit, exit_rx) = oneshot::channel();
     spawn_handle.spawn(
         "consensus/syncer",
@@ -56,7 +51,7 @@ pub(crate) async fn run<H: Hasher + 'static, NI: NodeIdT>(
         async move { creator.create(exit_rx).await },
     );
 
-    let mut terminal = Terminal::new(conf.node_id.clone(), ntfct_term_rx, ntfct_common_tx);
+    let mut terminal = Terminal::new(conf.node_id, ntfct_term_rx, ntfct_common_tx);
 
     // send a new parent candidate to the creator
     terminal.register_post_insert_hook(Box::new(move |u| {
@@ -94,7 +89,7 @@ pub(crate) async fn run<H: Hasher + 'static, NI: NodeIdT>(
 mod tests {
     use super::*;
     use crate::{
-        testing::mock::{Hasher64, HonestHub, NodeId},
+        testing::mock::{Hasher64, HonestHub},
         units::{PreUnit, Unit},
         NodeIndex,
     };
@@ -142,7 +137,7 @@ mod tests {
         for node_ix in 0..n_members {
             let (tx, rx) = hub.connect(NodeIndex(node_ix));
             let tx = tx.sink_map_err(|e| e.into());
-            let conf = Config::<NodeId> {
+            let conf = Config {
                 node_id: node_ix.into(),
                 session_id: 0u64,
                 n_members: n_members.into(),
@@ -187,7 +182,7 @@ mod tests {
         let (tx_out, mut rx_out) = channel::mpsc::unbounded();
         let tx_out = tx_out.sink_map_err(|e| e.into());
 
-        let conf = Config::<NodeId> {
+        let conf = Config {
             node_id: node_ix.into(),
             session_id: 0u64,
             n_members: n_nodes.into(),

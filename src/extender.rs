@@ -6,7 +6,7 @@ use log::{debug, error};
 
 use crate::{
     nodes::{NodeCount, NodeIndex, NodeMap},
-    Hasher, NodeIdT, Receiver, Round, Sender,
+    Hasher, Receiver, Round, Sender,
 };
 
 #[derive(Clone, Default, Debug)]
@@ -64,8 +64,8 @@ impl CacheState {
 /// units that should be finalized, unwraps them (leaving only a block hash per unit) and pushes
 /// such a batch to a channel via the finalizer_tx endpoint.
 
-pub(crate) struct Extender<H: Hasher, NI: NodeIdT> {
-    node_id: NI,
+pub(crate) struct Extender<H: Hasher> {
+    node_id: NodeIndex,
     electors: Receiver<ExtenderUnit<H>>,
     state: CacheState,
     units: HashMap<H::Hash, ExtenderUnit<H>>,
@@ -75,9 +75,9 @@ pub(crate) struct Extender<H: Hasher, NI: NodeIdT> {
     finalizer_tx: Sender<Vec<H::Hash>>,
 }
 
-impl<H: Hasher, NI: NodeIdT> Extender<H, NI> {
+impl<H: Hasher> Extender<H> {
     pub(crate) fn new(
-        node_id: NI,
+        node_id: NodeIndex,
         n_members: NodeCount,
         electors: Receiver<ExtenderUnit<H>>,
         finalizer_tx: Sender<Vec<H::Hash>>,
@@ -312,10 +312,7 @@ impl<H: Hasher, NI: NodeIdT> Extender<H, NI> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        nodes::NodeCount,
-        testing::mock::{Hasher64, NodeId},
-    };
+    use crate::{nodes::NodeCount, testing::mock::Hasher64};
     use tokio::sync::mpsc;
 
     fn coord_to_number(creator: usize, round: usize, n_members: usize) -> usize {
@@ -345,12 +342,8 @@ mod tests {
         let rounds = 6;
         let (batch_tx, mut batch_rx) = mpsc::unbounded_channel();
         let (electors_tx, electors_rx) = mpsc::unbounded_channel();
-        let mut extender = Extender::<Hasher64, NodeId>::new(
-            0.into(),
-            NodeCount(n_members),
-            electors_rx,
-            batch_tx,
-        );
+        let mut extender =
+            Extender::<Hasher64>::new(0.into(), NodeCount(n_members), electors_rx, batch_tx);
         let (exit_tx, exit_rx) = oneshot::channel();
         let extender_handle = tokio::spawn(async move { extender.extend(exit_rx).await });
 
