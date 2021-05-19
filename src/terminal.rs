@@ -127,8 +127,6 @@ pub(crate) struct Terminal<H: Hasher> {
     // Here we store all the units -- the ones in Dag and the ones "hanging".
     unit_store: HashMap<H::Hash, TerminalUnit<H>>,
 
-    // TODO: get rid of HashMaps below and just use Vec<Vec<H::Hash>> for efficiency
-
     // In this Map, for each pair (r, pid) we store the first unit made by pid at round r that we ever received.
     // In case of forks, we still store only the first one -- others are ignored (but stored in store under their hash).
     unit_by_coord: HashMap<(Round, NodeIndex), H::Hash>,

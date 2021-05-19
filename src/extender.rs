@@ -119,7 +119,6 @@ impl<H: Hasher> Extender<H> {
         // go back and never update this list. From math it follows that each unit that is added to the Dag later
         // then the moment of round initialization will be decided as false, hence they can be ignored.
         self.candidates = self.units_by_round[round].clone();
-        // TODO: we sort units by hashes -- we could do some other permutation here
         self.candidates.sort();
     }
 
@@ -148,11 +147,6 @@ impl<H: Hasher> Extender<H> {
             }
         }
         // Since we construct the batch using BFS, the ordering is canonical and respects the DAG partial order.
-
-        // TODO (?): when constructing the batch we iterate over parents in the order of indices, this creates
-        // a slight bias which causes the units of high-index nodes to be slightly preferred by the linear ordering
-        // algorithm. Because of the finalization mechanism there seems to be no issue with that, but I'm leaving
-        // this comment here in case we would like to think about that in the future.
 
         // We reverse for the batch to start with least recent units.
         batch.reverse();
@@ -353,7 +347,6 @@ mod tests {
             }
         }
         let batch_round_0 = batch_rx.next().await.unwrap();
-        // TODO add better checks
         assert!(!batch_round_0.is_empty());
 
         let batch_round_1 = batch_rx.next().await.unwrap();
