@@ -92,8 +92,9 @@ pub mod mock {
             match ntfct {
                 NotificationOut::CreatedPreUnit(pu) => {
                     let hash = pu.using_encoded(Hasher64::hash);
-                    let u = Unit::new_from_preunit(pu, hash);
-                    self.units_by_coord.insert(u.clone().into(), u.clone());
+                    let u = Unit::new(pu, hash);
+                    let coord = UnitCoord::new(u.round(), u.creator());
+                    self.units_by_coord.insert(coord, u.clone());
                     self.send_to_all(NotificationIn::NewUnits(vec![u]));
                 }
                 NotificationOut::MissingUnits(coords, _aux_data) => {

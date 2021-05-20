@@ -90,7 +90,7 @@ mod tests {
     use super::*;
     use crate::{
         testing::mock::{Hasher64, HonestHub},
-        units::{PreUnit, Unit},
+        units::{ControlHash, PreUnit, Unit},
         NodeIndex,
     };
     use futures::{channel, sink::SinkExt, stream::StreamExt, Future};
@@ -195,16 +195,18 @@ mod tests {
             "consensus",
             run(conf, rx_in, tx_out, batch_tx, spawner.clone(), exit_rx),
         );
-        let mut bad_pu =
-            PreUnit::<Hasher64>::new_from_parents(1.into(), 0, (vec![None; n_nodes]).into());
+        let control_hash = ControlHash::new(&(vec![None; n_nodes]).into());
+        let bad_pu = PreUnit::<Hasher64>::new(1.into(), 0, control_hash);
         let bad_control_hash: <Hasher64 as Hasher>::Hash = [0, 1, 0, 1, 0, 1, 0, 1];
         assert!(
-            bad_control_hash != bad_pu.control_hash.hash,
+            bad_control_hash != bad_pu.control_hash().combined_hash,
             "Bad control hash cannot be the correct one."
         );
-        bad_pu.control_hash.hash = bad_control_hash;
+        let mut control_hash = bad_pu.control_hash().clone();
+        control_hash.combined_hash = bad_control_hash;
+        let bad_pu = PreUnit::new(bad_pu.creator(), bad_pu.round(), control_hash);
         let bad_hash: <Hasher64 as Hasher>::Hash = [0, 1, 0, 1, 0, 1, 0, 1];
-        let bad_unit = Unit::new_from_preunit(bad_pu, bad_hash);
+        let bad_unit = Unit::new(bad_pu, bad_hash);
         let _ = tx_in.send(NotificationIn::NewUnits(vec![bad_unit])).await;
         loop {
             let notification = rx_out.next().await.unwrap();

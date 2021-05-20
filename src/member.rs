@@ -166,11 +166,7 @@ where
     fn on_create(&mut self, u: PreUnit<H>) {
         debug!(target: "rush-member", "On create notification.");
         let data = self.data_io.get_data();
-        let full_unit = FullUnit {
-            inner: u,
-            data,
-            session_id: self.config.session_id,
-        };
+        let full_unit = FullUnit::new(u, data, self.config.session_id);
         let hash = full_unit.hash();
         // TODO: beware: sign_unit blocks and is quite slow!
         let signed_unit = Signed::sign(self.keybox, full_unit);
@@ -312,7 +308,7 @@ where
     fn validate_unit_parents(&self, su: &SignedUnit<'a, H, D, KB>) -> bool {
         // NOTE: at this point we cannot validate correctness of the control hash, in principle it could be
         // just a random hash, but we still would not be able to deduce that by looking at the unit only.
-        let pre_unit = &su.as_signable().inner;
+        let pre_unit = su.as_signable().as_pre_unit();
         if pre_unit.n_members() != self.config.n_members {
             debug!(target: "rush-member", "Unit with wrong length of parents map.");
             return false;
@@ -328,8 +324,8 @@ where
             debug!(target: "rush-member", "Unit of non-zero round with only {:?} parents while at least {:?} are required.", n_parents, threshold);
             return false;
         }
-        let control_hash = &pre_unit.control_hash;
-        if round > 0 && !control_hash.parents[pre_unit.creator()] {
+        let control_hash = &pre_unit.control_hash();
+        if round > 0 && !control_hash.parents_mask[pre_unit.creator().0] {
             debug!(target: "rush-member", "Unit does not have its creator's previous unit as parent.");
             return false;
         }
@@ -341,7 +337,7 @@ where
         // TODO: consider moving validation logic for units and alerts to another file, note however
         // that access to the authority list is required for validation.
         let full_unit = su.as_signable();
-        if full_unit.session_id != self.config.session_id {
+        if full_unit.session_id() != self.config.session_id {
             // NOTE: this implies malicious behavior as the unit's session_id
             // is incompatible with session_id of the message it arrived in.
             debug!(target: "rush-member", "A unit with incorrect session_id! {:?}", full_unit);
@@ -390,9 +386,7 @@ where
     fn move_units_to_consensus(&mut self) {
         let mut units = Vec::new();
         for su in self.store.yield_buffer_units() {
-            let full_unit = su.as_signable();
-            let hash = full_unit.hash();
-            let unit = Unit::new_from_preunit(full_unit.inner.clone(), hash);
+            let unit = su.as_signable().unit();
             units.push(unit);
         }
         if !units.is_empty() {
@@ -453,16 +447,11 @@ where
         let (u_round, u_control_hash, parent_ids) = match self.store.unit_by_hash(&u_hash) {
             Some(su) => {
                 let full_unit = su.as_signable();
+                let parents: Vec<_> = full_unit.control_hash().parents().collect();
                 (
                     full_unit.round(),
-                    full_unit.inner.control_hash.hash,
-                    full_unit
-                        .inner
-                        .control_hash
-                        .parents
-                        .enumerate()
-                        .filter_map(|(i, b)| if *b { Some(i) } else { None })
-                        .collect::<Vec<NodeIndex>>(),
+                    full_unit.control_hash().combined_hash,
+                    parents,
                 )
             }
             None => {
@@ -717,7 +706,7 @@ where
                     .unit_by_hash(h)
                     .expect("Ordered units must be in store")
                     .as_signable()
-                    .data
+                    .data()
             })
             .collect::<OrderedBatch<D>>();
         if let Err(e) = self.data_io.send_ordered_batch(batch) {

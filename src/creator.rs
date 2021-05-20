@@ -1,7 +1,7 @@
 use crate::{
     member::{Config, NotificationOut},
     nodes::{NodeCount, NodeIndex, NodeMap},
-    units::{PreUnit, Unit},
+    units::{ControlHash, PreUnit, Unit},
     Hasher, Receiver, Round, Sender,
 };
 use futures::{FutureExt, StreamExt};
@@ -74,9 +74,13 @@ impl<H: Hasher> Creator<H> {
             }
         };
 
-        let new_preunit = PreUnit::new_from_parents(self.node_id, round, parents);
+        let control_hash = ControlHash::new(&parents);
+
+        let new_preunit = PreUnit::new(self.node_id, round, control_hash);
         debug!(target: "rush-creator", "{} Created a new unit {:?} at round {}.", self.node_id, new_preunit, self.current_round);
-        let send_result = self.new_units_tx.send(new_preunit.into());
+        let send_result = self
+            .new_units_tx
+            .send(NotificationOut::CreatedPreUnit(new_preunit));
         if let Err(e) = send_result {
             error!(target: "rush-creator", "{:?} Unable to send a newly created unit: {:?}.", self.node_id, e);
         }

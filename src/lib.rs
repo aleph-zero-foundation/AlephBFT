@@ -67,7 +67,17 @@ pub trait Index {
 /// A hasher, used for creating identifiers for blocks or units.
 pub trait Hasher: Eq + Clone + Send + Sync + Debug + 'static {
     /// A hash, as an identifier for a block or unit.
-    type Hash: AsRef<[u8]> + Eq + Ord + Copy + Clone + Send + Debug + StdHash + Encode + Decode;
+    type Hash: AsRef<[u8]>
+        + Eq
+        + Ord
+        + Copy
+        + Clone
+        + Send
+        + Debug
+        + StdHash
+        + Encode
+        + Decode
+        + Default;
 
     fn hash(s: &[u8]) -> Self::Hash;
 }
