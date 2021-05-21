@@ -92,7 +92,7 @@ impl<H: Hasher> Decode for ControlHash<H> {
 }
 
 /// The simplest type representing a unit, consisting of coordinates and a control hash
-#[derive(Clone, Debug, Default, PartialEq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Encode, Decode)]
 pub(crate) struct PreUnit<H: Hasher> {
     coord: UnitCoord,
     control_hash: ControlHash<H>,
@@ -126,7 +126,7 @@ impl<H: Hasher> PreUnit<H> {
 }
 
 ///
-#[derive(Debug, Default, Clone, Encode, Decode)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub(crate) struct FullUnit<H: Hasher, D: Data> {
     pre_unit: PreUnit<H>,
     data: D,
@@ -206,7 +206,7 @@ pub(crate) type UncheckedSignedUnit<H, D, S> = UncheckedSigned<FullUnit<H, D>, S
 
 pub(crate) type SignedUnit<'a, H, D, KB> = Signed<'a, FullUnit<H, D>, KB>;
 
-#[derive(Clone, Debug, Default, PartialEq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Encode, Decode)]
 pub(crate) struct Unit<H: Hasher> {
     pre_unit: PreUnit<H>,
     hash: H::Hash,

@@ -28,7 +28,7 @@ impl Default for UnitStatus {
 
 /// A Unit struct used in the Terminal. It stores a copy of a unit and apart from that some
 /// information on its status, i.e., already reconstructed parents etc.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TerminalUnit<H: Hasher> {
     unit: Unit<H>,
     // This represents the knowledge of what we think the parents of the unit are. It is initialized as all None
