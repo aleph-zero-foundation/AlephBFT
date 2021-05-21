@@ -167,7 +167,6 @@ where
         let data = self.data_io.get_data();
         let full_unit = FullUnit::new(u, data, self.config.session_id);
         let hash = full_unit.hash();
-        // TODO: beware: sign_unit blocks and is quite slow!
         let signed_unit = Signed::sign(self.keybox, full_unit);
         debug!(target: "rush-member", "On create notification post sign_unit.");
         self.store.add_unit(signed_unit, false);
@@ -298,7 +297,6 @@ where
                 self.on_wrong_control_hash(h);
             }
             NotificationOut::AddedToDag(h, p_hashes) => {
-                //TODO: this is very RAM-heavy to store, optimizations needed
                 self.store.add_parents(h, p_hashes);
             }
         }
@@ -332,9 +330,6 @@ where
     }
 
     fn validate_unit(&self, su: &SignedUnit<'a, H, D, KB>) -> bool {
-        // TODO: make sure we check all that is necessary for unit correctness
-        // TODO: consider moving validation logic for units and alerts to another file, note however
-        // that access to the authority list is required for validation.
         let full_unit = su.as_signable();
         if full_unit.session_id() != self.config.session_id {
             // NOTE: this implies malicious behavior as the unit's session_id
@@ -442,7 +437,6 @@ where
     }
 
     fn on_parents_response(&mut self, u_hash: H::Hash, parents: Vec<SignedUnit<'a, H, D, KB>>) {
-        // TODO: we *must* make sure that we have indeed sent such a request before accepting the response.
         let (u_round, u_control_hash, parent_ids) = match self.store.unit_by_hash(&u_hash) {
             Some(su) => {
                 let full_unit = su.as_signable();
@@ -678,9 +672,6 @@ where
             }
             ResponseParents(u_hash, parents) => {
                 debug!(target: "rush-member", "Response parents received {:?}.", u_hash);
-                // TODO: these responses are quite heavy, we should at some point add
-                // checks to make sure we are not processing responses to request we did not make.
-                // TODO: we need to check if the response (and alert) does not exceed some max message size in network.
                 let parents: Result<Vec<_>, SignatureError<_, _>> = parents
                     .into_iter()
                     .map(|unchecked| unchecked.check(self.keybox))
