@@ -4,12 +4,9 @@ use crate::{
     units::{ControlHash, PreUnit, Unit},
     Hasher, Receiver, Round, Sender,
 };
-use futures::{FutureExt, StreamExt};
+use futures::{channel::oneshot, FutureExt, StreamExt};
 use log::{debug, error};
-use tokio::{
-    sync::oneshot,
-    time::{delay_for, Duration},
-};
+use tokio::time::{delay_for, Duration};
 
 /// A process responsible for creating new units. It receives all the units added locally to the Dag
 /// via the parents_rx channel endpoint. It creates units according to an internal strategy respecting
@@ -80,7 +77,7 @@ impl<H: Hasher> Creator<H> {
         debug!(target: "rush-creator", "{} Created a new unit {:?} at round {}.", self.node_id, new_preunit, self.current_round);
         let send_result = self
             .new_units_tx
-            .send(NotificationOut::CreatedPreUnit(new_preunit));
+            .unbounded_send(NotificationOut::CreatedPreUnit(new_preunit));
         if let Err(e) = send_result {
             error!(target: "rush-creator", "{:?} Unable to send a newly created unit: {:?}.", self.node_id, e);
         }
@@ -119,7 +116,7 @@ impl<H: Hasher> Creator<H> {
         let mut exit = exit.into_stream();
         loop {
             tokio::select! {
-                Some(u) = self.parents_rx.recv() => {
+                Some(u) = self.parents_rx.next() => {
                     self.add_unit(u.round(), u.creator(), u.hash());
                     if self.check_ready() {
                         self.create_unit();

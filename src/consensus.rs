@@ -1,23 +1,18 @@
-use futures::{Sink, Stream};
+use futures::channel::{mpsc, oneshot};
 use log::{debug, error};
-use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     creator::Creator,
     extender::Extender,
     member::{Config, NotificationIn, NotificationOut},
-    syncer::Syncer,
     terminal::Terminal,
-    Hasher, OrderedBatch, Sender, SpawnHandle,
+    Hasher, OrderedBatch, Receiver, Sender, SpawnHandle,
 };
 
 pub(crate) async fn run<H: Hasher + 'static>(
     conf: Config,
-    ntfct_env_rx: impl Stream<Item = NotificationIn<H>> + Send + Unpin + 'static,
-    ntfct_env_tx: impl Sink<NotificationOut<H>, Error = Box<dyn std::error::Error>>
-        + Send
-        + Unpin
-        + 'static,
+    incoming_notifications: Receiver<NotificationIn<H>>,
+    outgoing_notifications: Sender<NotificationOut<H>>,
     ordered_batch_tx: Sender<OrderedBatch<H::Hash>>,
     spawn_handle: impl SpawnHandle,
     exit: oneshot::Receiver<()>,
@@ -26,23 +21,15 @@ pub(crate) async fn run<H: Hasher + 'static>(
 
     let n_members = conf.n_members;
 
-    let (electors_tx, electors_rx) = mpsc::unbounded_channel();
+    let (electors_tx, electors_rx) = mpsc::unbounded();
     let mut extender = Extender::<H>::new(conf.node_id, n_members, electors_rx, ordered_batch_tx);
     let (extender_exit, exit_rx) = oneshot::channel();
     spawn_handle.spawn("consensus/extender", async move {
         extender.extend(exit_rx).await
     });
 
-    let (mut syncer, ntfct_common_tx, ntfct_term_rx) =
-        Syncer::new(conf.node_id, ntfct_env_tx, ntfct_env_rx);
-    let (syncer_exit, exit_rx) = oneshot::channel();
-    spawn_handle.spawn(
-        "consensus/syncer",
-        async move { syncer.sync(exit_rx).await },
-    );
-
-    let (parents_tx, parents_rx) = mpsc::unbounded_channel();
-    let new_units_tx = ntfct_common_tx.clone();
+    let (parents_tx, parents_rx) = mpsc::unbounded();
+    let new_units_tx = outgoing_notifications.clone();
     let mut creator = Creator::new(conf.clone(), parents_rx, new_units_tx);
 
     let (creator_exit, exit_rx) = oneshot::channel();
@@ -51,18 +38,18 @@ pub(crate) async fn run<H: Hasher + 'static>(
         async move { creator.create(exit_rx).await },
     );
 
-    let mut terminal = Terminal::new(conf.node_id, ntfct_term_rx, ntfct_common_tx);
+    let mut terminal = Terminal::new(conf.node_id, incoming_notifications, outgoing_notifications);
 
     // send a new parent candidate to the creator
     terminal.register_post_insert_hook(Box::new(move |u| {
-        let send_result = parents_tx.send(u.into());
+        let send_result = parents_tx.unbounded_send(u.into());
         if let Err(e) = send_result {
             error!(target:"rush-terminal", "Unable to send a unit to Creator: {:?}.", e);
         }
     }));
     // try to extend the partial order after adding a unit to the dag
     terminal.register_post_insert_hook(Box::new(move |u| {
-        let send_result = electors_tx.send(u.into());
+        let send_result = electors_tx.unbounded_send(u.into());
         if let Err(e) = send_result {
             error!(target:"rush-terminal", "Unable to send a unit to Extender: {:?}.", e);
         }
@@ -80,7 +67,6 @@ pub(crate) async fn run<H: Hasher + 'static>(
     let _ = creator_exit.send(());
     let _ = terminal_exit.send(());
     let _ = extender_exit.send(());
-    let _ = syncer_exit.send(());
 
     debug!(target: "rush-root", "{} All services stopped.", conf.node_id);
 }
@@ -93,7 +79,7 @@ mod tests {
         units::{ControlHash, PreUnit, Unit},
         NodeIndex,
     };
-    use futures::{channel, sink::SinkExt, stream::StreamExt, Future};
+    use futures::{channel::mpsc, sink::SinkExt, stream::StreamExt, Future};
     use parking_lot::Mutex;
     use std::sync::Arc;
     use tokio::time::Duration;
@@ -136,7 +122,6 @@ mod tests {
 
         for node_ix in 0..n_members {
             let (tx, rx) = hub.connect(NodeIndex(node_ix));
-            let tx = tx.sink_map_err(|e| e.into());
             let conf = Config {
                 node_id: node_ix.into(),
                 session_id: 0u64,
@@ -145,7 +130,7 @@ mod tests {
             };
             let (exit_tx, exit_rx) = oneshot::channel();
             exits.push(exit_tx);
-            let (batch_tx, batch_rx) = mpsc::unbounded_channel();
+            let (batch_tx, batch_rx) = mpsc::unbounded();
             batch_rxs.push(batch_rx);
             spawner.spawn(
                 "consensus",
@@ -157,7 +142,7 @@ mod tests {
 
         let mut batches = vec![];
         for mut rx in batch_rxs.drain(..) {
-            let batch = rx.recv().await.unwrap();
+            let batch = rx.next().await.unwrap();
             assert!(!batch.is_empty());
             batches.push(batch);
         }
@@ -178,9 +163,8 @@ mod tests {
         let n_nodes = 4;
         let spawner = Spawner::default();
         let node_ix = 0;
-        let (mut tx_in, rx_in) = channel::mpsc::unbounded();
-        let (tx_out, mut rx_out) = channel::mpsc::unbounded();
-        let tx_out = tx_out.sink_map_err(|e| e.into());
+        let (mut tx_in, rx_in) = mpsc::unbounded();
+        let (tx_out, mut rx_out) = mpsc::unbounded();
 
         let conf = Config {
             node_id: node_ix.into(),
@@ -189,7 +173,7 @@ mod tests {
             create_lag: Duration::from_millis(10),
         };
         let (exit_tx, exit_rx) = oneshot::channel();
-        let (batch_tx, _batch_rx) = mpsc::unbounded_channel();
+        let (batch_tx, _batch_rx) = mpsc::unbounded();
 
         spawner.spawn(
             "consensus",

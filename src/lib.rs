@@ -3,12 +3,11 @@
 //! gives appropriate access to the set of available data that we need to make consensus on.
 
 use codec::{Decode, Encode};
-use futures::Future;
+use futures::{channel::mpsc, Future};
 use std::{
     fmt::{Debug, Display},
     hash::Hash as StdHash,
 };
-use tokio::sync::mpsc;
 
 use crate::nodes::{NodeCount, NodeIndex, NodeMap};
 
@@ -21,7 +20,6 @@ mod extender;
 mod member;
 pub mod nodes;
 pub mod signed;
-mod syncer;
 mod terminal;
 mod testing;
 mod units;

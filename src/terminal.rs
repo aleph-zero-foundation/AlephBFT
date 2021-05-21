@@ -1,6 +1,5 @@
-use futures::{FutureExt, StreamExt};
+use futures::{channel::oneshot, FutureExt, StreamExt};
 use std::collections::{hash_map::Entry, HashMap, VecDeque};
-use tokio::sync::oneshot;
 
 use crate::{
     extender::ExtenderUnit,
@@ -239,7 +238,7 @@ impl<H: Hasher> Terminal<H> {
                 debug!(target: "rush-terminal", "{} Missing coords {:?} aux {:?}", self.node_id, coords_to_request, aux_data);
                 let send_result = self
                     .ntfct_tx
-                    .send(NotificationOut::MissingUnits(coords_to_request, aux_data));
+                    .unbounded_send(NotificationOut::MissingUnits(coords_to_request, aux_data));
                 if let Err(e) = send_result {
                     error!(target: "rush-terminal", "{:?} Unable to place a Fetch request: {:?}.", self.node_id, e);
                 }
@@ -266,7 +265,7 @@ impl<H: Hasher> Terminal<H> {
 
         let send_result = self
             .ntfct_tx
-            .send(NotificationOut::AddedToDag(*u_hash, parent_hashes));
+            .unbounded_send(NotificationOut::AddedToDag(*u_hash, parent_hashes));
         if let Err(e) = send_result {
             error!(target: "rush-terminal", "{:?} Unable to place AddedToDag notification: {:?}.", self.node_id, e);
         }
@@ -322,7 +321,7 @@ impl<H: Hasher> Terminal<H> {
     fn on_wrong_hash_detected(&mut self, u_hash: H::Hash) {
         let send_result = self
             .ntfct_tx
-            .send(NotificationOut::WrongControlHash(u_hash));
+            .unbounded_send(NotificationOut::WrongControlHash(u_hash));
         if let Err(e) = send_result {
             error!(target: "rush-terminal", "{:?} Unable to place a Fetch request: {:?}.", self.node_id, e);
         }
@@ -363,7 +362,7 @@ impl<H: Hasher> Terminal<H> {
         let mut exit = exit.into_stream();
         loop {
             tokio::select! {
-                Some(n) = self.ntfct_rx.recv() => {
+                Some(n) = self.ntfct_rx.next() => {
                     match n {
                         NotificationIn::NewUnits(units) => {
                             for u in units {

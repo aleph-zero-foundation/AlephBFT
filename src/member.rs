@@ -1,17 +1,16 @@
 use codec::{Decode, Encode};
-use futures::{channel::mpsc::unbounded, FutureExt, SinkExt, StreamExt};
-use log::{debug, error};
-use tokio::{
-    sync::{mpsc::unbounded_channel, oneshot},
-    time::Duration,
+use futures::{
+    channel::{mpsc, oneshot},
+    FutureExt, StreamExt,
 };
+use log::{debug, error};
 
 use crate::{
     bft::{Alert, ForkProof},
     consensus,
     units::{ControlHash, FullUnit, PreUnit, SignedUnit, Unit, UnitCoord, UnitStore},
     Data, DataIO, Hasher, KeyBox, Network, NetworkCommand, NetworkEvent, NodeCount, NodeIndex,
-    NodeMap, OrderedBatch, RequestAuxData, SessionId, SpawnHandle,
+    NodeMap, OrderedBatch, RequestAuxData, Sender, SessionId, SpawnHandle,
 };
 
 use crate::{
@@ -115,12 +114,12 @@ pub struct Config {
     pub node_id: NodeIndex,
     pub session_id: SessionId,
     pub n_members: NodeCount,
-    pub create_lag: Duration,
+    pub create_lag: time::Duration,
 }
 
 pub struct Member<'a, H: Hasher, D: Data, DP: DataIO<D>, KB: KeyBox, N: Network> {
     config: Config,
-    tx_consensus: Option<futures::channel::mpsc::UnboundedSender<NotificationIn<H>>>,
+    tx_consensus: Option<Sender<NotificationIn<H>>>,
     data_io: DP,
     keybox: &'a KB,
     network: N,
@@ -734,9 +733,9 @@ where
         spawn_handle: impl SpawnHandle,
         exit: oneshot::Receiver<()>,
     ) {
-        let (tx_consensus, consensus_stream) = unbounded();
-        let (consensus_sink, mut rx_consensus) = unbounded();
-        let (ordered_batch_tx, mut ordered_batch_rx) = unbounded_channel();
+        let (tx_consensus, consensus_stream) = mpsc::unbounded();
+        let (consensus_sink, mut rx_consensus) = mpsc::unbounded();
+        let (ordered_batch_tx, mut ordered_batch_rx) = mpsc::unbounded();
         let (consensus_exit, exit_rx) = oneshot::channel();
         let config = self.config.clone();
         let sh = spawn_handle.clone();
@@ -745,7 +744,7 @@ where
             consensus::run(
                 config,
                 consensus_stream,
-                consensus_sink.sink_map_err(|e| e.into()),
+                consensus_sink,
                 ordered_batch_tx,
                 sh,
                 exit_rx,
@@ -775,7 +774,7 @@ where
                     }
                 },
 
-                batch = ordered_batch_rx.recv() => match batch {
+                batch = ordered_batch_rx.next() => match batch {
                     Some(batch) => self.on_ordered_batch(batch),
                     None => {
                         error!(target: "rush-member", "Consensus notification stream closed.");

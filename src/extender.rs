@@ -1,6 +1,5 @@
-use futures::{FutureExt, StreamExt};
+use futures::{channel::oneshot, FutureExt, StreamExt};
 use std::collections::{HashMap, VecDeque};
-use tokio::sync::oneshot;
 
 use log::{debug, error};
 
@@ -157,7 +156,7 @@ impl<H: Hasher> Extender<H> {
 
         // We reverse for the batch to start with least recent units.
         batch.reverse();
-        let send_result = self.finalizer_tx.send(batch);
+        let send_result = self.finalizer_tx.unbounded_send(batch);
         if let Err(e) = send_result {
             error!(target: "rush-extender", "{:?} Unable to send a batch to Finalizer: {:?}.", self.node_id, e);
         }
@@ -294,7 +293,7 @@ impl<H: Hasher> Extender<H> {
         let mut exit = exit.into_stream();
         loop {
             tokio::select! {
-                Some(v) = self.electors.recv() =>{
+                Some(v) = self.electors.next() =>{
                     let v_hash = v.hash;
                     if self.add_unit(v) {
                         self.progress(v_hash);
@@ -313,7 +312,7 @@ impl<H: Hasher> Extender<H> {
 mod tests {
     use super::*;
     use crate::{nodes::NodeCount, testing::mock::Hasher64};
-    use tokio::sync::mpsc;
+    use futures::channel::mpsc;
 
     fn coord_to_number(creator: usize, round: usize, n_members: usize) -> usize {
         round * n_members + creator
@@ -340,8 +339,8 @@ mod tests {
     async fn finalize_rounds_01() {
         let n_members = 4;
         let rounds = 6;
-        let (batch_tx, mut batch_rx) = mpsc::unbounded_channel();
-        let (electors_tx, electors_rx) = mpsc::unbounded_channel();
+        let (batch_tx, mut batch_rx) = mpsc::unbounded();
+        let (electors_tx, electors_rx) = mpsc::unbounded();
         let mut extender =
             Extender::<Hasher64>::new(0.into(), NodeCount(n_members), electors_rx, batch_tx);
         let (exit_tx, exit_rx) = oneshot::channel();
@@ -350,14 +349,14 @@ mod tests {
         for round in 0..rounds {
             for creator in 0..n_members {
                 let unit = construct_unit(creator, round, n_members);
-                let _ = electors_tx.send(unit);
+                let _ = electors_tx.unbounded_send(unit);
             }
         }
-        let batch_round_0 = batch_rx.recv().await.unwrap();
+        let batch_round_0 = batch_rx.next().await.unwrap();
         // TODO add better checks
         assert!(!batch_round_0.is_empty());
 
-        let batch_round_1 = batch_rx.recv().await.unwrap();
+        let batch_round_1 = batch_rx.next().await.unwrap();
         assert!(!batch_round_1.is_empty());
         let _ = exit_tx.send(());
         let _ = extender_handle.await;
