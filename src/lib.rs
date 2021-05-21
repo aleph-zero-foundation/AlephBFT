@@ -71,15 +71,9 @@ pub trait Hasher: Eq + Clone + Send + Sync + Debug + 'static {
 }
 
 /// Data type that we want to order.
-pub trait Data:
-    Eq + Ord + Copy + Clone + Send + Sync + Debug + Display + StdHash + Encode + Decode
-{
-}
+pub trait Data: Eq + Clone + Send + Sync + Debug + Display + StdHash + Encode + Decode {}
 
-impl<T> Data for T where
-    T: Eq + Ord + Copy + Clone + Send + Sync + Debug + Display + StdHash + Encode + Decode
-{
-}
+impl<T> Data for T where T: Eq + Clone + Send + Sync + Debug + Display + StdHash + Encode + Decode {}
 
 /// A round.
 pub type Round = usize;

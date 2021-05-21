@@ -238,7 +238,7 @@ impl<H: Hasher> Terminal<H> {
                     .ntfct_tx
                     .unbounded_send(NotificationOut::MissingUnits(coords_to_request, aux_data));
                 if let Err(e) = send_result {
-                    error!(target: "rush-terminal", "{:?} Unable to place a Fetch request: {:?}.", self.node_id, e);
+                    error!(target: "rush-terminal", "{} Unable to place a Fetch request: {:?}.", self.node_id, e);
                 }
             }
         }
@@ -265,7 +265,7 @@ impl<H: Hasher> Terminal<H> {
             .ntfct_tx
             .unbounded_send(NotificationOut::AddedToDag(*u_hash, parent_hashes));
         if let Err(e) = send_result {
-            error!(target: "rush-terminal", "{:?} Unable to place AddedToDag notification: {:?}.", self.node_id, e);
+            error!(target: "rush-terminal", "{} Unable to place AddedToDag notification: {:?}.", self.node_id, e);
         }
     }
 
@@ -278,6 +278,7 @@ impl<H: Hasher> Terminal<H> {
         for (counter, i) in u.unit.control_hash().parents().enumerate() {
             u.parents[i] = Some(p_hashes[counter]);
         }
+        debug!(target: "rush-terminal", "{} Updating parent hashes for wrong control hash unit {:?}", self.node_id, u_hash);
         u.n_miss_par_decoded = NodeCount(0);
         self.inspect_parents_in_dag(&u_hash);
     }
@@ -307,6 +308,7 @@ impl<H: Hasher> Terminal<H> {
         }
         let u = self.unit_store.get_mut(&u_hash).unwrap();
         u.n_miss_par_dag -= n_parents_in_dag;
+        debug!(target: "rush-terminal", "{} Inspecting parents for {:?}, missing {:?}", self.node_id, u_hash, u.n_miss_par_dag);
         if u.n_miss_par_dag == NodeCount(0) {
             self.event_queue
                 .push_back(TerminalEvent::ParentsInDag(*u_hash));
@@ -321,7 +323,7 @@ impl<H: Hasher> Terminal<H> {
             .ntfct_tx
             .unbounded_send(NotificationOut::WrongControlHash(u_hash));
         if let Err(e) = send_result {
-            error!(target: "rush-terminal", "{:?} Unable to place a Fetch request: {:?}.", self.node_id, e);
+            error!(target: "rush-terminal", "{} Unable to place a Fetch request: {:?}.", self.node_id, e);
         }
     }
 
@@ -370,10 +372,9 @@ impl<H: Hasher> Terminal<H> {
                         },
                         NotificationIn::UnitParents(u_hash, p_hashes) => {
                             self.update_on_wrong_hash_response(u_hash, p_hashes);
+                            self.handle_events();
                         }
                     }
-
-
                 }
                 _ = exit.next() => {
                     debug!(target: "rush-terminal", "{} received exit signal.", self.node_id);

@@ -75,13 +75,11 @@ pub(crate) async fn run<H: Hasher + 'static>(
 mod tests {
     use super::*;
     use crate::{
-        testing::mock::{Hasher64, HonestHub},
+        testing::mock::{Hasher64, HonestHub, Spawner},
         units::{ControlHash, PreUnit, Unit},
         NodeIndex,
     };
-    use futures::{channel::mpsc, sink::SinkExt, stream::StreamExt, Future};
-    use parking_lot::Mutex;
-    use std::sync::Arc;
+    use futures::{channel::mpsc, sink::SinkExt, stream::StreamExt};
     use tokio::time::Duration;
 
     fn init_log() {
@@ -89,25 +87,6 @@ mod tests {
             .filter_level(log::LevelFilter::max())
             .is_test(true)
             .try_init();
-    }
-
-    #[derive(Default, Clone)]
-    struct Spawner {
-        handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
-    }
-
-    impl SpawnHandle for Spawner {
-        fn spawn(&self, _name: &str, task: impl Future<Output = ()> + Send + 'static) {
-            self.handles.lock().push(tokio::spawn(task))
-        }
-    }
-
-    impl Spawner {
-        async fn wait(&self) {
-            for h in self.handles.lock().iter_mut() {
-                let _ = h.await;
-            }
-        }
     }
 
     #[tokio::test(max_threads = 1)]

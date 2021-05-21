@@ -93,24 +93,24 @@ impl<H: Hasher> Extender<H> {
         }
     }
 
-    fn add_unit(&mut self, u: ExtenderUnit<H>) -> bool {
-        debug!(target: "rush-extender", "{} New unit in Extender {:?}.", self.node_id, u.hash);
+    fn add_unit(&mut self, u: ExtenderUnit<H>) {
+        debug!(target: "rush-extender", "{} New unit in Extender round {} creator {} hash {:?}.", self.node_id, u.round, u.creator, u.hash);
         let round = u.round;
         if round > self.state.highest_round {
             self.state.highest_round = round;
         }
-        debug!(target: "rush-extender", "{} unit round {:?} state current_round {:?}", self.node_id, u.round, self.state.current_round);
-        // need to extend the vector first to the required length
-        if self.units_by_round.len() <= round {
-            self.units_by_round.push(vec![]);
-        }
+
         if round >= self.state.current_round {
+            //The units in units_by_round are required for head calculation only.
+            //If the round of u is too low, we don't need to update it.
+
+            //Need to extend the vector first to the required length.
+            if self.units_by_round.len() <= round {
+                self.units_by_round.push(vec![]);
+            }
             self.units_by_round[round].push(u.hash);
-            self.units.insert(u.hash, u);
-            true
-        } else {
-            false
         }
+        self.units.insert(u.hash, u);
     }
 
     //
@@ -154,7 +154,7 @@ impl<H: Hasher> Extender<H> {
         if let Err(e) = send_result {
             error!(target: "rush-extender", "{:?} Unable to send a batch to Finalizer: {:?}.", self.node_id, e);
         }
-        debug!(target: "rush-extender", "{} Finalized round {}.", self.node_id, round);
+        debug!(target: "rush-extender", "{} Finalized round {} with head {:?}.", self.node_id, round, head);
         self.units_by_round[round].clear();
     }
 
@@ -180,28 +180,29 @@ impl<H: Hasher> Extender<H> {
         }
 
         let mut n_votes_true = NodeCount(0);
-        let mut n_votes_total = NodeCount(0);
+        let mut n_votes_false = NodeCount(0);
 
         for p_hash in voter.parents.iter().flatten() {
             let p = self.units.get(p_hash).unwrap();
             if p.vote {
                 n_votes_true += NodeCount(1);
+            } else {
+                n_votes_false += NodeCount(1);
             }
-            n_votes_total += NodeCount(1);
         }
         let cv = self.common_vote(relative_round);
         let mut decision = None;
-        let threshold = (self.n_members * 2) / 3;
+        let threshold = (self.n_members * 2) / 3 + NodeCount(1);
+        assert!(n_votes_true + n_votes_false >= threshold);
 
         if relative_round >= 3
-            && ((cv && n_votes_true > threshold)
-                || (!cv && (n_votes_total - n_votes_true) > threshold))
+            && ((cv && n_votes_true >= threshold) || (!cv && n_votes_false >= threshold))
         {
             decision = Some(cv);
         }
 
         let vote = {
-            if n_votes_true == n_votes_total {
+            if n_votes_false == NodeCount(0) {
                 true
             } else if n_votes_true == NodeCount(0) {
                 false
@@ -233,9 +234,8 @@ impl<H: Hasher> Extender<H> {
             let candidate_creator = self.units.get(&candidate_hash).unwrap().creator;
 
             if !self.state.votes_up_to_date {
-                // this means that for the unit currently considered for head we need to compute votes
-                // and check for decisions
-                for r in curr_round + 1..self.state.highest_round {
+                // We need to recompute all the votes for the current candidate.
+                for r in curr_round + 1..=self.state.highest_round {
                     for u_hash in self.units_by_round[r].iter() {
                         let (vote, u_decision) = self.vote_and_decision(
                             &candidate_hash,
@@ -243,7 +243,7 @@ impl<H: Hasher> Extender<H> {
                             candidate_creator,
                             curr_round,
                         );
-                        // we update the vote
+                        // We update the vote.
                         self.units.get_mut(u_hash).unwrap().vote = vote;
                         decision = u_decision;
                         if decision.is_some() {
@@ -255,7 +255,8 @@ impl<H: Hasher> Extender<H> {
                     }
                 }
             } else {
-                // we only need to compute the decision and votes for the new unit u_new
+                // We don't need to recompute all the votes, but only compute the vote and possibly the
+                // decision for the new unit u_new.
                 let (vote, u_decision) = self.vote_and_decision(
                     &candidate_hash,
                     &u_new_hash,
@@ -289,9 +290,8 @@ impl<H: Hasher> Extender<H> {
             tokio::select! {
                 Some(v) = self.electors.next() =>{
                     let v_hash = v.hash;
-                    if self.add_unit(v) {
-                        self.progress(v_hash);
-                    }
+                    self.add_unit(v);
+                    self.progress(v_hash);
                 }
                 _ = exit.next() => {
                     debug!(target: "rush-extender", "{} received exit signal.", self.node_id);

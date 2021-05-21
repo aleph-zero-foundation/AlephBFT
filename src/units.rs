@@ -3,7 +3,7 @@ use crate::{
     Data, Hasher, Index, KeyBox, NodeCount, NodeIndex, NodeMap, Round, SessionId,
 };
 use codec::{Decode, Encode, Error, Input, Output};
-use log::error;
+use log::{debug, error};
 use std::{cell::RefCell, collections::HashMap, hash::Hash as StdHash};
 
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Encode, Decode, StdHash)]
@@ -168,7 +168,7 @@ impl<H: Hasher, D: Data> FullUnit<H, D> {
         self.pre_unit.coord
     }
     pub(crate) fn data(&self) -> D {
-        self.data
+        self.data.clone()
     }
     pub(crate) fn session_id(&self) -> SessionId {
         self.session_id

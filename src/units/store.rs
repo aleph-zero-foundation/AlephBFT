@@ -1,6 +1,5 @@
 use super::*;
 
-// TODO: need to make sure we never accept units of round > MAX_ROUND
 pub(crate) const MAX_ROUND: usize = 5000;
 
 pub(crate) struct UnitStore<'a, H: Hasher, D: Data, KB: KeyBox> {
@@ -58,6 +57,8 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
         {
             let old_round = self.round_in_progress;
             self.round_in_progress = candidate_round + 1;
+            // The loop below will normally just go over a single round, but theoretically the jump between
+            // old_round and candidate_round could be >1.
             for round in (old_round + 1)..(self.round_in_progress + 1) {
                 for (id, forker) in self.is_forker.enumerate() {
                     if !*forker {
@@ -95,7 +96,7 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
     // The returned vector is sorted w.r.t. increasing rounds. Units of higher round created by this node are removed from store.
     pub(crate) fn mark_forker(&mut self, forker: NodeIndex) -> Vec<SignedUnit<'a, H, D, KB>> {
         if self.is_forker[forker] {
-            error!(target: "env", "Trying to mark the node {:?} as forker for the second time.", forker);
+            error!(target: "unit-store", "Trying to mark the node {:?} as forker for the second time.", forker);
         }
         self.is_forker[forker] = true;
         let forkers_units = (0..=self.round_in_progress)
@@ -110,6 +111,7 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
                 // units in the store and the only way this forker's unit is sent to Consensus is when
                 // it arrives in an alert for the *first* time.
                 // If we didn't do that, then there would be some awkward issues with duplicates.
+                debug!(target: "unit-store", "Removing unit from forker {:?}  {:?}.", coord, su.as_signable());
                 self.by_coord.remove(&coord);
                 let hash = su.as_signable().hash();
                 self.by_hash.remove(&hash);
@@ -124,7 +126,9 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
         let hash = su.as_signable().hash();
         let round = su.as_signable().round();
         let creator = su.as_signable().creator();
+
         if alert {
+            debug!(target: "unit-store", "Adding unit with alert {:?}.", su.as_signable());
             assert!(
                 self.is_forker[creator],
                 "The forker must be marked before adding alerted units."
@@ -132,6 +136,7 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
         }
         if self.contains_hash(&hash) {
             // Ignoring a duplicate.
+            debug!(target: "unit-store", "A unit ignored as a duplicate {:?}.", su.as_signable());
             return;
         }
         self.by_hash.insert(hash, su.clone());
