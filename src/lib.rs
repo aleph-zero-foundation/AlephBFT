@@ -6,11 +6,12 @@ use codec::{Decode, Encode};
 use futures::{channel::mpsc, Future};
 use std::{fmt::Debug, hash::Hash as StdHash};
 
-use crate::nodes::{NodeCount, NodeIndex, NodeMap};
+use crate::nodes::{NodeCount, NodeMap};
 
-pub use config::{default_config, Config};
+pub use config::{default_config, Config, DelayConfig};
 pub use member::Member;
 pub use network::{Network, NetworkData};
+pub use nodes::NodeIndex;
 
 mod alerts;
 mod consensus;
