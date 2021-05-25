@@ -4,10 +4,7 @@
 
 use codec::{Decode, Encode};
 use futures::{channel::mpsc, Future};
-use std::{
-    fmt::{Debug, Display},
-    hash::Hash as StdHash,
-};
+use std::{fmt::Debug, hash::Hash as StdHash};
 
 use crate::nodes::{NodeCount, NodeIndex, NodeMap};
 
@@ -66,9 +63,9 @@ pub trait Hasher: Eq + Clone + Send + Sync + Debug + 'static {
 }
 
 /// Data type that we want to order.
-pub trait Data: Eq + Clone + Send + Sync + Debug + Display + StdHash + Encode + Decode {}
+pub trait Data: Eq + Clone + Send + Sync + Debug + StdHash + Encode + Decode {}
 
-impl<T> Data for T where T: Eq + Clone + Send + Sync + Debug + Display + StdHash + Encode + Decode {}
+impl<T> Data for T where T: Eq + Clone + Send + Sync + Debug + StdHash + Encode + Decode {}
 
 /// A round.
 pub type Round = usize;

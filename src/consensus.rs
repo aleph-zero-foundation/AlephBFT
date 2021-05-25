@@ -17,7 +17,7 @@ pub(crate) async fn run<H: Hasher + 'static>(
     spawn_handle: impl SpawnHandle,
     exit: oneshot::Receiver<()>,
 ) {
-    debug!(target: "rush-root", "{} Starting all services...", conf.node_id);
+    debug!(target: "rush-root", "{:?} Starting all services...", conf.node_id);
 
     let n_members = conf.n_members;
 
@@ -60,7 +60,7 @@ pub(crate) async fn run<H: Hasher + 'static>(
         "consensus/terminal",
         async move { terminal.run(exit_rx).await },
     );
-    debug!(target: "rush-root", "{} All services started.", conf.node_id);
+    debug!(target: "rush-root", "{:?} All services started.", conf.node_id);
 
     let _ = exit.await;
     // we stop no matter if received Ok or Err
@@ -68,7 +68,7 @@ pub(crate) async fn run<H: Hasher + 'static>(
     let _ = terminal_exit.send(());
     let _ = extender_exit.send(());
 
-    debug!(target: "rush-root", "{} All services stopped.", conf.node_id);
+    debug!(target: "rush-root", "{:?} All services stopped.", conf.node_id);
 }
 
 #[cfg(test)]

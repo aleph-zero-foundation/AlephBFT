@@ -17,7 +17,6 @@ use rand::{seq::SliceRandom, thread_rng};
 use std::{
     cell::Cell,
     collections::{hash_map::DefaultHasher, HashMap},
-    fmt,
     hash::Hasher as StdHasher,
     pin::Pin,
     sync::Arc,
@@ -206,7 +205,7 @@ impl Spawner {
 pub(crate) type PeerId = Vec<u8>;
 pub(crate) type Message = Vec<u8>;
 
-#[derive(Hash, Debug, Default, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, PartialEq, Eq, Encode, Decode)]
 pub(crate) struct AddressedMessage {
     message: Message,
     sender: PeerId,
@@ -302,7 +301,6 @@ impl Network {
     }
 }
 
-#[derive(Clone)]
 pub(crate) struct NetworkHub {
     peers: Arc<Mutex<HashMap<PeerId, Peer>>>,
     peer_list: Arc<Mutex<Vec<PeerId>>>,
@@ -435,7 +433,7 @@ impl NetworkHook for AlertHook {
     }
 }
 
-#[derive(Hash, Debug, Default, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Hash)]
 pub(crate) struct Data {
     coord: UnitCoord,
     variant: u32,
@@ -447,17 +445,7 @@ impl Data {
     }
 }
 
-impl fmt::Display for Data {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.variant == 0 {
-            write!(f, "{:?}", self.coord)
-        } else {
-            write!(f, "{:?}-v={}", self.coord, self.variant)
-        }
-    }
-}
-
-#[derive(Hash, Debug, Default, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub(crate) struct Signature {}
 
 pub(crate) struct DataIO {
