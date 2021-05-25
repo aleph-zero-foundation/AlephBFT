@@ -8,7 +8,6 @@ use crate::{
     Hasher, Receiver, Round, Sender,
 };
 
-#[derive(Clone, Default, Debug)]
 pub(crate) struct ExtenderUnit<H: Hasher> {
     creator: NodeIndex,
     round: Round,
@@ -34,7 +33,6 @@ impl<H: Hasher> ExtenderUnit<H> {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
 struct CacheState {
     highest_round: Round,
     current_round: Round,
@@ -94,7 +92,7 @@ impl<H: Hasher> Extender<H> {
     }
 
     fn add_unit(&mut self, u: ExtenderUnit<H>) {
-        debug!(target: "rush-extender", "{} New unit in Extender round {} creator {} hash {:?}.", self.node_id, u.round, u.creator, u.hash);
+        debug!(target: "rush-extender", "{:?} New unit in Extender round {:?} creator {:?} hash {:?}.", self.node_id, u.round, u.creator, u.hash);
         let round = u.round;
         if round > self.state.highest_round {
             self.state.highest_round = round;
@@ -154,7 +152,7 @@ impl<H: Hasher> Extender<H> {
         if let Err(e) = send_result {
             error!(target: "rush-extender", "{:?} Unable to send a batch to Finalizer: {:?}.", self.node_id, e);
         }
-        debug!(target: "rush-extender", "{} Finalized round {} with head {:?}.", self.node_id, round, head);
+        debug!(target: "rush-extender", "{:?} Finalized round {:?} with head {:?}.", self.node_id, round, head);
         self.units_by_round[round].clear();
     }
 
@@ -294,7 +292,7 @@ impl<H: Hasher> Extender<H> {
                     self.progress(v_hash);
                 }
                 _ = exit.next() => {
-                    debug!(target: "rush-extender", "{} received exit signal.", self.node_id);
+                    debug!(target: "rush-extender", "{:?} received exit signal.", self.node_id);
                     break
                 }
             }

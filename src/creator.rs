@@ -74,7 +74,7 @@ impl<H: Hasher> Creator<H> {
         let control_hash = ControlHash::new(&parents);
 
         let new_preunit = PreUnit::new(self.node_id, round, control_hash);
-        debug!(target: "rush-creator", "{} Created a new unit {:?} at round {}.", self.node_id, new_preunit, self.current_round);
+        debug!(target: "rush-creator", "{:?} Created a new unit {:?} at round {:?}.", self.node_id, new_preunit, self.current_round);
         let send_result = self
             .new_units_tx
             .unbounded_send(NotificationOut::CreatedPreUnit(new_preunit));
@@ -124,7 +124,7 @@ impl<H: Hasher> Creator<H> {
                     }
                 }
                 _ = exit.next() => {
-                    debug!(target: "rush-creator", "{} received exit signal.", self.node_id);
+                    debug!(target: "rush-creator", "{:?} received exit signal.", self.node_id);
                     break
                 }
             }

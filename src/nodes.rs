@@ -1,13 +1,13 @@
 use codec::{Decode, Encode, Error as CodecError, Error, Input, Output};
-use derive_more::{Add, AddAssign, Display, From, Into, Sub, SubAssign, Sum};
+use derive_more::{Add, AddAssign, From, Into, Sub, SubAssign, Sum};
 use std::{
     iter::FromIterator,
     ops::{Div, Index, IndexMut, Mul},
-    slice, vec,
+    vec,
 };
 
 /// The index of a node
-#[derive(Copy, Clone, Debug, Display, Default, Eq, PartialEq, Hash, Ord, PartialOrd, From)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, From)]
 pub struct NodeIndex(pub usize);
 
 impl Encode for NodeIndex {
@@ -29,22 +29,7 @@ impl Decode for NodeIndex {
 
 /// Node count -- if necessary this can be then generalized to weights
 #[derive(
-    Copy,
-    Clone,
-    Debug,
-    Default,
-    Eq,
-    PartialEq,
-    Hash,
-    Ord,
-    PartialOrd,
-    Add,
-    Sub,
-    AddAssign,
-    SubAssign,
-    Sum,
-    From,
-    Into,
+    Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Add, Sub, AddAssign, SubAssign, Sum, From, Into,
 )]
 pub struct NodeCount(pub usize);
 
@@ -63,7 +48,7 @@ impl Div<usize> for NodeCount {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, From, Hash, Encode, Decode)]
+#[derive(Clone, Debug, Eq, PartialEq, From, Encode, Decode)]
 pub struct NodeMap<T>(Vec<T>);
 
 impl<T> NodeMap<T> {
@@ -74,15 +59,6 @@ impl<T> NodeMap<T> {
     {
         let v: Vec<T> = vec![T::default(); len.into()];
         NodeMap(v)
-    }
-
-    /// Returns the number of values. This must equal the number of nodes.
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
     }
 
     /// Returns an iterator over all values.
@@ -106,12 +82,6 @@ impl<T> IntoIterator for NodeMap<T> {
     }
 }
 
-impl<T> FromIterator<T> for NodeMap<T> {
-    fn from_iter<I: IntoIterator<Item = T>>(ii: I) -> NodeMap<T> {
-        NodeMap(ii.into_iter().collect())
-    }
-}
-
 impl<T> Index<NodeIndex> for NodeMap<T> {
     type Output = T;
 
@@ -126,21 +96,12 @@ impl<T> IndexMut<NodeIndex> for NodeMap<T> {
     }
 }
 
-impl<'a, T> IntoIterator for &'a NodeMap<T> {
-    type Item = &'a T;
-    type IntoIter = slice::Iter<'a, T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.iter()
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BoolNodeMap(bit_vec::BitVec<u32>);
 
 impl BoolNodeMap {
-    pub fn with_capacity(len: NodeCount) -> Self {
-        BoolNodeMap(bit_vec::BitVec::from_elem(len.0, false))
+    pub fn with_capacity(capacity: NodeCount) -> Self {
+        BoolNodeMap(bit_vec::BitVec::from_elem(capacity.0, false))
     }
 
     pub fn set(&mut self, i: NodeIndex) {
@@ -168,10 +129,10 @@ impl Encode for BoolNodeMap {
 
 impl Decode for BoolNodeMap {
     fn decode<I: Input>(input: &mut I) -> Result<Self, Error> {
-        let len = u32::decode(input)? as usize;
+        let capacity = u32::decode(input)? as usize;
         let bytes = Vec::decode(input)?;
         let mut bv = bit_vec::BitVec::from_bytes(&bytes);
-        bv.truncate(len);
+        bv.truncate(capacity);
         Ok(BoolNodeMap(bv))
     }
 }

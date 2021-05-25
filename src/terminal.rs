@@ -11,7 +11,7 @@ use crate::{
 use log::{debug, error};
 
 /// An enum describing the status of a Unit in the Terminal pipeline.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum UnitStatus {
     ReconstructingParents,
     WrongControlHash,
@@ -19,15 +19,9 @@ pub enum UnitStatus {
     InDag,
 }
 
-impl Default for UnitStatus {
-    fn default() -> UnitStatus {
-        UnitStatus::ReconstructingParents
-    }
-}
-
 /// A Unit struct used in the Terminal. It stores a copy of a unit and apart from that some
 /// information on its status, i.e., already reconstructed parents etc.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct TerminalUnit<H: Hasher> {
     unit: Unit<H>,
     // This represents the knowledge of what we think the parents of the unit are. It is initialized as all None
@@ -64,14 +58,6 @@ impl<H: Hasher> TerminalUnit<H> {
             n_miss_par_dag: n_parents,
             status: UnitStatus::ReconstructingParents,
         }
-    }
-
-    pub(crate) fn _round(&self) -> Round {
-        self.unit.round()
-    }
-
-    pub(crate) fn _hash(&self) -> H::Hash {
-        self.unit.hash()
     }
 
     pub(crate) fn verify_control_hash(&self) -> bool {
@@ -233,12 +219,12 @@ impl<H: Hasher> Terminal<H> {
             }
             if !coords_to_request.is_empty() {
                 let aux_data = RequestAuxData::new(u.creator());
-                debug!(target: "rush-terminal", "{} Missing coords {:?} aux {:?}", self.node_id, coords_to_request, aux_data);
+                debug!(target: "rush-terminal", "{:?} Missing coords {:?} aux {:?}", self.node_id, coords_to_request, aux_data);
                 let send_result = self
                     .ntfct_tx
                     .unbounded_send(NotificationOut::MissingUnits(coords_to_request, aux_data));
                 if let Err(e) = send_result {
-                    error!(target: "rush-terminal", "{} Unable to place a Fetch request: {:?}.", self.node_id, e);
+                    error!(target: "rush-terminal", "{:?} Unable to place a Fetch request: {:?}.", self.node_id, e);
                 }
             }
         }
@@ -265,7 +251,7 @@ impl<H: Hasher> Terminal<H> {
             .ntfct_tx
             .unbounded_send(NotificationOut::AddedToDag(*u_hash, parent_hashes));
         if let Err(e) = send_result {
-            error!(target: "rush-terminal", "{} Unable to place AddedToDag notification: {:?}.", self.node_id, e);
+            error!(target: "rush-terminal", "{:?} Unable to place AddedToDag notification: {:?}.", self.node_id, e);
         }
     }
 
@@ -278,13 +264,13 @@ impl<H: Hasher> Terminal<H> {
         for (counter, i) in u.unit.control_hash().parents().enumerate() {
             u.parents[i] = Some(p_hashes[counter]);
         }
-        debug!(target: "rush-terminal", "{} Updating parent hashes for wrong control hash unit {:?}", self.node_id, u_hash);
+        debug!(target: "rush-terminal", "{:?} Updating parent hashes for wrong control hash unit {:?}", self.node_id, u_hash);
         u.n_miss_par_decoded = NodeCount(0);
         self.inspect_parents_in_dag(&u_hash);
     }
 
     fn add_to_store(&mut self, u: Unit<H>) {
-        debug!(target: "rush-terminal", "{} Adding to store {:?} round {:?} index {:?}", self.node_id, u.hash(), u.round(), u.creator());
+        debug!(target: "rush-terminal", "{:?} Adding to store {:?} round {:?} index {:?}", self.node_id, u.hash(), u.round(), u.creator());
         if let Entry::Vacant(entry) = self.unit_store.entry(u.hash()) {
             entry.insert(TerminalUnit::<H>::blank_from_unit(&u));
             self.update_on_store_add(u);
@@ -308,7 +294,7 @@ impl<H: Hasher> Terminal<H> {
         }
         let u = self.unit_store.get_mut(&u_hash).unwrap();
         u.n_miss_par_dag -= n_parents_in_dag;
-        debug!(target: "rush-terminal", "{} Inspecting parents for {:?}, missing {:?}", self.node_id, u_hash, u.n_miss_par_dag);
+        debug!(target: "rush-terminal", "{:?} Inspecting parents for {:?}, missing {:?}", self.node_id, u_hash, u.n_miss_par_dag);
         if u.n_miss_par_dag == NodeCount(0) {
             self.event_queue
                 .push_back(TerminalEvent::ParentsInDag(*u_hash));
@@ -323,7 +309,7 @@ impl<H: Hasher> Terminal<H> {
             .ntfct_tx
             .unbounded_send(NotificationOut::WrongControlHash(u_hash));
         if let Err(e) = send_result {
-            error!(target: "rush-terminal", "{} Unable to place a Fetch request: {:?}.", self.node_id, e);
+            error!(target: "rush-terminal", "{:?} Unable to place a Fetch request: {:?}.", self.node_id, e);
         }
     }
 
@@ -340,14 +326,14 @@ impl<H: Hasher> Terminal<H> {
                         self.inspect_parents_in_dag(&u_hash);
                     } else {
                         u.status = UnitStatus::WrongControlHash;
-                        debug!(target: "rush-terminal", "{} wrong control hash", self.node_id);
+                        debug!(target: "rush-terminal", "{:?} wrong control hash", self.node_id);
                         self.on_wrong_hash_detected(u_hash);
                     }
                 }
                 TerminalEvent::ParentsInDag(u_hash) => {
                     let u = self.unit_store.get_mut(&u_hash).unwrap();
                     u.status = UnitStatus::InDag;
-                    debug!(target: "rush-terminal", "{} Adding to Dag {:?} round {:?} index {}.", self.node_id, u_hash, u.unit.round(), u.unit.creator());
+                    debug!(target: "rush-terminal", "{:?} Adding to Dag {:?} round {:?} index {:?}.", self.node_id, u_hash, u.unit.round(), u.unit.creator());
                     self.update_on_dag_add(&u_hash);
                 }
             }
@@ -377,7 +363,7 @@ impl<H: Hasher> Terminal<H> {
                     }
                 }
                 _ = exit.next() => {
-                    debug!(target: "rush-terminal", "{} received exit signal.", self.node_id);
+                    debug!(target: "rush-terminal", "{:?} received exit signal.", self.node_id);
                     break
                 }
             }

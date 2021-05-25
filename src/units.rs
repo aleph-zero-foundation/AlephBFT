@@ -7,7 +7,7 @@ use codec::{Decode, Encode};
 use log::{debug, error};
 use std::{cell::RefCell, collections::HashMap, hash::Hash as StdHash};
 
-#[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Encode, Decode, StdHash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Encode, Decode, StdHash)]
 pub(crate) struct UnitCoord {
     round: u16,
     creator: NodeIndex,
@@ -32,7 +32,7 @@ impl UnitCoord {
 
 /// Combined hashes of the parents of a unit together with the set of indices of creators of the
 /// parents
-#[derive(Clone, Debug, Default, PartialEq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Encode, Decode)]
 pub(crate) struct ControlHash<H: Hasher> {
     pub(crate) parents_mask: BoolNodeMap,
     pub(crate) combined_hash: H::Hash,
