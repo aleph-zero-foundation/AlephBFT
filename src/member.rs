@@ -325,7 +325,7 @@ where
             return false;
         }
         let control_hash = &pre_unit.control_hash();
-        if round > 0 && !control_hash.parents_mask[pre_unit.creator().0] {
+        if round > 0 && !control_hash.parents_mask[pre_unit.creator()] {
             debug!(target: "rush-member", "{} Unit does not have its creator's previous unit as parent.", self.node_ix());
             return false;
         }

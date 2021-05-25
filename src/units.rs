@@ -1,8 +1,9 @@
 use crate::{
+    nodes::BoolNodeMap,
     signed::{Signable, Signed, UncheckedSigned},
     Data, Hasher, Index, KeyBox, NodeCount, NodeIndex, NodeMap, Round, SessionId,
 };
-use codec::{Decode, Encode, Error, Input, Output};
+use codec::{Decode, Encode};
 use log::{debug, error};
 use std::{cell::RefCell, collections::HashMap, hash::Hash as StdHash};
 
@@ -31,9 +32,9 @@ impl UnitCoord {
 
 /// Combined hashes of the parents of a unit together with the set of indices of creators of the
 /// parents
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Encode, Decode)]
 pub(crate) struct ControlHash<H: Hasher> {
-    pub(crate) parents_mask: bit_vec::BitVec<u32>,
+    pub(crate) parents_mask: BoolNodeMap,
     pub(crate) combined_hash: H::Hash,
 }
 
@@ -53,11 +54,7 @@ impl<H: Hasher> ControlHash<H> {
     }
 
     pub(crate) fn parents(&self) -> impl Iterator<Item = NodeIndex> + '_ {
-        self.parents_mask
-            .iter()
-            .enumerate()
-            .filter(|(_, b)| *b)
-            .map(|(i, _)| i.into())
+        self.parents_mask.true_indices()
     }
 
     pub(crate) fn n_parents(&self) -> NodeCount {
@@ -65,29 +62,7 @@ impl<H: Hasher> ControlHash<H> {
     }
 
     pub(crate) fn n_members(&self) -> NodeCount {
-        NodeCount(self.parents_mask.len())
-    }
-}
-
-impl<H: Hasher> Encode for ControlHash<H> {
-    fn encode_to<T: Output + ?Sized>(&self, dest: &mut T) {
-        (self.parents_mask.len() as u32).encode_to(dest);
-        self.parents_mask.to_bytes().encode_to(dest);
-        self.combined_hash.encode_to(dest);
-    }
-}
-
-impl<H: Hasher> Decode for ControlHash<H> {
-    fn decode<I: Input>(input: &mut I) -> Result<Self, Error> {
-        let len = u32::decode(input)?;
-        let bytes = Vec::decode(input)?;
-        let mut parents = bit_vec::BitVec::from_bytes(&bytes);
-        parents.truncate(len as usize);
-        let hash = H::Hash::decode(input)?;
-        Ok(ControlHash {
-            parents_mask: parents,
-            combined_hash: hash,
-        })
+        NodeCount(self.parents_mask.capacity())
     }
 }
 

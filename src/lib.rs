@@ -19,7 +19,8 @@ mod creator;
 mod extender;
 mod member;
 pub mod nodes;
-pub mod signed;
+mod signed;
+pub use signed::*;
 mod terminal;
 mod testing;
 mod units;
@@ -28,12 +29,6 @@ pub trait DataIO<Data> {
     type Error: Debug;
     fn get_data(&self) -> Data;
     fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), Self::Error>;
-}
-
-pub trait KeyBox: Index {
-    type Signature: Debug + Clone + Encode + Decode;
-    fn sign(&self, msg: &[u8]) -> Self::Signature;
-    fn verify(&self, msg: &[u8], sgn: &Self::Signature, index: NodeIndex) -> bool;
 }
 
 #[async_trait::async_trait]

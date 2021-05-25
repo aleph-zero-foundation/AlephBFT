@@ -1,4 +1,4 @@
-use codec::{Decode, Encode, Error as CodecError, Input, Output};
+use codec::{Decode, Encode, Error as CodecError, Error, Input, Output};
 use derive_more::{Add, AddAssign, Display, From, Into, Sub, SubAssign, Sum};
 use std::{
     iter::FromIterator,
@@ -135,17 +135,89 @@ impl<'a, T> IntoIterator for &'a NodeMap<T> {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BoolNodeMap(bit_vec::BitVec<u32>);
+
+impl BoolNodeMap {
+    pub fn with_capacity(len: NodeCount) -> Self {
+        BoolNodeMap(bit_vec::BitVec::from_elem(len.0, false))
+    }
+
+    pub fn set(&mut self, i: NodeIndex) {
+        self.0.set(i.0, true);
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn true_indices(&self) -> impl Iterator<Item = NodeIndex> + '_ {
+        self.0
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| if b { Some(i.into()) } else { None })
+    }
+}
+
+impl Encode for BoolNodeMap {
+    fn encode_to<T: Output + ?Sized>(&self, dest: &mut T) {
+        (self.0.len() as u32).encode_to(dest);
+        self.0.to_bytes().encode_to(dest);
+    }
+}
+
+impl Decode for BoolNodeMap {
+    fn decode<I: Input>(input: &mut I) -> Result<Self, Error> {
+        let len = u32::decode(input)? as usize;
+        let bytes = Vec::decode(input)?;
+        let mut bv = bit_vec::BitVec::from_bytes(&bytes);
+        bv.truncate(len);
+        Ok(BoolNodeMap(bv))
+    }
+}
+
+impl FromIterator<bool> for BoolNodeMap {
+    fn from_iter<T: IntoIterator<Item = bool>>(iter: T) -> Self {
+        BoolNodeMap(bit_vec::BitVec::from_iter(iter))
+    }
+}
+
+impl Index<NodeIndex> for BoolNodeMap {
+    type Output = bool;
+
+    fn index(&self, vidx: NodeIndex) -> &bool {
+        &self.0[vidx.0 as usize]
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::nodes::NodeIndex;
+    use crate::nodes::{BoolNodeMap, NodeIndex};
     use codec::{Decode, Encode};
     #[test]
-    fn decoding_works() {
+    fn decoding_node_index_works() {
         for i in 0..1000 {
             let node_index = NodeIndex(i);
             let mut encoded: &[u8] = &node_index.encode();
             let decoded = NodeIndex::decode(&mut encoded);
             assert_eq!(node_index, decoded.unwrap());
         }
+    }
+
+    #[test]
+    fn decoding_bool_node_map_works() {
+        let bool_node_map = BoolNodeMap([true, false, true, true, true].iter().cloned().collect());
+        let encoded: Vec<_> = bool_node_map.encode();
+        let decoded = BoolNodeMap::decode(&mut encoded.as_slice()).expect("decode should work");
+        assert_eq!(decoded, bool_node_map);
+    }
+
+    #[test]
+    fn test_bool_node_map_has_efficient_encoding() {
+        let mut bnm = BoolNodeMap::with_capacity(100.into());
+        for i in 0..50 {
+            bnm.set(i.into())
+        }
+        assert!(bnm.encode().len() < 20);
     }
 }
