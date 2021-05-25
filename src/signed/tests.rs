@@ -59,13 +59,16 @@ fn test_signatures() {
         .collect();
     for i in 0_usize..7 {
         for j in 0_usize..7 {
-            let msg = TestMessage {
-                msg: "Hello".as_bytes().to_vec(),
-            };
+            let msg = Indexed::new(
+                TestMessage {
+                    msg: "Hello".as_bytes().to_vec(),
+                },
+                i.into(),
+            );
             let signed_msg = Signed::sign(&keychains[i], msg.clone());
             let unchecked_msg = signed_msg.unchecked;
             let signed_msg = unchecked_msg
-                .check_with_index(&keychains[j], i.into())
+                .check(&keychains[j])
                 .expect("Signed message should be valid");
             assert_eq!(signed_msg.as_signable(), &msg)
         }
@@ -115,9 +118,12 @@ impl MultiKeychain for TestMultiKeychain {
 
 #[test]
 fn test_multisignatures() {
-    let msg = TestMessage {
-        msg: "Hello".as_bytes().to_vec(),
-    };
+    let mut msg = Indexed::new(
+        TestMessage {
+            msg: "Hello".as_bytes().to_vec(),
+        },
+        0.into(),
+    );
     let node_count: NodeCount = 7.into();
     let keychains: Vec<TestMultiKeychain> = (0_usize..node_count.0)
         .map(|i| TestMultiKeychain {
@@ -126,13 +132,17 @@ fn test_multisignatures() {
         })
         .collect();
 
-    let mut partial = PartiallyMultisigned::sign(msg.clone(), &keychains[0]);
+    let signed = Signed::sign(&keychains[0], msg.clone());
+
+    let mut partial = signed._into_partially_multisigned();
     for &i in [1, 2, 3, 4].iter() {
         assert!(!keychains[i].is_complete(&partial.unchecked.signature));
+        msg.index = i.into();
         let signed = Signed::sign(&keychains[i], msg.clone());
-        partial.add_signature(signed, i.into());
+        partial.add_signature(signed);
     }
-    if partial._try_into_complete(&keychains[5]).is_err() {
-        panic!("5 signatures should form a complete signature");
-    }
+    assert!(
+        partial._try_into_complete(&keychains[5]).is_ok(),
+        "5 signatures should form a complete signature"
+    );
 }

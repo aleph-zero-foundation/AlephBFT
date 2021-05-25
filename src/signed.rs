@@ -64,13 +64,13 @@ pub struct SignatureError<T: Signable, S> {
     unchecked: UncheckedSigned<T, S>,
 }
 
-impl<T: Signable, S: Clone> UncheckedSigned<T, S> {
+impl<T: Signable + Index, S: Clone> UncheckedSigned<T, S> {
     /// Verifies whether the signature matches the key with the given index.
-    pub(crate) fn check_with_index<KB: KeyBox<Signature = S>>(
+    pub(crate) fn check<KB: KeyBox<Signature = S>>(
         self,
         key_box: &KB,
-        index: NodeIndex,
     ) -> Result<Signed<T, KB>, SignatureError<T, S>> {
+        let index = self.signable.index();
         if !key_box.verify(self.signable.hash().as_ref(), &self.signature, index) {
             return Err(SignatureError { unchecked: self });
         }
@@ -79,7 +79,9 @@ impl<T: Signable, S: Clone> UncheckedSigned<T, S> {
             key_box,
         })
     }
+}
 
+impl<T: Signable, S: Clone> UncheckedSigned<T, S> {
     pub fn check_partial<MK: MultiKeychain<PartialMultisignature = S>>(
         self,
         keychain: &MK,
@@ -94,17 +96,6 @@ impl<T: Signable, S: Clone> UncheckedSigned<T, S> {
     }
 }
 
-impl<T: Signable + Index, S: Clone> UncheckedSigned<T, S> {
-    /// Verifies, whether the signature matches the key with the index of the signed object.
-    pub(crate) fn check<KB: KeyBox<Signature = S>>(
-        self,
-        key_box: &KB,
-    ) -> Result<Signed<T, KB>, SignatureError<T, S>> {
-        let index = self.signable.index();
-        self.check_with_index(key_box, index)
-    }
-}
-
 /// A pair consisting of an object and a matching signature
 ///
 /// An instance of `Signed<'a, T, KB>` stores an object `t: T`, a signature `s: KB::Signature`,
@@ -113,12 +104,12 @@ impl<T: Signable + Index, S: Clone> UncheckedSigned<T, S> {
 /// `i` is not stored explicitly, but usually, either it is a part of the signed object `t`,
 /// or is known from the context.
 #[derive(Debug)]
-pub struct Signed<'a, T: Signable, KB: KeyBox> {
+pub struct Signed<'a, T: Signable + Index, KB: KeyBox> {
     unchecked: UncheckedSigned<T, KB::Signature>,
     key_box: &'a KB,
 }
 
-impl<'a, T: Signable + Clone, KB: KeyBox> Clone for Signed<'a, T, KB> {
+impl<'a, T: Signable + Clone + Index, KB: KeyBox> Clone for Signed<'a, T, KB> {
     fn clone(&self) -> Self {
         Signed {
             unchecked: self.unchecked.clone(),
@@ -127,8 +118,9 @@ impl<'a, T: Signable + Clone, KB: KeyBox> Clone for Signed<'a, T, KB> {
     }
 }
 
-impl<'a, T: Signable, KB: KeyBox> Signed<'a, T, KB> {
+impl<'a, T: Signable + Index, KB: KeyBox> Signed<'a, T, KB> {
     pub fn sign(key_box: &'a KB, signable: T) -> Self {
+        assert_eq!(signable.index(), key_box.index());
         let signature = key_box.sign(&signable.hash().as_ref());
         Signed {
             unchecked: UncheckedSigned {
@@ -148,9 +140,52 @@ impl<'a, T: Signable, KB: KeyBox> Signed<'a, T, KB> {
     }
 }
 
-impl<'a, T: Signable, KB: KeyBox> From<Signed<'a, T, KB>> for UncheckedSigned<T, KB::Signature> {
+impl<'a, T: Signable, MK: MultiKeychain> Signed<'a, Indexed<T>, MK> {
+    fn _into_partially_multisigned(self) -> PartiallyMultisigned<'a, T, MK> {
+        let multisignature = self
+            .key_box
+            .from_signature(&self.unchecked.signature, self.unchecked.signable.index);
+        PartiallyMultisigned {
+            unchecked: UncheckedSigned {
+                signable: self.unchecked.signable.signable,
+                signature: multisignature,
+            },
+            keychain: self.key_box,
+        }
+    }
+}
+
+impl<'a, T: Signable + Index, KB: KeyBox> From<Signed<'a, T, KB>>
+    for UncheckedSigned<T, KB::Signature>
+{
     fn from(signed: Signed<'a, T, KB>) -> Self {
         signed.into_unchecked()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Indexed<T: Signable> {
+    signable: T,
+    index: NodeIndex,
+}
+
+impl<T: Signable> Indexed<T> {
+    pub fn new(signable: T, index: NodeIndex) -> Self {
+        Indexed { signable, index }
+    }
+}
+
+impl<T: Signable> Signable for Indexed<T> {
+    type Hash = T::Hash;
+
+    fn hash(&self) -> Self::Hash {
+        self.signable.hash()
+    }
+}
+
+impl<T: Signable> Index for Indexed<T> {
+    fn index(&self) -> NodeIndex {
+        self.index
     }
 }
 
@@ -182,14 +217,14 @@ impl<'a, T: Signable, MK: MultiKeychain> PartiallyMultisigned<'a, T, MK> {
             keychain,
         }
     }
-    pub fn add_signature(&mut self, signed: Signed<'a, T, MK>, index: NodeIndex) {
+    pub fn add_signature(&mut self, signed: Signed<'a, Indexed<T>, MK>) {
         if self.unchecked.signable.hash().as_ref() != signed.as_signable().hash().as_ref() {
             debug!("Tried to add a signature of a different object");
             return;
         }
         self.unchecked
             .signature
-            .add_signature(&signed.unchecked.signature, index);
+            .add_signature(&signed.unchecked.signature, signed.as_signable().index);
     }
 
     fn _try_into_complete(
