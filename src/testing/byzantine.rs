@@ -123,7 +123,7 @@ impl<'a> MaliciousMember<'a> {
             if round != self.forking_round {
                 let data = Data::new(coord, 0);
                 let full_unit = FullUnit::new(new_preunit, data, self.session_id);
-                let signed_unit = Signed::sign(self.keybox, full_unit);
+                let signed_unit = Signed::sign(full_unit, self.keybox);
                 self.on_unit_received(signed_unit.clone());
                 self.send_legit_unit(signed_unit);
             } else {
@@ -133,7 +133,7 @@ impl<'a> MaliciousMember<'a> {
                     .map(|var| {
                         let data = Data::new(coord, var);
                         let full_unit = FullUnit::new(new_preunit.clone(), data, self.session_id);
-                        Signed::sign(self.keybox, full_unit)
+                        Signed::sign(full_unit, self.keybox)
                     })
                     .collect();
                 self.send_two_variants(variants[0].clone(), variants[1].clone());

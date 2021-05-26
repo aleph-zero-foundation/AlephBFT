@@ -322,9 +322,9 @@ impl Future for UnreliableRouter {
                 for hook in hooks.iter() {
                     hook.update_state(data.clone(), sender, recipient);
                 }
-                if let Err(e) = peer.tx.unbounded_send((data, sender)) {
-                    error!(target: "network-hub", "Error when routing message via hub {:?}.", e);
-                }
+                peer.tx
+                    .unbounded_send((data, sender))
+                    .expect("channel should be open");
             }
         }
 
@@ -392,12 +392,9 @@ impl DataIOT<Data> for DataIO {
         Data { coord, variant: 0 }
     }
     fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), ()> {
-        if let Err(e) = self.tx.unbounded_send(data) {
+        self.tx.unbounded_send(data).map_err(|e| {
             error!(target: "data-io", "Error when sending data from DataIO {:?}.", e);
-            Err(())
-        } else {
-            Ok(())
-        }
+        })
     }
 }
 

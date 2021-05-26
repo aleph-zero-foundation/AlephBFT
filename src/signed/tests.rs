@@ -17,6 +17,15 @@ impl Signable for TestMessage {
     }
 }
 
+fn indexed_test_message(i: usize) -> Indexed<TestMessage> {
+    Indexed::new(
+        TestMessage {
+            msg: "Hello".as_bytes().to_vec(),
+        },
+        i.into(),
+    )
+}
+
 #[derive(Debug)]
 struct TestMultiKeychain {
     node_count: NodeCount,
@@ -49,7 +58,7 @@ impl KeyBox for TestMultiKeychain {
 }
 
 #[test]
-fn test_signatures() {
+fn test_valid_signatures() {
     let node_count: NodeCount = 7.into();
     let keychains: Vec<TestMultiKeychain> = (0_usize..node_count.0)
         .map(|i| TestMultiKeychain {
@@ -57,22 +66,33 @@ fn test_signatures() {
             index: i.into(),
         })
         .collect();
-    for i in 0_usize..7 {
-        for j in 0_usize..7 {
-            let msg = Indexed::new(
-                TestMessage {
-                    msg: "Hello".as_bytes().to_vec(),
-                },
-                i.into(),
-            );
-            let signed_msg = Signed::sign(&keychains[i], msg.clone());
+    for i in 0..node_count.0 {
+        for j in 0..node_count.0 {
+            let msg = indexed_test_message(i);
+            let signed_msg = Signed::sign(msg.clone(), &keychains[i]);
             let unchecked_msg = signed_msg.unchecked;
-            let signed_msg = unchecked_msg
-                .check(&keychains[j])
-                .expect("Signed message should be valid");
-            assert_eq!(signed_msg.as_signable(), &msg)
+            assert!(
+                unchecked_msg.check(&keychains[j]).is_ok(),
+                "Signed message should be valid"
+            );
         }
     }
+}
+
+#[test]
+fn test_invalid_signatures() {
+    let node_count: NodeCount = 1.into();
+    let index: NodeIndex = 0.into();
+    let keychain = TestMultiKeychain { node_count, index };
+    let msg = indexed_test_message(index.0);
+    let signed_msg = Signed::sign(msg, &keychain);
+    let mut unchecked_msg = signed_msg.unchecked;
+    unchecked_msg.signature.index = 1.into();
+
+    assert!(
+        unchecked_msg.check(&keychain).is_err(),
+        "wrong index makes wrong signature"
+    );
 }
 
 #[derive(Clone, Debug, Encode, Decode, PartialEq)]
@@ -117,28 +137,68 @@ impl MultiKeychain for TestMultiKeychain {
 }
 
 #[test]
-fn test_multisignatures() {
-    let mut msg = Indexed::new(
-        TestMessage {
-            msg: "Hello".as_bytes().to_vec(),
-        },
-        0.into(),
+fn test_valid_partial_multisignature() {
+    let index: NodeIndex = 0.into();
+    let node_count: NodeCount = 1.into();
+    let keychain = TestMultiKeychain { node_count, index };
+
+    let msg = indexed_test_message(index.0);
+    let partial = PartiallyMultisigned::sign(msg, &keychain);
+    let unchecked_msg = partial.unchecked;
+
+    assert!(
+        unchecked_msg.check_partial(&keychain).is_ok(),
+        "Partially signed message should be valid"
     );
+}
+
+#[test]
+fn test_invalid_partial_multisignature() {
+    let index: NodeIndex = 0.into();
+    let node_count: NodeCount = 1.into();
+    let keychain = TestMultiKeychain { node_count, index };
+
+    let msg = indexed_test_message(index.0);
+    let partial = PartiallyMultisigned::sign(msg, &keychain);
+    let mut unchecked_msg = partial.unchecked;
+    unchecked_msg.signature.msg = "Bye".as_bytes().to_vec();
+
+    assert!(
+        unchecked_msg.check_partial(&keychain).is_err(),
+        "Wrong signature can't pass partial check",
+    );
+}
+
+#[test]
+fn test_incomplete_multisignature() {
+    let msg = indexed_test_message(0);
+    let index: NodeIndex = 0.into();
+    let node_count: NodeCount = 2.into();
+    let keychain = TestMultiKeychain { node_count, index };
+
+    let partial = PartiallyMultisigned::sign(msg, &keychain);
+    assert!(
+        partial._try_into_complete(&keychain).is_err(),
+        "One signature does not form a complete multisignature",
+    );
+}
+
+#[test]
+fn test_multisignatures() {
+    let mut msg = indexed_test_message(0);
     let node_count: NodeCount = 7.into();
-    let keychains: Vec<TestMultiKeychain> = (0_usize..node_count.0)
+    let keychains: Vec<TestMultiKeychain> = (0..node_count.0)
         .map(|i| TestMultiKeychain {
             node_count,
             index: i.into(),
         })
         .collect();
 
-    let signed = Signed::sign(&keychains[0], msg.clone());
-
-    let mut partial = signed._into_partially_multisigned();
+    let mut partial = PartiallyMultisigned::sign(msg.signable.clone(), &keychains[0]);
     for &i in [1, 2, 3, 4].iter() {
         assert!(!keychains[i].is_complete(&partial.unchecked.signature));
         msg.index = i.into();
-        let signed = Signed::sign(&keychains[i], msg.clone());
+        let signed = Signed::sign(msg.clone(), &keychains[i]);
         partial.add_signature(signed);
     }
     assert!(

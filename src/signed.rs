@@ -1,7 +1,7 @@
 use crate::{nodes::NodeIndex, Index};
 use codec::{Decode, Encode};
 use log::debug;
-use std::fmt::Debug;
+use std::{fmt::Debug, marker::PhantomData};
 
 /// The type used as a signature. The Signature typically does not contain the index of the node who
 /// signed the data.
@@ -76,7 +76,7 @@ impl<T: Signable + Index, S: Clone> UncheckedSigned<T, S> {
         }
         Ok(Signed {
             unchecked: self,
-            key_box,
+            marker: PhantomData,
         })
     }
 }
@@ -91,7 +91,7 @@ impl<T: Signable, S: Clone> UncheckedSigned<T, S> {
         }
         Ok(PartiallyMultisigned {
             unchecked: self,
-            keychain,
+            marker: PhantomData,
         })
     }
 }
@@ -106,20 +106,20 @@ impl<T: Signable, S: Clone> UncheckedSigned<T, S> {
 #[derive(Debug)]
 pub struct Signed<'a, T: Signable + Index, KB: KeyBox> {
     unchecked: UncheckedSigned<T, KB::Signature>,
-    key_box: &'a KB,
+    marker: PhantomData<&'a KB>,
 }
 
 impl<'a, T: Signable + Clone + Index, KB: KeyBox> Clone for Signed<'a, T, KB> {
     fn clone(&self) -> Self {
         Signed {
             unchecked: self.unchecked.clone(),
-            key_box: self.key_box,
+            marker: PhantomData,
         }
     }
 }
 
 impl<'a, T: Signable + Index, KB: KeyBox> Signed<'a, T, KB> {
-    pub fn sign(key_box: &'a KB, signable: T) -> Self {
+    pub fn sign(signable: T, key_box: &'a KB) -> Self {
         assert_eq!(signable.index(), key_box.index());
         let signature = key_box.sign(&signable.hash().as_ref());
         Signed {
@@ -127,12 +127,8 @@ impl<'a, T: Signable + Index, KB: KeyBox> Signed<'a, T, KB> {
                 signable,
                 signature,
             },
-            key_box,
+            marker: PhantomData,
         }
-    }
-
-    pub(crate) fn into_unchecked(self) -> UncheckedSigned<T, KB::Signature> {
-        self.unchecked
     }
 
     pub(crate) fn as_signable(&self) -> &T {
@@ -141,16 +137,15 @@ impl<'a, T: Signable + Index, KB: KeyBox> Signed<'a, T, KB> {
 }
 
 impl<'a, T: Signable, MK: MultiKeychain> Signed<'a, Indexed<T>, MK> {
-    fn _into_partially_multisigned(self) -> PartiallyMultisigned<'a, T, MK> {
-        let multisignature = self
-            .key_box
-            .from_signature(&self.unchecked.signature, self.unchecked.signable.index);
+    fn _into_partially_multisigned(self, key_box: &'a MK) -> PartiallyMultisigned<'a, T, MK> {
+        let multisignature =
+            key_box.from_signature(&self.unchecked.signature, self.unchecked.signable.index);
         PartiallyMultisigned {
             unchecked: UncheckedSigned {
                 signable: self.unchecked.signable.signable,
                 signature: multisignature,
             },
-            keychain: self.key_box,
+            marker: PhantomData,
         }
     }
 }
@@ -159,7 +154,7 @@ impl<'a, T: Signable + Index, KB: KeyBox> From<Signed<'a, T, KB>>
     for UncheckedSigned<T, KB::Signature>
 {
     fn from(signed: Signed<'a, T, KB>) -> Self {
-        signed.into_unchecked()
+        signed.unchecked
     }
 }
 
@@ -192,12 +187,12 @@ impl<T: Signable> Index for Indexed<T> {
 #[derive(Debug)]
 pub struct PartiallyMultisigned<'a, T: Signable, MK: MultiKeychain> {
     unchecked: UncheckedSigned<T, MK::PartialMultisignature>,
-    keychain: &'a MK,
+    marker: PhantomData<&'a MK>,
 }
 
 pub struct Multisigned<'a, T: Signable, MK: MultiKeychain> {
     pub unchecked: UncheckedSigned<T, MK::PartialMultisignature>,
-    pub keychain: &'a MK,
+    marker: PhantomData<&'a MK>,
 }
 
 #[derive(Debug)]
@@ -214,7 +209,7 @@ impl<'a, T: Signable, MK: MultiKeychain> PartiallyMultisigned<'a, T, MK> {
                 signable,
                 signature: multisignature,
             },
-            keychain,
+            marker: PhantomData,
         }
     }
     pub fn add_signature(&mut self, signed: Signed<'a, Indexed<T>, MK>) {
@@ -236,7 +231,7 @@ impl<'a, T: Signable, MK: MultiKeychain> PartiallyMultisigned<'a, T, MK> {
         }
         Ok(Multisigned {
             unchecked: self.unchecked,
-            keychain: self.keychain,
+            marker: PhantomData,
         })
     }
 }

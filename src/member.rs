@@ -176,7 +176,7 @@ where
         let data = self.data_io.get_data();
         let full_unit = FullUnit::new(u, data, self.config.session_id);
         let hash = full_unit.hash();
-        let signed_unit = Signed::sign(self.keybox, full_unit);
+        let signed_unit = Signed::sign(full_unit, self.keybox);
         self.store.add_unit(signed_unit, false);
         let curr_time = time::Instant::now();
         let task = ScheduledTask::new(
