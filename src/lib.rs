@@ -9,12 +9,14 @@ use std::{fmt::Debug, hash::Hash as StdHash};
 use crate::nodes::{NodeCount, NodeIndex, NodeMap};
 
 pub use member::{Config, Member};
+pub use network::{Network, NetworkData};
 
 mod bft;
 mod consensus;
 mod creator;
 mod extender;
 mod member;
+mod network;
 pub mod nodes;
 mod signed;
 pub use signed::*;
@@ -26,26 +28,6 @@ pub trait DataIO<Data> {
     type Error: Debug;
     fn get_data(&self) -> Data;
     fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), Self::Error>;
-}
-
-#[async_trait::async_trait]
-pub trait Network {
-    type Error: Debug;
-    fn send(&self, command: NetworkCommand) -> Result<(), Self::Error>;
-    async fn next_event(&mut self) -> Option<NetworkEvent>;
-}
-
-#[derive(Clone, Debug, Encode, Decode)]
-pub enum NetworkCommand {
-    SendToAll(Vec<u8>),
-    SendToPeer(Vec<u8>, Vec<u8>),
-    SendToRandPeer(Vec<u8>),
-    ReliableBroadcast(Vec<u8>),
-}
-
-#[derive(Clone, Debug)]
-pub enum NetworkEvent {
-    MessageReceived(Vec<u8>, Vec<u8>),
 }
 
 pub type SessionId = u64;
@@ -63,9 +45,9 @@ pub trait Hasher: Eq + Clone + Send + Sync + Debug + 'static {
 }
 
 /// Data type that we want to order.
-pub trait Data: Eq + Clone + Send + Sync + Debug + StdHash + Encode + Decode {}
+pub trait Data: Eq + Clone + Send + Sync + Debug + StdHash + Encode + Decode + 'static {}
 
-impl<T> Data for T where T: Eq + Clone + Send + Sync + Debug + StdHash + Encode + Decode {}
+impl<T> Data for T where T: Eq + Clone + Send + Sync + Debug + StdHash + Encode + Decode + 'static {}
 
 /// A round.
 pub type Round = usize;

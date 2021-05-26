@@ -12,8 +12,6 @@ use futures::{
     Future, StreamExt,
 };
 
-use rand::{seq::SliceRandom, thread_rng};
-
 use std::{
     cell::Cell,
     collections::{hash_map::DefaultHasher, HashMap},
@@ -24,10 +22,11 @@ use std::{
 };
 
 use crate::{
-    member::{Config, ConsensusMessage, NotificationIn, NotificationOut},
+    member::{Config, NotificationIn, NotificationOut},
+    network::NetworkDataInner,
     units::{Unit, UnitCoord},
-    DataIO as DataIOT, Hasher, Index, KeyBox as KeyBoxT, Network as NetworkT, NetworkCommand,
-    NetworkEvent, NodeCount, NodeIndex, OrderedBatch, SpawnHandle,
+    DataIO as DataIOT, Hasher, Index, KeyBox as KeyBoxT, Network as NetworkT,
+    NetworkData as NetworkDataT, NodeCount, NodeIndex, OrderedBatch, SpawnHandle,
 };
 
 use crate::member::Member;
@@ -202,115 +201,55 @@ impl Spawner {
     }
 }
 
-pub(crate) type PeerId = Vec<u8>;
-pub(crate) type Message = Vec<u8>;
-
-#[derive(Clone, PartialEq, Eq, Encode, Decode)]
-pub(crate) struct AddressedMessage {
-    message: Message,
-    sender: PeerId,
-    receiver: PeerId,
-    reliable: bool,
-}
-
-struct Peer {
-    tx: UnboundedSender<AddressedMessage>,
-    rx: UnboundedReceiver<AddressedMessage>,
-}
+type NetworkData = NetworkDataT<Hasher64, Data, Signature>;
+type NetworkReceiver = UnboundedReceiver<(NetworkData, NodeIndex)>;
+type NetworkSender = UnboundedSender<(NetworkData, NodeIndex)>;
 
 pub(crate) struct Network {
-    rx: UnboundedReceiver<AddressedMessage>,
-    tx: UnboundedSender<AddressedMessage>,
-    peer_list: Vec<PeerId>,
-    my_peer_id: PeerId,
+    rx: NetworkReceiver,
+    tx: NetworkSender,
+    peers: Vec<NodeIndex>,
+    index: NodeIndex,
 }
 
 #[async_trait::async_trait]
-impl NetworkT for Network {
+impl NetworkT<Hasher64, Data, Signature> for Network {
     type Error = ();
-    fn send(&self, command: NetworkCommand) -> Result<(), Self::Error> {
-        match command {
-            NetworkCommand::SendToAll(msg) => {
-                for peer in self.peer_list.iter() {
-                    if *peer != self.my_peer_id {
-                        self.send_msg_to_peer(msg.clone(), peer.clone(), false)?;
-                    }
-                }
-            }
-            NetworkCommand::SendToPeer(msg, receiver) => {
-                self.send_msg_to_peer(msg, receiver, false)?;
-            }
-            NetworkCommand::SendToRandPeer(msg) => {
-                let rand_peer = self.sample_random_peer();
-                self.send_msg_to_peer(msg, rand_peer, false)?;
-            }
-            NetworkCommand::ReliableBroadcast(msg) => {
-                for peer in self.peer_list.iter() {
-                    if *peer != self.my_peer_id {
-                        self.send_msg_to_peer(msg.clone(), peer.clone(), true)?;
-                    }
-                }
+
+    fn broadcast(&self, data: NetworkData) -> Result<(), Self::Error> {
+        for peer in self.peers.iter() {
+            if *peer != self.index {
+                self.send(data.clone(), *peer)?;
             }
         }
         Ok(())
     }
-    async fn next_event(&mut self) -> Option<NetworkEvent> {
-        match self.rx.next().await {
-            Some(addr_msg) => {
-                let AddressedMessage {
-                    message,
-                    sender,
-                    receiver: _,
-                    reliable: _,
-                } = addr_msg;
-                Some(NetworkEvent::MessageReceived(message, sender))
-            }
-            None => None,
-        }
+
+    fn send(&self, data: NetworkData, node: NodeIndex) -> Result<(), Self::Error> {
+        self.tx.unbounded_send((data, node)).map_err(|_| ())
+    }
+
+    async fn next_event(&mut self) -> Option<NetworkData> {
+        Some(self.rx.next().await?.0)
     }
 }
 
-impl Network {
-    pub(crate) fn sample_random_peer(&self) -> PeerId {
-        let mut rng = thread_rng();
-        loop {
-            let rand_peer = self
-                .peer_list
-                .choose(&mut rng)
-                .expect("Peer list must be non-empty.")
-                .clone();
-            if rand_peer != self.my_peer_id {
-                return rand_peer;
-            }
-        }
-    }
-
-    pub(crate) fn send_msg_to_peer(
-        &self,
-        msg: Message,
-        peer: PeerId,
-        reliable: bool,
-    ) -> Result<(), ()> {
-        let addr_msg = AddressedMessage {
-            message: msg,
-            sender: self.my_peer_id.clone(),
-            receiver: peer,
-            reliable,
-        };
-        self.tx.unbounded_send(addr_msg).map_err(|_| ())
-    }
+struct Peer {
+    tx: NetworkSender,
+    rx: NetworkReceiver,
 }
 
-pub(crate) struct NetworkHub {
-    peers: Arc<Mutex<HashMap<PeerId, Peer>>>,
-    peer_list: Arc<Mutex<Vec<PeerId>>>,
+#[derive(Clone)]
+pub(crate) struct UnreliableRouter {
+    peers: Arc<Mutex<HashMap<NodeIndex, Peer>>>,
+    peer_list: Arc<Mutex<Vec<NodeIndex>>>,
     hook_list: Arc<Mutex<Vec<Box<dyn NetworkHook + Send>>>>,
     reliability: f64, //a number in the range [0, 1], 1.0 means perfect reliability, 0.0 means no message gets through
 }
 
-impl NetworkHub {
-    pub(crate) fn new(peer_list: Vec<PeerId>, reliability: f64) -> Self {
-        NetworkHub {
+impl UnreliableRouter {
+    pub(crate) fn new(peer_list: Vec<NodeIndex>, reliability: f64) -> Self {
+        UnreliableRouter {
             peers: Arc::new(Mutex::new(HashMap::new())),
             peer_list: Arc::new(Mutex::new(peer_list)),
             hook_list: Arc::new(Mutex::new(Vec::new())),
@@ -322,7 +261,7 @@ impl NetworkHub {
         self.hook_list.lock().push(Box::new(hook));
     }
 
-    pub(crate) fn connect_peer(&self, peer: PeerId) -> Network {
+    pub(crate) fn connect_peer(&self, peer: NodeIndex) -> Network {
         assert!(
             self.peer_list.lock().iter().any(|p| *p == peer),
             "Must connect a peer in the list."
@@ -337,30 +276,29 @@ impl NetworkHub {
             tx: tx_out_hub,
             rx: rx_in_hub,
         };
-        self.peers.lock().insert(peer.clone(), peer_entry);
-        let net = Network {
+        self.peers.lock().insert(peer, peer_entry);
+        Network {
             rx: rx_out_hub,
             tx: tx_in_hub,
-            peer_list: self.peer_list.lock().clone(),
-            my_peer_id: peer,
-        };
-        net
+            peers: self.peer_list.lock().clone(),
+            index: peer,
+        }
     }
 }
 
-impl Future for NetworkHub {
+impl Future for UnreliableRouter {
     type Output = ();
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut disconnected_peers: Vec<PeerId> = Vec::new();
+        let mut disconnected_peers: Vec<NodeIndex> = Vec::new();
         let mut buffer = Vec::new();
         for (peer_id, peer) in self.peers.lock().iter_mut() {
             loop {
                 match peer.rx.poll_next_unpin(cx) {
                     Poll::Ready(Some(msg)) => {
-                        buffer.push(msg);
+                        buffer.push((*peer_id, msg));
                     }
                     Poll::Ready(None) => {
-                        disconnected_peers.push(peer_id.clone());
+                        disconnected_peers.push(*peer_id);
                         break;
                     }
                     Poll::Pending => {
@@ -372,21 +310,20 @@ impl Future for NetworkHub {
         for peer_id in disconnected_peers {
             self.peers.lock().remove(&peer_id);
         }
-        for addr_msg in buffer {
+        for (sender, (data, recipient)) in buffer {
             let rand_sample = rand::random::<f64>();
             if rand_sample > self.reliability {
                 debug!("Simulated network fail.");
                 continue;
             }
             let mut peers = self.peers.lock();
-            if let Some(peer) = peers.get_mut(&addr_msg.receiver.clone()) {
+            if let Some(peer) = peers.get_mut(&recipient) {
                 let hooks = self.hook_list.lock();
                 for hook in hooks.iter() {
-                    hook.update_state(addr_msg.clone());
+                    hook.update_state(data.clone(), sender, recipient);
                 }
-                if let Err(e) = peer.tx.unbounded_send(addr_msg) {
+                if let Err(e) = peer.tx.unbounded_send((data, sender)) {
                     error!(target: "network-hub", "Error when routing message via hub {:?}.", e);
-                } else {
                 }
             }
         }
@@ -396,7 +333,7 @@ impl Future for NetworkHub {
 }
 
 pub(crate) trait NetworkHook: Send {
-    fn update_state(&self, msg: AddressedMessage);
+    fn update_state(&self, data: NetworkData, sender: NodeIndex, recipient: NodeIndex);
 }
 
 #[derive(Clone)]
@@ -417,18 +354,11 @@ impl AlertHook {
 }
 
 impl NetworkHook for AlertHook {
-    fn update_state(&self, msg: AddressedMessage) {
-        let message = msg.message;
-        match ConsensusMessage::<Hasher64, Data, Signature>::decode(&mut &message[..]) {
-            Ok(m) => {
-                if let ConsensusMessage::ForkAlert(_) = m {
-                    let mut alert_count = self.alert_count.lock();
-                    *alert_count += 1;
-                }
-            }
-            Err(e) => {
-                panic!("Error decoding message: {}", e);
-            }
+    fn update_state(&self, data: NetworkData, _: NodeIndex, _: NodeIndex) {
+        use NetworkDataInner::*;
+        if let NetworkDataT(Alert(_)) = data {
+            let mut alert_count = self.alert_count.lock();
+            *alert_count += 1;
         }
     }
 }
@@ -509,16 +439,6 @@ impl KeyBoxT for KeyBox {
     }
 }
 
-pub(crate) fn peer_to_node_ix(peer_id: PeerId) -> NodeIndex {
-    let mut input: &[u8] = peer_id.as_slice();
-    let decoded = NodeIndex::decode(&mut input);
-    decoded.unwrap()
-}
-
-pub(crate) fn node_ix_to_peer(node_ix: NodeIndex) -> PeerId {
-    node_ix.encode()
-}
-
 fn gen_config(ix: NodeIndex, n_members: NodeCount) -> Config {
     Config {
         node_id: ix,
@@ -528,25 +448,21 @@ fn gen_config(ix: NodeIndex, n_members: NodeCount) -> Config {
     }
 }
 
-pub(crate) type HonestMember<'a> = Member<'a, Hasher64, Data, DataIO, KeyBox, Network>;
+pub(crate) type HonestMember<'a> = Member<'a, Hasher64, Data, DataIO, KeyBox>;
 
 pub(crate) fn configure_network(
     n_members: usize,
     reliability: f64,
-) -> (NetworkHub, Vec<Option<Network>>) {
-    let peer_list = (0..n_members)
-        .map(|ix| node_ix_to_peer(NodeIndex(ix)))
-        .collect();
+) -> (UnreliableRouter, Vec<Option<Network>>) {
+    let peer_list = (0..n_members).map(NodeIndex).collect();
 
-    let net_hub = NetworkHub::new(peer_list, reliability);
+    let router = UnreliableRouter::new(peer_list, reliability);
     let mut networks = Vec::new();
     for ix in 0..n_members {
-        let node_index = NodeIndex(ix);
-        let peer_id = node_ix_to_peer(node_index);
-        let network = net_hub.connect_peer(peer_id);
+        let network = router.connect_peer(NodeIndex(ix));
         networks.push(Some(network));
     }
-    (net_hub, networks)
+    (router, networks)
 }
 
 pub(crate) fn spawn_honest_member(
@@ -562,18 +478,9 @@ pub(crate) fn spawn_honest_member(
     let spawner_inner = spawner.clone();
     let member_task = async move {
         let keybox = KeyBox::new(node_index);
-        let member = HonestMember::new(data_io, &keybox, network, config);
-        member.run_session(spawner_inner, exit_rx).await;
+        let member = HonestMember::new(data_io, &keybox, config);
+        member.run_session(network, spawner_inner, exit_rx).await;
     };
     spawner.spawn("member", member_task);
     (rx_batch, exit_tx)
-}
-
-#[test]
-fn peer_node_ix_translation() {
-    for ix in 0..500 {
-        let node_ix = NodeIndex(ix);
-        let peer_id = node_ix_to_peer(node_ix);
-        assert!(node_ix == peer_to_node_ix(peer_id));
-    }
 }

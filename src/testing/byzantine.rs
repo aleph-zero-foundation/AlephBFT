@@ -1,5 +1,3 @@
-use codec::{Decode, Encode};
-
 use log::{debug, error};
 
 use futures::{channel::oneshot, FutureExt, StreamExt};
@@ -7,20 +5,23 @@ use futures::{channel::oneshot, FutureExt, StreamExt};
 use std::collections::HashMap;
 
 use crate::{
+    network::NetworkDataInner::Units,
     nodes::NodeMap,
     signed::Signed,
     testing::mock::{
-        configure_network, init_log, node_ix_to_peer, spawn_honest_member, AlertHook, Data,
-        Hasher64, KeyBox, Network, PeerId, Signature, Spawner,
+        configure_network, init_log, spawn_honest_member, AlertHook, Data, Hasher64, KeyBox,
+        Network, Signature, Spawner,
     },
     units::{ControlHash, FullUnit, PreUnit, SignedUnit, UnitCoord},
-    Hasher, Network as NetworkT, NetworkCommand, NetworkEvent, NodeCount, NodeIndex, SessionId,
+    Hasher, Network as NetworkT, NetworkData as NetworkDataT, NodeCount, NodeIndex, SessionId,
     SpawnHandle,
 };
 
 type Hash64 = <Hasher64 as Hasher>::Hash;
 
-use crate::member::{ConsensusMessage, ConsensusMessage::*};
+use crate::member::UnitMessage::NewUnit;
+
+type NetworkData = NetworkDataT<Hasher64, Data, Signature>;
 
 struct MaliciousMember<'a> {
     node_ix: NodeIndex,
@@ -57,10 +58,8 @@ impl<'a> MaliciousMember<'a> {
         }
     }
 
-    fn send_network_command(&mut self, command: NetworkCommand) {
-        if let Err(e) = self.network.send(command) {
-            panic!("Failed to send network command {:?}.", e);
-        }
+    fn unit_to_data(su: SignedUnit<'a, Hasher64, Data, KeyBox>) -> NetworkData {
+        NetworkDataT(Units(NewUnit(su.into())))
     }
 
     fn pick_parents(&self, round: usize) -> Option<NodeMap<Option<Hash64>>> {
@@ -91,9 +90,8 @@ impl<'a> MaliciousMember<'a> {
     }
 
     fn send_legit_unit(&mut self, su: SignedUnit<'a, Hasher64, Data, KeyBox>) {
-        let message = ConsensusMessage::<Hasher64, Data, Signature>::NewUnit(su.into());
-        let command = NetworkCommand::SendToAll(message.encode());
-        self.send_network_command(command);
+        let message = Self::unit_to_data(su);
+        let _ = self.network.broadcast(message);
     }
 
     fn send_two_variants(
@@ -103,17 +101,15 @@ impl<'a> MaliciousMember<'a> {
     ) {
         // We send variant k \in {0,1} to each node with index = k (mod 2)
         // We also send to ourselves, it does not matter much.
-        let message0 = ConsensusMessage::<Hasher64, Data, Signature>::NewUnit(su0.into());
-        let message1 = ConsensusMessage::<Hasher64, Data, Signature>::NewUnit(su1.into());
+        let message0 = Self::unit_to_data(su0);
+        let message1 = Self::unit_to_data(su1);
         for ix in 0..self.n_members.0 {
             let node_ix = NodeIndex(ix);
-            let peer_id = node_ix_to_peer(node_ix);
-            let command = if ix % 2 == 0 {
-                NetworkCommand::SendToPeer(message0.encode(), peer_id)
+            let _ = if ix % 2 == 0 {
+                self.network.send(message0.clone(), node_ix)
             } else {
-                NetworkCommand::SendToPeer(message1.encode(), peer_id)
+                self.network.send(message1.clone(), node_ix)
             };
-            self.send_network_command(command);
         }
     }
 
@@ -154,13 +150,9 @@ impl<'a> MaliciousMember<'a> {
         self.unit_store.insert(coord, su);
     }
 
-    fn on_consensus_message(
-        &mut self,
-        message: ConsensusMessage<Hasher64, Data, Signature>,
-        _peer_id: PeerId,
-    ) {
+    fn on_network_data(&mut self, data: NetworkData) {
         // We ignore all messages except those carrying new units.
-        if let NewUnit(unchecked) = message {
+        if let NetworkDataT(Units(NewUnit(unchecked))) = data {
             debug!(target: "malicious-member", "New unit received {:?}.", &unchecked);
             match unchecked.check(self.keybox) {
                 Ok(su) => self.on_unit_received(su),
@@ -172,29 +164,14 @@ impl<'a> MaliciousMember<'a> {
         // else we stay silent
     }
 
-    fn handle_event(&mut self, event: NetworkEvent) {
-        match event {
-            NetworkEvent::MessageReceived(message, sender) => {
-                match ConsensusMessage::decode(&mut &message[..]) {
-                    Ok(message) => {
-                        self.on_consensus_message(message, sender);
-                    }
-                    Err(e) => {
-                        panic!("Error decoding message: {}", e);
-                    }
-                }
-            }
-        }
-    }
-
     pub async fn run_session(mut self, exit: oneshot::Receiver<()>) {
         let mut exit = exit.into_stream();
         self.create_if_possible();
         loop {
             tokio::select! {
                 event = self.network.next_event() => match event {
-                    Some(event) => {
-                        self.handle_event(event);
+                    Some(data) => {
+                        self.on_network_data(data);
                     },
                     None => {
                         error!(target: "malicious-member", "Network message stream closed.");
