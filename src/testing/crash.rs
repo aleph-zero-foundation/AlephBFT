@@ -15,8 +15,12 @@ async fn honest_members_agree_on_batches(
     let spawner = Spawner::new();
     let mut exits = vec![];
     let mut batch_rxs = Vec::new();
-    let (net_hub, mut networks) = configure_network(n_members, network_reliability);
-    spawner.spawn("network-hub", net_hub);
+    let (mut net_hub, networks) = configure_network(
+        n_members,
+        network_reliability,
+        (0..n_members).map(NodeIndex),
+    );
+    spawner.spawn("network-hub", async move { net_hub.run().await });
 
     for network in networks.iter_mut() {
         let network = network.take().unwrap();

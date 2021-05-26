@@ -13,6 +13,9 @@ readme = "README.md"
 
 description = """AlephBFT is an asynchronous and Byzantine fault tolerant consensus protocol aimed at ordering arbitrary messages (transactions). It has been designed to continuously operate even in the harshest conditions: with no bounds on message-delivery delays and in the presence of malicious actors. This makes it an excellent fit for blockchain-related applications."""
 
+[workspace]
+members = [".", "fuzz"]
+
 [dependencies]
 bit-vec = "0.6"
 futures = "0.3"
@@ -22,8 +25,12 @@ derivative = "2.2.0"
 log = "0.4"
 rand = "0.8"
 async-trait = "0.1"
-codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive"] }
+codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive", "std"] }
 parking_lot = "0.11"
+
+tokio = { version = "1.6.1", features = ["macros", "rt", "rt-multi-thread"], optional = true }
+libp2p = { version = "0.38", features = ["mdns", "tcp-tokio"], optional = true }
+env_logger = { version = "0.8", optional = true }
 
 [dev-dependencies]
 sha3 = "0.9.1"
@@ -33,3 +40,6 @@ libp2p = { version ="0.39", features = ["mdns", "tcp-tokio"]}
 parking_lot = "0.11"
 env_logger = "0.8"
 chrono = "0.4"
+
+[features]
+fuzz = ["tokio", "libp2p", "env_logger"]

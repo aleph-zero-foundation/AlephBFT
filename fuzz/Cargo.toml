@@ -1,0 +1,32 @@
+[package]
+name = "rush-fuzz"
+version = "0.0.1"
+publish = false
+edition = "2018"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+aleph-bft = { path = "..", features = ["fuzz"] }
+libfuzzer-sys = { version = "0.4" }
+afl = { version = "0.8", optional = true }
+codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive"] }
+log = "0.4"
+structopt = "0.3.8"
+
+[features]
+default = []
+
+[[bin]]
+name = "fuzz_target_1"
+path = "libfuzz_targets/fuzz_target_1.rs"
+
+[[bin]]
+name = "fuzz_target_1_afl"
+path = "afl_targets/fuzz_target_1.rs"
+required-features = ["afl"]
+
+[[bin]]
+name = "gen_fuzz"
+path = "bin/main.rs"

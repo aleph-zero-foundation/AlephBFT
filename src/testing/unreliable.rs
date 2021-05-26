@@ -19,7 +19,7 @@ struct CorruptPacket {
 }
 
 impl NetworkHook for CorruptPacket {
-    fn update_state(&self, data: &mut NetworkData, sender: NodeIndex, recipient: NodeIndex) {
+    fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, recipient: NodeIndex) {
         if self.recipient != recipient || self.sender != sender {
             return;
         }
@@ -40,7 +40,7 @@ struct NoteRequest {
 }
 
 impl NetworkHook for NoteRequest {
-    fn update_state(&self, data: &mut NetworkData, sender: NodeIndex, _: NodeIndex) {
+    fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, _: NodeIndex) {
         use NetworkDataInner::Units;
         use UnitMessage::RequestCoord;
         if sender == self.sender {
@@ -62,7 +62,7 @@ async fn request_missing_coord() {
     let censoring_node = NodeIndex(1);
     let censoring_round = 5;
 
-    let (net_hub, mut networks) = configure_network(n_members, 1.0);
+    let (mut net_hub, networks) = configure_network(n_members, 1.0, (0..n_members).map(NodeIndex));
     net_hub.add_hook(CorruptPacket {
         recipient: censored_node,
         sender: censoring_node,
@@ -77,13 +77,12 @@ async fn request_missing_coord() {
         requested: requested.clone(),
     });
     let spawner = Spawner::new();
-    spawner.spawn("network-hub", net_hub);
+    spawner.spawn("network-hub", async move { net_hub.run().await });
 
     let mut exits = vec![];
     let mut batch_rxs = Vec::new();
-    for network in networks.iter_mut() {
-        let network = network.take().unwrap();
-        let ix = network.index();
+    for network in networks {
+        let ix = network.index.into();
         let (batch_rx, exit_tx) = spawn_honest_member(spawner.clone(), ix, n_members, network);
         batch_rxs.push(batch_rx);
         exits.push(exit_tx);
