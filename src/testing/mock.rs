@@ -25,8 +25,8 @@ use crate::{
     member::{Config, NotificationIn, NotificationOut},
     network::NetworkDataInner,
     units::{Unit, UnitCoord},
-    DataIO as DataIOT, Hasher, Index, KeyBox as KeyBoxT, Network as NetworkT,
-    NetworkData as NetworkDataT, NodeCount, NodeIndex, OrderedBatch, SpawnHandle,
+    DataIO as DataIOT, Hasher, Index, KeyBox as KeyBoxT, Network as NetworkT, NodeCount, NodeIndex,
+    OrderedBatch, SpawnHandle,
 };
 
 use crate::member::Member;
@@ -201,7 +201,7 @@ impl Spawner {
     }
 }
 
-type NetworkData = NetworkDataT<Hasher64, Data, Signature>;
+pub(crate) type NetworkData = crate::NetworkData<Hasher64, Data, Signature>;
 type NetworkReceiver = UnboundedReceiver<(NetworkData, NodeIndex)>;
 type NetworkSender = UnboundedSender<(NetworkData, NodeIndex)>;
 
@@ -257,7 +257,7 @@ impl UnreliableRouter {
         }
     }
 
-    pub(crate) fn add_hook<HK: NetworkHook + Send + Clone + 'static>(&self, hook: HK) {
+    pub(crate) fn add_hook<HK: NetworkHook + 'static>(&self, hook: HK) {
         self.hook_list.lock().push(Box::new(hook));
     }
 
@@ -310,7 +310,7 @@ impl Future for UnreliableRouter {
         for peer_id in disconnected_peers {
             self.peers.lock().remove(&peer_id);
         }
-        for (sender, (data, recipient)) in buffer {
+        for (sender, (mut data, recipient)) in buffer {
             let rand_sample = rand::random::<f64>();
             if rand_sample > self.reliability {
                 debug!("Simulated network fail.");
@@ -318,9 +318,8 @@ impl Future for UnreliableRouter {
             }
             let mut peers = self.peers.lock();
             if let Some(peer) = peers.get_mut(&recipient) {
-                let hooks = self.hook_list.lock();
-                for hook in hooks.iter() {
-                    hook.update_state(data.clone(), sender, recipient);
+                for hook in self.hook_list.lock().iter_mut() {
+                    hook.update_state(&mut data, sender, recipient);
                 }
                 peer.tx
                     .unbounded_send((data, sender))
@@ -333,7 +332,7 @@ impl Future for UnreliableRouter {
 }
 
 pub(crate) trait NetworkHook: Send {
-    fn update_state(&self, data: NetworkData, sender: NodeIndex, recipient: NodeIndex);
+    fn update_state(&self, data: &mut NetworkData, sender: NodeIndex, recipient: NodeIndex);
 }
 
 #[derive(Clone)]
@@ -354,11 +353,10 @@ impl AlertHook {
 }
 
 impl NetworkHook for AlertHook {
-    fn update_state(&self, data: NetworkData, _: NodeIndex, _: NodeIndex) {
+    fn update_state(&self, data: &mut NetworkData, _: NodeIndex, _: NodeIndex) {
         use NetworkDataInner::*;
-        if let NetworkDataT(Alert(_)) = data {
-            let mut alert_count = self.alert_count.lock();
-            *alert_count += 1;
+        if let crate::NetworkData(Alert(_)) = data {
+            *self.alert_count.lock() += 1;
         }
     }
 }

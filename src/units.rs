@@ -9,7 +9,7 @@ use std::{cell::RefCell, collections::HashMap, hash::Hash as StdHash};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Encode, Decode, StdHash)]
 pub(crate) struct UnitCoord {
-    round: u16,
+    pub(crate) round: u16,
     creator: NodeIndex,
 }
 
@@ -92,9 +92,11 @@ impl<H: Hasher> PreUnit<H> {
     pub(crate) fn creator(&self) -> NodeIndex {
         self.coord.creator()
     }
+
     pub(crate) fn round(&self) -> Round {
         self.coord.round()
     }
+
     pub(crate) fn control_hash(&self) -> &ControlHash<H> {
         &self.control_hash
     }
@@ -161,6 +163,10 @@ impl<H: Hasher, D: Data> FullUnit<H, D> {
     }
     pub(crate) fn unit(&self) -> Unit<H> {
         Unit::new(self.pre_unit.clone(), self.hash())
+    }
+    #[cfg(test)]
+    pub(crate) fn set_round(&mut self, round: Round) {
+        self.pre_unit.coord.round = round as u16
     }
 }
 
