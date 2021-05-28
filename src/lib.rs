@@ -8,7 +8,8 @@ use std::{fmt::Debug, hash::Hash as StdHash};
 
 use crate::nodes::{NodeCount, NodeIndex, NodeMap};
 
-pub use member::{Config, Member};
+pub use config::{default_config, Config};
+pub use member::Member;
 pub use network::{Network, NetworkData};
 
 mod bft;
@@ -20,6 +21,7 @@ mod network;
 pub mod nodes;
 mod signed;
 pub use signed::*;
+mod config;
 mod terminal;
 mod testing;
 mod units;

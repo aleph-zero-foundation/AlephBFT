@@ -1,12 +1,13 @@
 use crate::{
-    member::{Config, NotificationOut},
+    config::{Config, DelaySchedule},
+    member::NotificationOut,
     nodes::{NodeCount, NodeIndex, NodeMap},
     units::{ControlHash, PreUnit, Unit},
     Hasher, Receiver, Round, Sender,
 };
 use futures::{channel::oneshot, FutureExt, StreamExt};
 use log::{debug, error};
-use tokio::time::{delay_for, Duration};
+use tokio::time::delay_for;
 
 /// A process responsible for creating new units. It receives all the units added locally to the Dag
 /// via the parents_rx channel endpoint. It creates units according to an internal strategy respecting
@@ -18,14 +19,14 @@ use tokio::time::{delay_for, Duration};
 /// The currently implemented strategy creates the unit U at the very first moment when enough
 /// candidates for parents are available for all the above constraints to be satisfied.
 pub(crate) struct Creator<H: Hasher> {
-    node_id: NodeIndex,
+    node_ix: NodeIndex,
     parents_rx: Receiver<Unit<H>>,
     new_units_tx: Sender<NotificationOut<H>>,
     n_members: NodeCount,
     current_round: Round, // current_round is the round number of our next unit
     candidates_by_round: Vec<NodeMap<Option<H::Hash>>>,
     n_candidates_by_round: Vec<NodeCount>,
-    create_lag: Duration,
+    create_lag: DelaySchedule,
 }
 
 impl<H: Hasher> Creator<H> {
@@ -34,14 +35,11 @@ impl<H: Hasher> Creator<H> {
         parents_rx: Receiver<Unit<H>>,
         new_units_tx: Sender<NotificationOut<H>>,
     ) -> Self {
-        let Config {
-            node_id,
-            n_members,
-            create_lag,
-            ..
-        } = conf;
+        let node_ix = conf.node_ix;
+        let n_members = conf.n_members;
+        let create_lag = conf.delay_config.unit_creation_delay;
         Creator {
-            node_id,
+            node_ix,
             parents_rx,
             new_units_tx,
             n_members,
@@ -73,13 +71,13 @@ impl<H: Hasher> Creator<H> {
 
         let control_hash = ControlHash::new(&parents);
 
-        let new_preunit = PreUnit::new(self.node_id, round, control_hash);
-        debug!(target: "rush-creator", "{:?} Created a new unit {:?} at round {:?}.", self.node_id, new_preunit, self.current_round);
+        let new_preunit = PreUnit::new(self.node_ix, round, control_hash);
+        debug!(target: "rush-creator", "{:?} Created a new unit {:?} at round {:?}.", self.node_ix, new_preunit, self.current_round);
         let send_result = self
             .new_units_tx
             .unbounded_send(NotificationOut::CreatedPreUnit(new_preunit));
         if let Err(e) = send_result {
-            error!(target: "rush-creator", "{:?} Unable to send a newly created unit: {:?}.", self.node_id, e);
+            error!(target: "rush-creator", "{:?} Unable to send a newly created unit: {:?}.", self.node_ix, e);
         }
 
         self.current_round += 1;
@@ -108,11 +106,13 @@ impl<H: Hasher> Creator<H> {
         let threshold = (self.n_members * 2) / 3;
 
         self.n_candidates_by_round[prev_round] > threshold
-            && self.candidates_by_round[prev_round][self.node_id].is_some()
+            && self.candidates_by_round[prev_round][self.node_ix].is_some()
     }
 
     pub(crate) async fn create(&mut self, exit: oneshot::Receiver<()>) {
         self.create_unit();
+        delay_for((self.create_lag)(0)).await;
+        let mut round: usize = 1;
         let mut exit = exit.into_stream();
         loop {
             tokio::select! {
@@ -120,11 +120,12 @@ impl<H: Hasher> Creator<H> {
                     self.add_unit(u.round(), u.creator(), u.hash());
                     if self.check_ready() {
                         self.create_unit();
-                        delay_for(self.create_lag).await;
+                        delay_for((self.create_lag)(round)).await;
+                        round += 1;
                     }
                 }
                 _ = exit.next() => {
-                    debug!(target: "rush-creator", "{:?} received exit signal.", self.node_id);
+                    debug!(target: "rush-creator", "{:?} received exit signal.", self.node_ix);
                     break
                 }
             }

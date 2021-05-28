@@ -8,6 +8,7 @@ use rand::Rng;
 
 use crate::{
     bft::{Alert, ForkProof},
+    config::Config,
     consensus,
     network::{NetworkHub, Recipient},
     signed::{SignatureError, Signed},
@@ -15,7 +16,7 @@ use crate::{
         ControlHash, FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore,
     },
     Data, DataIO, Hasher, KeyBox, Network, NodeCount, NodeIndex, NodeMap, OrderedBatch,
-    RequestAuxData, Sender, SessionId, SpawnHandle,
+    RequestAuxData, Sender, SpawnHandle,
 };
 
 use std::{
@@ -24,13 +25,6 @@ use std::{
     fmt::Debug,
 };
 use tokio::time;
-
-const FETCH_INTERVAL: time::Duration = time::Duration::from_secs(4);
-const TICK_INTERVAL: time::Duration = time::Duration::from_millis(100);
-const INITIAL_MULTICAST_DELAY: time::Duration = time::Duration::from_secs(3);
-// we will accept units that are of round <= (round_in_progress + ROUNDS_MARGIN) only
-const ROUNDS_MARGIN: usize = 100;
-const MAX_UNITS_ALERT: usize = 200;
 
 /// A message concerning units, either about new units or some requests for them.
 #[derive(Debug, Encode, Decode, Clone)]
@@ -83,8 +77,8 @@ pub(crate) enum NotificationOut<H: Hasher> {
 enum Task<H: Hasher> {
     CoordRequest(UnitCoord),
     ParentsRequest(H::Hash),
-    // the hash of a unit, and the delay before repeating the multicast
-    UnitMulticast(H::Hash, time::Duration),
+    //The hash of a unit, and the number of this multicast (i.e., how many times was the unit multicast already).
+    UnitMulticast(H::Hash, usize),
 }
 
 #[derive(Eq, PartialEq)]
@@ -115,14 +109,6 @@ impl<H: Hasher> PartialOrd for ScheduledTask<H> {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct Config {
-    pub node_id: NodeIndex,
-    pub session_id: SessionId,
-    pub n_members: NodeCount,
-    pub create_lag: time::Duration,
-}
-
 pub struct Member<'a, H: Hasher, D: Data, DP: DataIO<D>, KB: KeyBox> {
     config: Config,
     tx_consensus: Option<Sender<NotificationIn<H>>>,
@@ -146,12 +132,13 @@ where
     pub fn new(data_io: DP, keybox: &'a KB, config: Config) -> Self {
         let n_members = config.n_members;
         let threshold = (n_members * 2) / 3 + NodeCount(1);
+        let max_round = config.max_round;
         Member {
             config,
             tx_consensus: None,
             data_io,
             keybox,
-            store: UnitStore::new(n_members, threshold),
+            store: UnitStore::new(n_members, threshold, max_round),
             requests: BinaryHeap::new(),
             threshold,
             n_members,
@@ -179,10 +166,7 @@ where
         let signed_unit = Signed::sign(full_unit, self.keybox);
         self.store.add_unit(signed_unit, false);
         let curr_time = time::Instant::now();
-        let task = ScheduledTask::new(
-            Task::UnitMulticast(hash, INITIAL_MULTICAST_DELAY),
-            curr_time,
-        );
+        let task = ScheduledTask::new(Task::UnitMulticast(hash, 0), curr_time);
         self.requests.push(task);
     }
 
@@ -200,8 +184,8 @@ where
                 Task::CoordRequest(coord) => {
                     self.schedule_coord_request(coord, curr_time);
                 }
-                Task::UnitMulticast(hash, interval) => {
-                    self.schedule_unit_multicast(hash, interval, curr_time);
+                Task::UnitMulticast(hash, multicast_number) => {
+                    self.schedule_unit_multicast(hash, multicast_number, curr_time);
                 }
                 Task::ParentsRequest(u_hash) => {
                     self.schedule_parents_request(u_hash, curr_time);
@@ -259,9 +243,10 @@ where
             let peer_id = self.random_peer();
             self.send_unit_message(message, peer_id);
             debug!(target: "rush-member", "{:?} Fetch parents for {:?} sent.", self.index(), u_hash);
+            let delay = self.config.delay_config.requests_interval;
             self.requests.push(ScheduledTask::new(
                 Task::ParentsRequest(u_hash),
-                curr_time + FETCH_INTERVAL,
+                curr_time + delay,
             ));
         } else {
             debug!(target: "rush-member", "{:?} Request dropped as the parents are in store for {:?}.", self.index(), u_hash);
@@ -280,16 +265,17 @@ where
         let peer_id = self.random_peer();
         self.send_unit_message(message, peer_id);
         debug!(target: "rush-member", "{:?} Fetch request for {:?} sent.", self.index(), coord);
+        let delay = self.config.delay_config.requests_interval;
         self.requests.push(ScheduledTask::new(
             Task::CoordRequest(coord),
-            curr_time + FETCH_INTERVAL,
+            curr_time + delay,
         ));
     }
 
     fn schedule_unit_multicast(
         &mut self,
         hash: H::Hash,
-        interval: time::Duration,
+        multicast_number: usize,
         curr_time: time::Instant,
     ) {
         let signed_unit = self
@@ -298,12 +284,12 @@ where
             .cloned()
             .expect("Our units are in store.");
         let message = UnitMessage::<H, D, KB::Signature>::NewUnit(signed_unit.into());
-        debug!(target: "rush-member", "{:?} Sending a unit {:?} over network after delay {:?}.", self.index(), hash, interval);
+        debug!(target: "rush-member", "{:?} Sending a unit {:?} over network {:?}th time.", self.index(), hash, multicast_number);
         self.broadcast_units(message);
-        // NOTE: we double the delay each time
+        let delay = (self.config.delay_config.unit_broadcast_delay)(multicast_number);
         self.requests.push(ScheduledTask::new(
-            Task::UnitMulticast(hash, interval * 2),
-            curr_time + interval,
+            Task::UnitMulticast(hash, multicast_number + 1),
+            curr_time + delay,
         ));
     }
 
@@ -425,7 +411,8 @@ where
         }
         let u_round = full_unit.round();
         let round_in_progress = self.store.get_round_in_progress();
-        if u_round <= round_in_progress + ROUNDS_MARGIN {
+        let rounds_margin = self.config.rounds_margin;
+        if u_round <= round_in_progress + rounds_margin {
             self.store.add_unit(su, false);
         } else {
             debug!(target: "rush-member", "{:?} Unit {:?} ignored because of too high round {} when round in progress is {}.", self.index(), full_unit, u_round, round_in_progress);
@@ -582,8 +569,9 @@ where
         // 2) All units must be created by forker
         // 3) All units must come from different rounds
         // 4) There must be <= MAX_UNITS_ALERT of them
-        if units.len() > MAX_UNITS_ALERT {
-            debug!(target: "rush-member", "{:?} Too many units: {} included in alert.", self.index(), units.len());
+        let max_units_alert = self.config.max_units_per_alert;
+        if units.len() > max_units_alert {
+            debug!(target: "rush-member", "{:?} Too many units: {:?} included in alert.", self.index(), units.len());
             return false;
         }
         let mut rounds: HashSet<usize> = HashSet::new();
@@ -647,7 +635,7 @@ where
         units: Vec<SignedUnit<'a, H, D, KB>>,
     ) -> Alert<H, D, KB::Signature> {
         Alert {
-            sender: self.config.node_id,
+            sender: self.config.node_ix,
             forker,
             proof,
             legit_units: units.into_iter().map(|signed| signed.into()).collect(),
@@ -655,11 +643,12 @@ where
     }
 
     fn on_new_forker_detected(&mut self, forker: NodeIndex, proof: ForkProof<H, D, KB::Signature>) {
+        let max_units_alert = self.config.max_units_per_alert;
         let mut alerted_units = self.store.mark_forker(forker);
-        if alerted_units.len() > MAX_UNITS_ALERT {
+        if alerted_units.len() > max_units_alert {
             // The ordering is increasing w.r.t. rounds.
             alerted_units.reverse();
-            alerted_units.truncate(MAX_UNITS_ALERT);
+            alerted_units.truncate(max_units_alert);
             alerted_units.reverse();
         }
         let alert = self.form_alert(forker, proof, alerted_units);
@@ -766,8 +755,8 @@ where
         let (consensus_exit, exit_stream) = oneshot::channel();
         let config = self.config.clone();
         let sh = spawn_handle.clone();
-        debug!(target: "rush-member", "{:?} Spawning party for a session with config {:?}", self.index(), self.config);
-        spawn_handle.spawn("member/consensus", async move {
+        debug!(target: "rush-member", "{:?} Spawning party for a session.", self.index());
+        spawn_handle.spawn("consensus/root", async move {
             consensus::run(
                 config,
                 consensus_stream,
@@ -791,7 +780,8 @@ where
         });
         self.outgoing_units = Some(outgoing_units);
         self.outgoing_alerts = Some(outgoing_alerts);
-        let mut ticker = time::interval(TICK_INTERVAL);
+        let ticker_delay = self.config.delay_config.tick_interval;
+        let mut ticker = time::interval(ticker_delay);
         let mut exit = exit.into_stream();
 
         debug!(target: "rush-member", "{:?} Start routing messages from consensus to network", self.index());

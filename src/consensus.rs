@@ -2,9 +2,10 @@ use futures::channel::{mpsc, oneshot};
 use log::{debug, error};
 
 use crate::{
+    config::Config,
     creator::Creator,
     extender::Extender,
-    member::{Config, NotificationIn, NotificationOut},
+    member::{NotificationIn, NotificationOut},
     terminal::Terminal,
     Hasher, OrderedBatch, Receiver, Sender, SpawnHandle,
 };
@@ -17,12 +18,12 @@ pub(crate) async fn run<H: Hasher + 'static>(
     spawn_handle: impl SpawnHandle,
     exit: oneshot::Receiver<()>,
 ) {
-    debug!(target: "rush-root", "{:?} Starting all services...", conf.node_id);
+    debug!(target: "rush-root", "{:?} Starting all services...", conf.node_ix);
 
     let n_members = conf.n_members;
 
     let (electors_tx, electors_rx) = mpsc::unbounded();
-    let mut extender = Extender::<H>::new(conf.node_id, n_members, electors_rx, ordered_batch_tx);
+    let mut extender = Extender::<H>::new(conf.node_ix, n_members, electors_rx, ordered_batch_tx);
     let (extender_exit, exit_rx) = oneshot::channel();
     spawn_handle.spawn("consensus/extender", async move {
         extender.extend(exit_rx).await
@@ -38,7 +39,7 @@ pub(crate) async fn run<H: Hasher + 'static>(
         async move { creator.create(exit_rx).await },
     );
 
-    let mut terminal = Terminal::new(conf.node_id, incoming_notifications, outgoing_notifications);
+    let mut terminal = Terminal::new(conf.node_ix, incoming_notifications, outgoing_notifications);
 
     // send a new parent candidate to the creator
     terminal.register_post_insert_hook(Box::new(move |u| {
@@ -60,7 +61,7 @@ pub(crate) async fn run<H: Hasher + 'static>(
         "consensus/terminal",
         async move { terminal.run(exit_rx).await },
     );
-    debug!(target: "rush-root", "{:?} All services started.", conf.node_id);
+    debug!(target: "rush-root", "{:?} All services started.", conf.node_ix);
 
     let _ = exit.await;
     // we stop no matter if received Ok or Err
@@ -68,19 +69,18 @@ pub(crate) async fn run<H: Hasher + 'static>(
     let _ = terminal_exit.send(());
     let _ = extender_exit.send(());
 
-    debug!(target: "rush-root", "{:?} All services stopped.", conf.node_id);
+    debug!(target: "rush-root", "{:?} All services stopped.", conf.node_ix);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        testing::mock::{Hasher64, HonestHub, Spawner},
+        testing::mock::{gen_config, Hasher64, HonestHub, Spawner},
         units::{ControlHash, PreUnit, Unit},
         NodeIndex,
     };
     use futures::{channel::mpsc, sink::SinkExt, stream::StreamExt};
-    use tokio::time::Duration;
 
     fn init_log() {
         let _ = env_logger::builder()
@@ -101,12 +101,7 @@ mod tests {
 
         for node_ix in 0..n_members {
             let (tx, rx) = hub.connect(NodeIndex(node_ix));
-            let conf = Config {
-                node_id: node_ix.into(),
-                session_id: 0u64,
-                n_members: n_members.into(),
-                create_lag: Duration::from_millis(10),
-            };
+            let conf = gen_config(NodeIndex(node_ix), n_members.into());
             let (exit_tx, exit_rx) = oneshot::channel();
             exits.push(exit_tx);
             let (batch_tx, batch_rx) = mpsc::unbounded();
@@ -145,12 +140,7 @@ mod tests {
         let (mut tx_in, rx_in) = mpsc::unbounded();
         let (tx_out, mut rx_out) = mpsc::unbounded();
 
-        let conf = Config {
-            node_id: node_ix.into(),
-            session_id: 0u64,
-            n_members: n_nodes.into(),
-            create_lag: Duration::from_millis(10),
-        };
+        let conf = gen_config(NodeIndex(node_ix), n_nodes.into());
         let (exit_tx, exit_rx) = oneshot::channel();
         let (batch_tx, _batch_rx) = mpsc::unbounded();
 
