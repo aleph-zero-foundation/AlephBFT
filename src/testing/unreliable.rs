@@ -25,7 +25,7 @@ mod tests {
                 return;
             }
             if let crate::NetworkData(NetworkDataInner::Units(UnitMessage::NewUnit(us))) = data {
-                let full_unit = &mut us.as_signable();
+                let full_unit = &mut us.as_signable_mut();
                 if full_unit.round() == self.round && full_unit.creator() == self.creator {
                     full_unit.set_round(0);
                 }

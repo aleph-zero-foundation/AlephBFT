@@ -7,7 +7,7 @@ use std::{
 };
 
 /// The index of a node
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, From)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash, From)]
 pub struct NodeIndex(pub usize);
 
 impl Encode for NodeIndex {
@@ -96,7 +96,7 @@ impl<T> IndexMut<NodeIndex> for NodeMap<T> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct BoolNodeMap(bit_vec::BitVec<u32>);
 
 impl BoolNodeMap {

@@ -22,6 +22,7 @@ pub mod nodes;
 mod signed;
 pub use signed::*;
 mod config;
+pub mod rmc;
 mod terminal;
 mod testing;
 mod units;
