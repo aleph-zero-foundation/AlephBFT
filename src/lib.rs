@@ -12,7 +12,7 @@ pub use config::{default_config, Config};
 pub use member::Member;
 pub use network::{Network, NetworkData};
 
-mod bft;
+mod alerts;
 mod consensus;
 mod creator;
 mod extender;

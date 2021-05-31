@@ -1,7 +1,5 @@
 use crate::{
-    member::{AlertMessage, UnitMessage},
-    nodes::NodeIndex,
-    Data, Hasher, Receiver, Sender,
+    alerts::AlertMessage, member::UnitMessage, nodes::NodeIndex, Data, Hasher, Receiver, Sender,
 };
 use codec::{Decode, Encode};
 use futures::{channel::oneshot, FutureExt, StreamExt};

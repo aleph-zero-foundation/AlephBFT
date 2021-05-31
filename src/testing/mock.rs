@@ -409,6 +409,7 @@ impl DataIO {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct KeyBox {
     ix: NodeIndex,
 }

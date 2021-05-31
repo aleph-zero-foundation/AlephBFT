@@ -26,7 +26,7 @@ fn indexed_test_message(i: usize) -> Indexed<TestMessage> {
     )
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct TestMultiKeychain {
     node_count: NodeCount,
     index: NodeIndex,

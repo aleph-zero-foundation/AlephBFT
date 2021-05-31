@@ -11,7 +11,7 @@ impl<T: Debug + Clone + Encode + Decode + Send + 'static> Signature for T {}
 
 /// Abstraction of the signing data and verifying signatures. Typically, consists of a private key
 /// of the node and the public keys of all nodes.
-pub trait KeyBox: Index {
+pub trait KeyBox: Index + Clone + Send + 'static {
     type Signature: Signature;
     fn sign(&self, msg: &[u8]) -> Self::Signature;
     fn verify(&self, msg: &[u8], sgn: &Self::Signature, index: NodeIndex) -> bool;
@@ -85,6 +85,12 @@ impl<T: Signable + Index, S: Clone> UncheckedSigned<T, S> {
             unchecked: self,
             marker: PhantomData,
         })
+    }
+}
+
+impl<T: Signable + Index, S: Clone> Index for UncheckedSigned<T, S> {
+    fn index(&self) -> NodeIndex {
+        self.signable.index()
     }
 }
 
