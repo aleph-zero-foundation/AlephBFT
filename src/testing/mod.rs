@@ -1,6 +1,8 @@
 #[cfg(test)]
-pub mod byzantine;
+mod byzantine;
 #[cfg(test)]
-pub mod crash;
+mod crash;
 #[cfg(test)]
-pub mod mock;
+pub(crate) mod mock;
+#[cfg(test)]
+mod unreliable;

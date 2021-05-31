@@ -59,6 +59,13 @@ pub struct UncheckedSigned<T: Signable, S> {
     signature: S,
 }
 
+#[cfg(test)]
+impl<T: Signable, S: Signature> UncheckedSigned<T, S> {
+    pub(crate) fn as_signable(&mut self) -> &mut T {
+        &mut self.signable
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SignatureError<T: Signable, S> {
     unchecked: UncheckedSigned<T, S>,
