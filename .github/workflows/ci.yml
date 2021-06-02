@@ -45,6 +45,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
+          args: '--lib -- --skip medium'
   master:
     name: push
     if: "github.event_name == 'push'"
@@ -75,6 +76,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
+          args: '--lib -- --skip medium'
   lint:
     name: lint
     strategy:
