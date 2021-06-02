@@ -97,7 +97,7 @@ mod tests {
 
         let mut exits = vec![];
         let mut batch_rxs = vec![];
-        let spawner = Spawner::default();
+        let spawner = Spawner::new();
 
         for node_ix in 0..n_members {
             let (tx, rx) = hub.connect(NodeIndex(node_ix));
@@ -135,7 +135,7 @@ mod tests {
     async fn catches_wrong_control_hash() {
         init_log();
         let n_nodes = 4;
-        let spawner = Spawner::default();
+        let spawner = Spawner::new();
         let node_ix = 0;
         let (mut tx_in, rx_in) = mpsc::unbounded();
         let (tx_out, mut rx_out) = mpsc::unbounded();

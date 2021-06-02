@@ -178,7 +178,7 @@ impl Future for HonestHub {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub(crate) struct Spawner {
     handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
