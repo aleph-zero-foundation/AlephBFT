@@ -27,9 +27,15 @@ fn indexed_test_message(i: usize) -> Indexed<TestMessage> {
 }
 
 #[derive(Debug, Clone)]
-struct TestMultiKeychain {
+pub(crate) struct TestMultiKeychain {
     node_count: NodeCount,
     index: NodeIndex,
+}
+
+impl TestMultiKeychain {
+    pub(crate) fn new(node_count: NodeCount, index: NodeIndex) -> Self {
+        TestMultiKeychain { node_count, index }
+    }
 }
 
 impl Index for TestMultiKeychain {
@@ -39,9 +45,9 @@ impl Index for TestMultiKeychain {
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
-struct TestSignature {
-    msg: Vec<u8>,
-    index: NodeIndex,
+pub(crate) struct TestSignature {
+    pub(crate) msg: Vec<u8>,
+    pub(crate) index: NodeIndex,
 }
 
 impl KeyBox for TestMultiKeychain {
@@ -96,9 +102,9 @@ fn test_invalid_signatures() {
 }
 
 #[derive(Clone, Debug, Default, Encode, Decode, PartialEq)]
-struct TestPartialMultisignature {
-    msg: Vec<u8>,
-    signers: BoolNodeMap,
+pub(crate) struct TestPartialMultisignature {
+    pub(crate) msg: Vec<u8>,
+    pub(crate) signers: BoolNodeMap,
 }
 
 impl PartialMultisignature for TestPartialMultisignature {

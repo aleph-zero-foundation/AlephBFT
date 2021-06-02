@@ -66,6 +66,12 @@ impl<T: Signable, S: Signature> UncheckedSigned<T, S> {
 
 #[cfg(test)]
 impl<T: Signable, S: Signature> UncheckedSigned<T, S> {
+    pub(crate) fn new(signable: T, signature: S) -> Self {
+        UncheckedSigned {
+            signable,
+            signature,
+        }
+    }
     pub(crate) fn as_signable_mut(&mut self) -> &mut T {
         &mut self.signable
     }
@@ -228,8 +234,18 @@ impl<T: Signable> Index for Indexed<T> {
 
 #[derive(Debug)]
 pub struct Multisigned<'a, T: Signable, MK: MultiKeychain> {
-    pub unchecked: UncheckedSigned<T, MK::PartialMultisignature>,
+    unchecked: UncheckedSigned<T, MK::PartialMultisignature>,
     marker: PhantomData<&'a MK>,
+}
+
+impl<'a, T: Signable, MK: MultiKeychain> Multisigned<'a, T, MK> {
+    pub(crate) fn as_signable(&self) -> &T {
+        &self.unchecked.signable
+    }
+
+    pub(crate) fn into_unchecked(self) -> UncheckedSigned<T, MK::PartialMultisignature> {
+        self.unchecked
+    }
 }
 
 impl<'a, T: Signable + Clone, MK: MultiKeychain> Clone for Multisigned<'a, T, MK> {
@@ -311,4 +327,4 @@ impl<'a, T: Signable, MK: MultiKeychain> PartiallyMultisigned<'a, T, MK> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

@@ -11,7 +11,7 @@ use futures::{
 };
 use log::debug;
 use std::{
-    cmp::Ordering,
+    cmp::Reverse,
     collections::{BinaryHeap, HashMap},
     hash::Hash,
 };
@@ -33,62 +33,54 @@ impl<H: Signable, S: Signature, M: PartialMultisignature> Message<H, S, M> {
     }
 }
 
+#[derive(Clone)]
 pub enum Task<H: Signable, MK: MultiKeychain> {
     BroadcastMessage(Message<H, MK::Signature, MK::PartialMultisignature>),
 }
 
 #[async_trait]
-pub trait TaskScheduler<T> {
+pub trait TaskScheduler<T>: Send {
     fn add_task(&mut self, task: T);
     async fn next_task(&mut self) -> Option<T>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ScheduledTask<T> {
-    scheduled_time: time::Instant,
     task: T,
     delay: time::Duration,
 }
 
 impl<T> ScheduledTask<T> {
-    fn new(scheduled_time: time::Instant, task: T, delay: time::Duration) -> Self {
-        ScheduledTask {
-            scheduled_time,
-            task,
-            delay,
-        }
+    fn new(task: T, delay: time::Duration) -> Self {
+        ScheduledTask { task, delay }
     }
 }
 
-impl<T: Ord> Ord for ScheduledTask<T> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        other
-            .scheduled_time
-            .cmp(&self.scheduled_time)
-            .then_with(|| self.task.cmp(&other.task))
-            .then_with(|| self.delay.cmp(&other.delay))
-    }
-}
+#[derive(Ord, PartialOrd, Eq, PartialEq)]
+struct IndexedInstant(time::Instant, usize);
 
-impl<T: Ord> PartialOrd for ScheduledTask<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
+impl IndexedInstant {
+    fn now(i: usize) -> Self {
+        let curr_time = time::Instant::now();
+        IndexedInstant(curr_time, i)
     }
 }
 
 pub struct DoublingDelayScheduler<T> {
     initial_delay: time::Duration,
-    scheduled_tasks: BinaryHeap<ScheduledTask<T>>,
+    scheduled_instants: BinaryHeap<Reverse<IndexedInstant>>,
+    scheduled_tasks: Vec<ScheduledTask<T>>,
     on_new_task_tx: UnboundedSender<T>,
     on_new_task_rx: UnboundedReceiver<T>,
 }
 
-impl<T: Ord> DoublingDelayScheduler<T> {
+impl<T> DoublingDelayScheduler<T> {
     pub fn new(initial_delay: time::Duration) -> Self {
         let (on_new_task_tx, on_new_task_rx) = unbounded();
         DoublingDelayScheduler {
             initial_delay,
-            scheduled_tasks: BinaryHeap::new(),
+            scheduled_instants: BinaryHeap::new(),
+            scheduled_tasks: Vec::new(),
             on_new_task_tx,
             on_new_task_rx,
         }
@@ -96,7 +88,7 @@ impl<T: Ord> DoublingDelayScheduler<T> {
 }
 
 #[async_trait]
-impl<T: Ord + Send + Clone> TaskScheduler<T> for DoublingDelayScheduler<T> {
+impl<T: Send + Clone> TaskScheduler<T> for DoublingDelayScheduler<T> {
     fn add_task(&mut self, task: T) {
         self.on_new_task_tx
             .unbounded_send(task)
@@ -104,8 +96,8 @@ impl<T: Ord + Send + Clone> TaskScheduler<T> for DoublingDelayScheduler<T> {
     }
 
     async fn next_task(&mut self) -> Option<T> {
-        let mut delay: futures::future::Fuse<_> = match self.scheduled_tasks.peek() {
-            Some(task) => tokio::time::delay_until(task.scheduled_time).fuse(),
+        let mut delay: futures::future::Fuse<_> = match self.scheduled_instants.peek() {
+            Some(&Reverse(IndexedInstant(instant, _))) => tokio::time::delay_until(instant).fuse(),
             None => futures::future::Fuse::terminated(),
         };
         // wait until either the scheduled time of the peeked task or a next call of add_task
@@ -113,8 +105,10 @@ impl<T: Ord + Send + Clone> TaskScheduler<T> for DoublingDelayScheduler<T> {
             _ = delay => {},
             task = self.on_new_task_rx.next() => {
                 if let Some(task) = task {
-                    let curr_time = time::Instant::now();
-                    let scheduled_task = ScheduledTask::new(curr_time, task, self.initial_delay);
+                    let i = self.scheduled_tasks.len();
+                    let indexed_instant = IndexedInstant::now(i);
+                    self.scheduled_instants.push(Reverse(indexed_instant));
+                    let scheduled_task = ScheduledTask::new(task, self.initial_delay);
                     self.scheduled_tasks.push(scheduled_task);
                 } else {
                     debug!(target: "rmc", "The tasks ended");
@@ -122,13 +116,18 @@ impl<T: Ord + Send + Clone> TaskScheduler<T> for DoublingDelayScheduler<T> {
                 }
             }
         }
-        let ScheduledTask {
-            scheduled_time,
-            task,
-            delay,
-        } = self.scheduled_tasks.pop().expect("Task must be ready");
-        let scheduled_task = ScheduledTask::new(scheduled_time + delay, task.clone(), 2 * delay);
-        self.scheduled_tasks.push(scheduled_task);
+        let Reverse(IndexedInstant(instant, i)) = self
+            .scheduled_instants
+            .pop()
+            .expect("By the logic of the function, there is an instant available");
+        let scheduled_task = &mut self.scheduled_tasks[i];
+
+        let task = scheduled_task.task.clone();
+        self.scheduled_instants
+            .push(Reverse(IndexedInstant(instant + scheduled_task.delay, i)));
+
+        scheduled_task.delay *= 2;
+
         Some(task)
     }
 }
@@ -177,7 +176,25 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
         let indexed_hash = Indexed::new(hash, self.keychain.index());
         let signed_hash = Signed::sign(indexed_hash, self.keychain);
         let message = Message::SignedHash(signed_hash.into_unchecked());
-        self.handle_message(message);
+        self.handle_message(message.clone());
+        self.scheduler.add_task(Task::BroadcastMessage(message))
+    }
+
+    fn on_complete_multisignature(&mut self, multisigned: Multisigned<'a, H, MK>) {
+        let hash = multisigned.as_signable().clone();
+        self.hash_states.insert(
+            hash,
+            PartiallyMultisigned::Complete {
+                multisigned: multisigned.clone(),
+            },
+        );
+        self.multisigned_hashes_tx
+            .unbounded_send(multisigned.clone())
+            .unwrap();
+        self.scheduler
+            .add_task(Task::BroadcastMessage(Message::MultisignedHash(
+                multisigned.into_unchecked(),
+            )));
     }
 
     fn handle_message(&mut self, message: Message<H, MK::Signature, MK::PartialMultisignature>) {
@@ -188,8 +205,7 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
         match message {
             Message::MultisignedHash(unchecked) => match unchecked.check_multi(self.keychain) {
                 Ok(multisigned) => {
-                    self.hash_states
-                        .insert(hash, PartiallyMultisigned::Complete { multisigned });
+                    self.on_complete_multisignature(multisigned);
                 }
                 Err(_) => {
                     debug!(target: "rmc", "Received a hash with a bad multisignature");
@@ -208,12 +224,14 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
                     None => signed_hash.into_partially_multisigned(self.keychain),
                     Some(partial) => partial.add_signature(signed_hash, self.keychain),
                 };
-                if let PartiallyMultisigned::Complete { multisigned } = &new_state {
-                    self.multisigned_hashes_tx
-                        .unbounded_send(multisigned.clone())
-                        .unwrap();
+                match new_state {
+                    PartiallyMultisigned::Complete { multisigned } => {
+                        self.on_complete_multisignature(multisigned)
+                    }
+                    incomplete => {
+                        self.hash_states.insert(hash.clone(), incomplete);
+                    }
                 }
-                self.hash_states.insert(hash.clone(), new_state);
             }
         }
     }
@@ -235,11 +253,11 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
         }
     }
 
-    pub async fn next_multisigned_hash(&mut self) -> Option<Multisigned<'a, H, MK>> {
+    pub async fn next_multisigned_hash(&mut self) -> Multisigned<'a, H, MK> {
         loop {
             tokio::select! {
                 multisigned_hash = self.multisigned_hashes_rx.next() => {
-                    return multisigned_hash;
+                    return multisigned_hash.expect("We own the tx, so it is not closed");
                 }
 
                 incoming_message = self.network_rx.next() => {
@@ -261,3 +279,6 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
