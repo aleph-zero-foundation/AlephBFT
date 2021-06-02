@@ -261,6 +261,10 @@ impl<H: Hasher> Terminal<H> {
             .unit_store
             .get_mut(&u_hash)
             .expect("unit with wrong control hash must be in store");
+        if u.status != UnitStatus::WrongControlHash {
+            debug!(target: "rush-terminal", "{:?} Received parents response without it being expected for {:?}. Ignoring.", self.node_id, u_hash);
+            return;
+        }
         for (counter, i) in u.unit.control_hash().parents().enumerate() {
             u.parents[i] = Some(p_hashes[counter]);
         }

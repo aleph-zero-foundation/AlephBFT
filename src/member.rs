@@ -447,10 +447,20 @@ where
         if let Some(p_hashes) = maybe_p_hashes {
             let p_hashes = p_hashes.clone();
             debug!(target: "rush-member", "{:?} Answering parents request for hash {:?} from {:?}.", self.index(), u_hash, peer_id);
-            let full_units = p_hashes
-                .into_iter()
-                .map(|hash| self.store.unit_by_hash(&hash).unwrap().clone().into())
-                .collect();
+            let mut full_units = Vec::new();
+            for hash in p_hashes.iter() {
+                if let Some(fu) = self.store.unit_by_hash(&hash) {
+                    full_units.push(fu.clone().into());
+                } else {
+                    debug!(target: "rush-member", "{:?} Not answering parents request, one of the parents missing from store.", self.index());
+                    //This can happen if we got a parents response from someone, but one of the units was a fork and we dropped it.
+                    //Either this parent is legit and we will soon get it in alert or the parent is not legit in which case
+                    //the unit u, whose parents are beeing seeked here is not legit either.
+                    //In any case, if a node added u to its Dag, then it should never reach this place in code when answering
+                    //a parents request (as all the parents must be legit an thus must be in store).
+                    return;
+                }
+            }
             let message = UnitMessage::ResponseParents(u_hash, full_units);
             self.send_unit_message(message, peer_id);
         } else {
@@ -463,6 +473,10 @@ where
         u_hash: H::Hash,
         parents: Vec<UncheckedSignedUnit<H, D, KB::Signature>>,
     ) {
+        if self.store.get_parents(u_hash).is_some() {
+            debug!(target: "rush-member", "{:?} We got parents response but already know the parents.", self.index());
+            return;
+        }
         let (u_round, u_control_hash, parent_ids) = match self.store.unit_by_hash(&u_hash) {
             Some(su) => {
                 let full_unit = su.as_signable();
