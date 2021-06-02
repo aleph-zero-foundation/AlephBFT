@@ -144,8 +144,8 @@ impl<H: Hasher, D: Data> FullUnit<H, D> {
     pub(crate) fn coord(&self) -> UnitCoord {
         self.pre_unit.coord
     }
-    pub(crate) fn data(&self) -> D {
-        self.data.clone()
+    pub(crate) fn data(&self) -> &D {
+        &self.data
     }
     pub(crate) fn session_id(&self) -> SessionId {
         self.session_id

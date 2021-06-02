@@ -4,7 +4,7 @@
 
 use codec::{Decode, Encode};
 use futures::{channel::mpsc, Future};
-use std::{fmt::Debug, hash::Hash as StdHash};
+use std::{fmt::Debug, hash::Hash as StdHash, pin::Pin};
 
 use crate::nodes::{NodeCount, NodeMap};
 
@@ -29,8 +29,14 @@ mod testing;
 mod units;
 
 pub trait DataIO<Data> {
-    type Error: Debug;
+    type Error: Debug + 'static;
     fn get_data(&self) -> Data;
+    // Returns future that indicates when the data becomes available or None if the data
+    // is already available.
+    fn check_availability(
+        &self,
+        data: &Data,
+    ) -> Option<Pin<Box<dyn Future<Output = Result<(), Self::Error>> + Send>>>;
     fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), Self::Error>;
 }
 

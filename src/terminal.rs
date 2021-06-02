@@ -1,4 +1,4 @@
-use futures::{channel::oneshot, FutureExt, StreamExt};
+use futures::{channel::oneshot, StreamExt};
 use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
 use crate::{
@@ -348,8 +348,7 @@ impl<H: Hasher> Terminal<H> {
         self.post_insert.push(hook);
     }
 
-    pub(crate) async fn run(&mut self, exit: oneshot::Receiver<()>) {
-        let mut exit = exit.into_stream();
+    pub(crate) async fn run(&mut self, mut exit: oneshot::Receiver<()>) {
         loop {
             tokio::select! {
                 Some(n) = self.ntfct_rx.next() => {
@@ -366,7 +365,7 @@ impl<H: Hasher> Terminal<H> {
                         }
                     }
                 }
-                _ = exit.next() => {
+                _ = &mut exit => {
                     debug!(target: "rush-terminal", "{:?} received exit signal.", self.node_id);
                     break
                 }

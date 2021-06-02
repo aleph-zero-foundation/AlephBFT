@@ -2,7 +2,7 @@ use crate::{
     alerts::AlertMessage, member::UnitMessage, nodes::NodeIndex, Data, Hasher, Receiver, Sender,
 };
 use codec::{Decode, Encode};
-use futures::{channel::oneshot, FutureExt, StreamExt};
+use futures::{channel::oneshot, StreamExt};
 use log::error;
 use std::fmt::Debug;
 
@@ -117,8 +117,7 @@ impl<H: Hasher, D: Data, S: Encode + Decode, N: Network<H, D, S>> NetworkHub<H, 
         }
     }
 
-    pub async fn run(&mut self, exit: oneshot::Receiver<()>) {
-        let mut exit = exit.into_stream();
+    pub async fn run(&mut self, mut exit: oneshot::Receiver<()>) {
         loop {
             use NetworkDataInner::*;
             tokio::select! {
@@ -143,7 +142,7 @@ impl<H: Hasher, D: Data, S: Encode + Decode, N: Network<H, D, S>> NetworkHub<H, 
                         break;
                     }
                 },
-                _ = exit.next() => break,
+                _ = &mut exit => break,
             }
         }
     }

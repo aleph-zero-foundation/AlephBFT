@@ -390,6 +390,12 @@ impl DataIOT<Data> for DataIO {
         self.round_counter.set(self.round_counter.get() + 1);
         Data { coord, variant: 0 }
     }
+    fn check_availability(
+        &self,
+        _: &Data,
+    ) -> Option<Pin<Box<dyn Future<Output = Result<(), Self::Error>> + Send>>> {
+        None
+    }
     fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), ()> {
         self.tx.unbounded_send(data).map_err(|e| {
             error!(target: "data-io", "Error when sending data from DataIO {:?}.", e);
@@ -456,7 +462,7 @@ pub(crate) fn gen_config(node_ix: NodeIndex, n_members: NodeCount) -> Config {
     }
 }
 
-pub(crate) type HonestMember<'a> = Member<'a, Hasher64, Data, DataIO, KeyBox>;
+pub(crate) type HonestMember<'a> = Member<'a, Hasher64, Data, DataIO, KeyBox, Spawner>;
 
 pub(crate) fn configure_network(
     n_members: usize,
@@ -486,8 +492,8 @@ pub(crate) fn spawn_honest_member(
     let spawner_inner = spawner.clone();
     let member_task = async move {
         let keybox = KeyBox::new(node_index);
-        let member = HonestMember::new(data_io, &keybox, config);
-        member.run_session(network, spawner_inner, exit_rx).await;
+        let member = HonestMember::new(data_io, &keybox, config, spawner_inner.clone());
+        member.run_session(network, exit_rx).await;
     };
     spawner.spawn("member", member_task);
     (rx_batch, exit_tx)

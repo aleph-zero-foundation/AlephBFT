@@ -3,7 +3,7 @@ use crate::{
     Sender,
 };
 use codec::{Decode, Encode};
-use futures::{channel::oneshot, FutureExt, StreamExt};
+use futures::{channel::oneshot, StreamExt};
 use log::{debug, error};
 use std::collections::{HashMap, HashSet};
 
@@ -199,8 +199,7 @@ impl<H: Hasher, D: Data, KB: KeyBox> Alerter<H, D, KB> {
         }
     }
 
-    pub async fn run(&mut self, exit: oneshot::Receiver<()>) {
-        let mut exit = exit.into_stream();
+    pub async fn run(&mut self, mut exit: oneshot::Receiver<()>) {
         loop {
             tokio::select! {
                 message = self.messages_from_network.next() => match message {
@@ -217,7 +216,7 @@ impl<H: Hasher, D: Data, KB: KeyBox> Alerter<H, D, KB> {
                         break;
                     }
                 },
-                _ = exit.next() => break,
+                _ = &mut exit => break,
             }
         }
     }
