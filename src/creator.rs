@@ -27,6 +27,7 @@ pub(crate) struct Creator<H: Hasher> {
     candidates_by_round: Vec<NodeMap<Option<H::Hash>>>,
     n_candidates_by_round: Vec<NodeCount>,
     create_lag: DelaySchedule,
+    max_round: Round,
 }
 
 impl<H: Hasher> Creator<H> {
@@ -38,6 +39,7 @@ impl<H: Hasher> Creator<H> {
         let node_ix = conf.node_ix;
         let n_members = conf.n_members;
         let create_lag = conf.delay_config.unit_creation_delay;
+        let max_round = conf.max_round;
         Creator {
             node_ix,
             parents_rx,
@@ -47,6 +49,7 @@ impl<H: Hasher> Creator<H> {
             candidates_by_round: vec![NodeMap::new_with_len(n_members)],
             n_candidates_by_round: vec![NodeCount(0)],
             create_lag,
+            max_round,
         }
     }
 
@@ -99,6 +102,10 @@ impl<H: Hasher> Creator<H> {
     fn check_ready(&self) -> bool {
         if self.current_round == 0 {
             return true;
+        }
+        if self.current_round > self.max_round {
+            debug!(target: "rush-creator", "{:?} Maximum round reached. Not creating another unit.", self.node_ix);
+            return false;
         }
         // To create a new unit, we need to have at least >floor(2*N/3) parents available in previous round.
         // Additionally, our unit from previous round must be available.
