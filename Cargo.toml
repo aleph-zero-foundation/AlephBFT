@@ -12,9 +12,12 @@ license = "Apache-2.0"
 readme = "README.md"
 
 description = """
-TODO expand
-An implementation of the Aleph asynchronous BFT consensus protocol.
-"""
+    Aleph is an asynchronous and Byzantine fault tolerant consensus protocol aimed
+    at ordering arbitrary messages (transactions). It has been designed to operate
+    continuously under conditions where there is no bound on message-delivery delay
+    and under the assumption that there is a significant probability of malicious
+    behavior, making it an excellent fit for blockchain-related applications.
+    """
 
 
 [dependencies]
