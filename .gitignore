@@ -10,3 +10,5 @@ Cargo.lock
 
 # Profiler
 *.profdata
+
+/docs/book
