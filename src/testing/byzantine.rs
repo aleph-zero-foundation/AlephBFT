@@ -1,6 +1,6 @@
 use log::{debug, error};
 
-use futures::{channel::oneshot, FutureExt, StreamExt};
+use futures::{channel::oneshot, StreamExt};
 
 use std::collections::HashMap;
 
@@ -164,8 +164,7 @@ impl<'a> MaliciousMember<'a> {
         // else we stay silent
     }
 
-    pub async fn run_session(mut self, exit: oneshot::Receiver<()>) {
-        let mut exit = exit.into_stream();
+    pub async fn run_session(mut self, mut exit: oneshot::Receiver<()>) {
         self.create_if_possible();
         loop {
             tokio::select! {
@@ -178,7 +177,7 @@ impl<'a> MaliciousMember<'a> {
                         break;
                     }
                 },
-                _ = exit.next() => break,
+                _ = &mut exit => break,
             }
             self.create_if_possible();
         }

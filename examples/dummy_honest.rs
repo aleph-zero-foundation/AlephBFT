@@ -13,6 +13,7 @@ use std::{
     collections::{hash_map::DefaultHasher, HashSet},
     error::Error,
     hash::Hasher as StdHasher,
+    pin::Pin,
     sync::Arc,
 };
 use tokio::time::Duration;
@@ -69,9 +70,9 @@ async fn main() {
             index: my_id.into(),
         };
         let config = rush::default_config(n_members.into(), my_id.into(), 0);
-        let member = rush::Member::new(data_io, &keybox, config);
+        let member = rush::Member::new(data_io, &keybox, config, Spawner {});
 
-        member.run_session(network, Spawner {}, exit).await
+        member.run_session(network, exit).await
     });
 
     let mut finalized = HashSet::new();
@@ -117,6 +118,12 @@ impl rush::DataIO<Data> for DataIO {
         *data += 1;
 
         *data
+    }
+    fn check_availability(
+        &self,
+        _data: &Data,
+    ) -> Option<Pin<Box<dyn Future<Output = Result<(), Self::Error>> + Send>>> {
+        None
     }
     fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), Self::Error> {
         self.finalized_tx.unbounded_send(data).map_err(|_| ())

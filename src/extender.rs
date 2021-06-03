@@ -1,4 +1,4 @@
-use futures::{channel::oneshot, FutureExt, StreamExt};
+use futures::{channel::oneshot, StreamExt};
 use std::collections::{HashMap, VecDeque};
 
 use log::{debug, error};
@@ -282,8 +282,7 @@ impl<H: Hasher> Extender<H> {
         }
     }
 
-    pub(crate) async fn extend(&mut self, exit: oneshot::Receiver<()>) {
-        let mut exit = exit.into_stream();
+    pub(crate) async fn extend(&mut self, mut exit: oneshot::Receiver<()>) {
         loop {
             tokio::select! {
                 Some(v) = self.electors.next() =>{
@@ -291,7 +290,7 @@ impl<H: Hasher> Extender<H> {
                     self.add_unit(v);
                     self.progress(v_hash);
                 }
-                _ = exit.next() => {
+                _ = &mut exit => {
                     debug!(target: "rush-extender", "{:?} received exit signal.", self.node_id);
                     break
                 }

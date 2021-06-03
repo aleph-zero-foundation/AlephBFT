@@ -5,7 +5,7 @@ use crate::{
     units::{ControlHash, PreUnit, Unit},
     Hasher, Receiver, Round, Sender,
 };
-use futures::{channel::oneshot, FutureExt, StreamExt};
+use futures::{channel::oneshot, StreamExt};
 use log::{debug, error};
 use tokio::time::{delay_for, Duration};
 
@@ -109,10 +109,9 @@ impl<H: Hasher> Creator<H> {
             && self.candidates_by_round[prev_round][self.node_ix].is_some()
     }
 
-    pub(crate) async fn create(&mut self, exit: oneshot::Receiver<()>) {
+    pub(crate) async fn create(&mut self, mut exit: oneshot::Receiver<()>) {
         let half_hour = Duration::from_secs(30 * 60);
         let mut round: usize = 0;
-        let mut exit = exit.into_stream();
         let mut delay_fut = delay_for(Duration::from_millis(0));
         let mut delay_passed = false;
         loop {
@@ -127,7 +126,7 @@ impl<H: Hasher> Creator<H> {
                     delay_passed = true;
                     delay_fut = delay_for(half_hour);
                 }
-                _ = exit.next() => {
+                _ = &mut exit=> {
                     debug!(target: "rush-creator", "{:?} received exit signal.", self.node_ix);
                     break;
                 }

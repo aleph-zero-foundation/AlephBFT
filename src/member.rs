@@ -1,7 +1,7 @@
 use codec::{Decode, Encode};
 use futures::{
     channel::{mpsc, oneshot},
-    FutureExt, StreamExt,
+    StreamExt,
 };
 use log::{debug, error};
 use rand::Rng;
@@ -98,7 +98,14 @@ impl<H: Hasher> PartialOrd for ScheduledTask<H> {
     }
 }
 
-pub struct Member<'a, H: Hasher, D: Data, DP: DataIO<D>, KB: KeyBox> {
+pub struct Member<'a, H, D, DP, KB, SH>
+where
+    H: Hasher,
+    D: Data,
+    DP: DataIO<D>,
+    KB: KeyBox,
+    SH: SpawnHandle,
+{
     config: Config,
     tx_consensus: Option<Sender<NotificationIn<H>>>,
     data_io: DP,
@@ -109,16 +116,18 @@ pub struct Member<'a, H: Hasher, D: Data, DP: DataIO<D>, KB: KeyBox> {
     n_members: NodeCount,
     unit_messages_for_network: Option<Sender<(UnitMessage<H, D, KB::Signature>, Recipient)>>,
     alerts_for_alerter: Option<Sender<Alert<H, D, KB::Signature>>>,
+    spawn_handle: SH,
 }
 
-impl<'a, H, D, DP, KB> Member<'a, H, D, DP, KB>
+impl<'a, H, D, DP, KB, SH> Member<'a, H, D, DP, KB, SH>
 where
     H: Hasher,
     D: Data,
     DP: DataIO<D>,
     KB: KeyBox,
+    SH: SpawnHandle,
 {
-    pub fn new(data_io: DP, keybox: &'a KB, config: Config) -> Self {
+    pub fn new(data_io: DP, keybox: &'a KB, config: Config, spawn_handle: SH) -> Self {
         let n_members = config.n_members;
         let threshold = (n_members * 2) / 3 + NodeCount(1);
         let max_round = config.max_round;
@@ -133,18 +142,16 @@ where
             n_members,
             unit_messages_for_network: None,
             alerts_for_alerter: None,
+            spawn_handle,
         }
     }
 
     fn send_consensus_notification(&mut self, notification: NotificationIn<H>) {
-        if let Err(e) = self
-            .tx_consensus
+        self.tx_consensus
             .as_ref()
             .unwrap()
             .unbounded_send(notification)
-        {
-            debug!(target: "rush-member", "{:?} Error when sending notification {:?}.", self.index(), e);
-        }
+            .expect("channel to consensus should be open")
     }
 
     fn on_create(&mut self, u: PreUnit<H>) {
@@ -194,25 +201,19 @@ where
     }
 
     fn send_unit_message(&mut self, message: UnitMessage<H, D, KB::Signature>, peer_id: NodeIndex) {
-        if let Err(e) = self
-            .unit_messages_for_network
+        self.unit_messages_for_network
             .as_ref()
             .unwrap()
             .unbounded_send((message, Recipient::Node(peer_id)))
-        {
-            debug!(target: "rush-member", "Error when sending units {:?}.", e);
-        }
+            .expect("channel to network should be open")
     }
 
     fn broadcast_units(&mut self, message: UnitMessage<H, D, KB::Signature>) {
-        if let Err(e) = self
-            .unit_messages_for_network
+        self.unit_messages_for_network
             .as_ref()
             .unwrap()
             .unbounded_send((message, Recipient::Everyone))
-        {
-            debug!(target: "rush-member", "Error when broadcasting units {:?}.", e);
-        }
+            .expect("channel to network should be open")
     }
 
     fn schedule_parents_request(&mut self, u_hash: H::Hash, curr_time: time::Instant) {
@@ -406,13 +407,24 @@ where
     }
 
     fn move_units_to_consensus(&mut self) {
-        let mut units = Vec::new();
         for su in self.store.yield_buffer_units() {
-            let unit = su.as_signable().unit();
-            units.push(unit);
-        }
-        if !units.is_empty() {
-            self.send_consensus_notification(NotificationIn::NewUnits(units));
+            let full_unit = su.as_signable();
+            let unit = full_unit.unit();
+            if let Some(avail_fut) = self.data_io.check_availability(full_unit.data()) {
+                let tx_consensus = self.tx_consensus.clone();
+                self.spawn_handle
+                    .spawn("member/check_availability", async move {
+                        if avail_fut.await.is_ok() {
+                            tx_consensus
+                                .as_ref()
+                                .unwrap()
+                                .unbounded_send(NotificationIn::NewUnits(vec![unit]))
+                                .expect("channel to consensus should be open");
+                        }
+                    });
+            } else {
+                self.send_consensus_notification(NotificationIn::NewUnits(vec![unit]))
+            }
         }
     }
 
@@ -557,14 +569,11 @@ where
             alerted_units.reverse();
         }
         let alert = self.form_alert(proof, alerted_units);
-        if let Err(e) = self
-            .alerts_for_alerter
+        self.alerts_for_alerter
             .as_ref()
             .unwrap()
             .unbounded_send(alert)
-        {
-            debug!(target: "rush-member", "{:?} Error sending alert: {:?}.", self.index(), e);
-        }
+            .expect("channel to alerter should be open")
     }
 
     fn on_alert_notification(&mut self, notification: ForkingNotification<H, D, KB::Signature>) {
@@ -618,6 +627,7 @@ where
                     .expect("Ordered units must be in store")
                     .as_signable()
                     .data()
+                    .clone()
             })
             .collect::<OrderedBatch<D>>();
         if let Err(e) = self.data_io.send_ordered_batch(batch) {
@@ -628,17 +638,16 @@ where
     pub async fn run_session<N: Network<H, D, KB::Signature> + 'static>(
         mut self,
         network: N,
-        spawn_handle: impl SpawnHandle,
-        exit: oneshot::Receiver<()>,
+        mut exit: oneshot::Receiver<()>,
     ) {
         let (tx_consensus, consensus_stream) = mpsc::unbounded();
         let (consensus_sink, mut rx_consensus) = mpsc::unbounded();
         let (ordered_batch_tx, mut ordered_batch_rx) = mpsc::unbounded();
         let (consensus_exit, exit_stream) = oneshot::channel();
         let config = self.config.clone();
-        let sh = spawn_handle.clone();
+        let sh = self.spawn_handle.clone();
         debug!(target: "rush-member", "{:?} Spawning party for a session.", self.index());
-        spawn_handle.spawn("member/consensus", async move {
+        self.spawn_handle.spawn("member/consensus", async move {
             consensus::run(
                 config,
                 consensus_stream,
@@ -655,7 +664,7 @@ where
         let (unit_messages_for_units, mut unit_messages_from_network) = mpsc::unbounded();
         let (unit_messages_for_network, unit_messages_from_units) = mpsc::unbounded();
         let (network_exit, exit_stream) = oneshot::channel();
-        spawn_handle.spawn("member/network", async move {
+        self.spawn_handle.spawn("member/network", async move {
             NetworkHub::new(
                 network,
                 unit_messages_from_units,
@@ -678,14 +687,13 @@ where
             alerts_from_units,
             self.config.max_units_per_alert,
         );
-        spawn_handle.spawn(
+        self.spawn_handle.spawn(
             "member/alerter",
             async move { alerter.run(exit_stream).await },
         );
         self.alerts_for_alerter = Some(alerts_for_alerter);
         let ticker_delay = self.config.delay_config.tick_interval;
         let mut ticker = time::interval(ticker_delay);
-        let mut exit = exit.into_stream();
 
         debug!(target: "rush-member", "{:?} Start routing messages from consensus to network", self.index());
         loop {
@@ -723,7 +731,7 @@ where
                 },
 
                 _ = ticker.tick() => self.trigger_tasks(),
-                _ = exit.next() => break,
+                _ = &mut exit => break,
             }
             self.move_units_to_consensus();
         }
