@@ -3,12 +3,12 @@ authors = ["Cardinal Cryptography"]
 language = "en"
 description = "Documentation of the rust implementation of Aleph protocol"
 multilingual = false
-src = "docs-src"
+src = "docs"
 title = "Rush - Aleph in Rust"
 
 [rust]
 edition = "2018"
 
 [build]
-build-dir = "docs"
+build-dir = "book"
 create-missing = false
