@@ -271,3 +271,8 @@ async fn small_byzantine_one_forker() {
 async fn small_byzantine_two_forkers() {
     honest_members_agree_on_batches_byzantine(7, 5, 5, 1.0).await;
 }
+
+#[tokio::test(max_threads = 1)]
+async fn medium_byzantine_ten_forkers() {
+    honest_members_agree_on_batches_byzantine(31, 21, 5, 1.0).await;
+}
