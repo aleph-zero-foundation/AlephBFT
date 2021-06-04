@@ -114,6 +114,13 @@ The example may be run using:
 
 There are many unit tests and several integration tests that may be run by standard command
 `cargo test --lib` or `cargo test --lib --skip medium` if you want to run just small tests.
+Alternatively, you may run the `run_local_pipeline.sh` script.
+
+### Code Coverage
+
+You may generate the code coverage summary using the `gen_cov_data.sh` script and then a detailed
+raport for every file with `cov_report.sh`. Make sure to first install all the required
+tools with `install_cov_tools.sh`.
 
 ### Resources
 
@@ -126,7 +133,7 @@ rush is licensed under the terms of the the Apache License 2.0.
 
 ### Founding
 
-The repository is founded by [Aleph Zero Foundation][webpage-link].
+The implementation in this repository is founded by [Aleph Zero Foundation][webpage-link].
 
 [//]: ### "badges"
 [crate-image]: https://img.shields.io/crates/v/rush.svg
