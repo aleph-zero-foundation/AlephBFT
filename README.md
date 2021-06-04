@@ -9,11 +9,11 @@ rust implementation of Aleph protocol
 There is a dummy implementation of an honest committee member that is not
 cryptographically secure and serves only as a working example of what has to be
 implemented and not how it should be implemented. For detailed information on
-what is required from a client using this library see [Decumentation](??).
+what is required from a client using this library see [Documentation](??).
 The example may be run using:
 
-    cargo run --example honest my_id n_members n_finalized
+    cargo run --example dummy_honest my_id n_members n_finalized
 
-    my_id -- our index
+    my_id -- our index, 0-based
     n_members -- size of the committee
     n_finalized -- number of data to be finalized

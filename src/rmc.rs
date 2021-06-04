@@ -4,6 +4,7 @@ use crate::{
     Indexed, MultiKeychain, Multisigned, PartialMultisignature, Signature,
 };
 use async_trait::async_trait;
+use codec::{Decode, Encode};
 use core::fmt::Debug;
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
@@ -18,7 +19,7 @@ use std::{
 use tokio::time;
 
 /// A message consists of either a signed (indexed) hash, or a multisigned hash.
-#[derive(Clone)]
+#[derive(Debug, Encode, Decode, Clone)]
 pub enum Message<H: Signable, S: Signature, M: PartialMultisignature> {
     SignedHash(UncheckedSigned<Indexed<H>, S>),
     MultisignedHash(UncheckedSigned<H, M>),
@@ -30,6 +31,9 @@ impl<H: Signable, S: Signature, M: PartialMultisignature> Message<H, S, M> {
             Message::SignedHash(unchecked) => unchecked.as_signable().as_signable(),
             Message::MultisignedHash(unchecked) => unchecked.as_signable(),
         }
+    }
+    pub fn is_complete(&self) -> bool {
+        matches!(self, Message::MultisignedHash(_))
     }
 }
 

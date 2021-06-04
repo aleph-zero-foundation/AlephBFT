@@ -7,16 +7,17 @@ use log::{debug, error};
 use rand::Rng;
 
 use crate::{
-    alerts::{Alert, Alerter, ForkProof, ForkingNotification},
+    alerts,
+    alerts::{Alert, AlertConfig, ForkProof, ForkingNotification},
     config::Config,
     consensus,
     network::{NetworkHub, Recipient},
-    signed::Signed,
+    signed::{Signature, Signed},
     units::{
         ControlHash, FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore,
     },
-    Data, DataIO, Hasher, Index, KeyBox, Network, NodeCount, NodeIndex, NodeMap, OrderedBatch,
-    RequestAuxData, Sender, SpawnHandle,
+    Data, DataIO, Hasher, Index, MultiKeychain, Network, NodeCount, NodeIndex, NodeMap,
+    OrderedBatch, RequestAuxData, Sender, SpawnHandle,
 };
 
 use std::{cmp::Ordering, collections::BinaryHeap, fmt::Debug};
@@ -24,7 +25,7 @@ use tokio::time;
 
 /// A message concerning units, either about new units or some requests for them.
 #[derive(Debug, Encode, Decode, Clone)]
-pub(crate) enum UnitMessage<H: Hasher, D: Data, S> {
+pub(crate) enum UnitMessage<H: Hasher, D: Data, S: Signature> {
     /// For disseminating newly created units.
     NewUnit(UncheckedSignedUnit<H, D, S>),
     /// Request for a unit by its coord.
@@ -98,36 +99,36 @@ impl<H: Hasher> PartialOrd for ScheduledTask<H> {
     }
 }
 
-pub struct Member<'a, H, D, DP, KB, SH>
+pub struct Member<'a, H, D, DP, MK, SH>
 where
     H: Hasher,
     D: Data,
     DP: DataIO<D>,
-    KB: KeyBox,
+    MK: MultiKeychain,
     SH: SpawnHandle,
 {
     config: Config,
     tx_consensus: Option<Sender<NotificationIn<H>>>,
     data_io: DP,
-    keybox: &'a KB,
-    store: UnitStore<'a, H, D, KB>,
+    keybox: &'a MK,
+    store: UnitStore<'a, H, D, MK>,
     requests: BinaryHeap<ScheduledTask<H>>,
     threshold: NodeCount,
     n_members: NodeCount,
-    unit_messages_for_network: Option<Sender<(UnitMessage<H, D, KB::Signature>, Recipient)>>,
-    alerts_for_alerter: Option<Sender<Alert<H, D, KB::Signature>>>,
+    unit_messages_for_network: Option<Sender<(UnitMessage<H, D, MK::Signature>, Recipient)>>,
+    alerts_for_alerter: Option<Sender<Alert<H, D, MK::Signature>>>,
     spawn_handle: SH,
 }
 
-impl<'a, H, D, DP, KB, SH> Member<'a, H, D, DP, KB, SH>
+impl<'a, H, D, DP, MK, SH> Member<'a, H, D, DP, MK, SH>
 where
     H: Hasher,
     D: Data,
     DP: DataIO<D>,
-    KB: KeyBox,
+    MK: MultiKeychain,
     SH: SpawnHandle,
 {
-    pub fn new(data_io: DP, keybox: &'a KB, config: Config, spawn_handle: SH) -> Self {
+    pub fn new(data_io: DP, keybox: &'a MK, config: Config, spawn_handle: SH) -> Self {
         let n_members = config.n_members;
         let threshold = (n_members * 2) / 3 + NodeCount(1);
         let max_round = config.max_round;
@@ -200,7 +201,7 @@ where
         self.keybox.index()
     }
 
-    fn send_unit_message(&mut self, message: UnitMessage<H, D, KB::Signature>, peer_id: NodeIndex) {
+    fn send_unit_message(&mut self, message: UnitMessage<H, D, MK::Signature>, peer_id: NodeIndex) {
         self.unit_messages_for_network
             .as_ref()
             .unwrap()
@@ -208,7 +209,7 @@ where
             .expect("channel to network should be open")
     }
 
-    fn broadcast_units(&mut self, message: UnitMessage<H, D, KB::Signature>) {
+    fn broadcast_units(&mut self, message: UnitMessage<H, D, MK::Signature>) {
         self.unit_messages_for_network
             .as_ref()
             .unwrap()
@@ -218,7 +219,7 @@ where
 
     fn schedule_parents_request(&mut self, u_hash: H::Hash, curr_time: time::Instant) {
         if self.store.get_parents(u_hash).is_none() {
-            let message = UnitMessage::<H, D, KB::Signature>::RequestParents(self.index(), u_hash);
+            let message = UnitMessage::<H, D, MK::Signature>::RequestParents(self.index(), u_hash);
             let peer_id = self.random_peer();
             self.send_unit_message(message, peer_id);
             debug!(target: "rush-member", "{:?} Fetch parents for {:?} sent.", self.index(), u_hash);
@@ -240,7 +241,7 @@ where
             debug!(target: "rush-member", "{:?} Request dropped as the unit is in store already {:?}", self.index(), coord);
             return;
         }
-        let message = UnitMessage::<H, D, KB::Signature>::RequestCoord(self.index(), coord);
+        let message = UnitMessage::<H, D, MK::Signature>::RequestCoord(self.index(), coord);
         let peer_id = self.random_peer();
         self.send_unit_message(message, peer_id);
         debug!(target: "rush-member", "{:?} Fetch request for {:?} sent.", self.index(), coord);
@@ -262,7 +263,7 @@ where
             .unit_by_hash(&hash)
             .cloned()
             .expect("Our units are in store.");
-        let message = UnitMessage::<H, D, KB::Signature>::NewUnit(signed_unit.into());
+        let message = UnitMessage::<H, D, MK::Signature>::NewUnit(signed_unit.into());
         debug!(target: "rush-member", "{:?} Sending a unit {:?} over network {:?}th time.", self.index(), hash, multicast_number);
         self.broadcast_units(message);
         let delay = (self.config.delay_config.unit_broadcast_delay)(multicast_number);
@@ -317,7 +318,7 @@ where
         }
     }
 
-    fn validate_unit_parents(&self, su: &SignedUnit<'a, H, D, KB>) -> bool {
+    fn validate_unit_parents(&self, su: &SignedUnit<'a, H, D, MK>) -> bool {
         // NOTE: at this point we cannot validate correctness of the control hash, in principle it could be
         // just a random hash, but we still would not be able to deduce that by looking at the unit only.
         let pre_unit = su.as_signable().as_pre_unit();
@@ -347,8 +348,8 @@ where
     // TODO: we should return an error and handle it outside
     fn validate_unit(
         &self,
-        uu: UncheckedSignedUnit<H, D, KB::Signature>,
-    ) -> Option<SignedUnit<'a, H, D, KB>> {
+        uu: UncheckedSignedUnit<H, D, MK::Signature>,
+    ) -> Option<SignedUnit<'a, H, D, MK>> {
         let su = match uu.check(self.keybox) {
             Ok(su) => su,
             Err(uu) => {
@@ -378,7 +379,7 @@ where
         Some(su)
     }
 
-    fn add_unit_to_store_unless_fork(&mut self, su: SignedUnit<'a, H, D, KB>) {
+    fn add_unit_to_store_unless_fork(&mut self, su: SignedUnit<'a, H, D, MK>) {
         let full_unit = su.as_signable();
         debug!(target: "rush-member", "{:?} Adding member unit to store {:?}", self.index(), full_unit);
         if self.store.is_forker(full_unit.creator()) {
@@ -428,7 +429,7 @@ where
         }
     }
 
-    fn on_unit_received(&mut self, uu: UncheckedSignedUnit<H, D, KB::Signature>, alert: bool) {
+    fn on_unit_received(&mut self, uu: UncheckedSignedUnit<H, D, MK::Signature>, alert: bool) {
         if let Some(su) = self.validate_unit(uu) {
             if alert {
                 // Units from alerts explicitly come from forkers, and we want them anyway.
@@ -483,7 +484,7 @@ where
     fn on_parents_response(
         &mut self,
         u_hash: H::Hash,
-        parents: Vec<UncheckedSignedUnit<H, D, KB::Signature>>,
+        parents: Vec<UncheckedSignedUnit<H, D, MK::Signature>>,
     ) {
         if self.store.get_parents(u_hash).is_some() {
             debug!(target: "rush-member", "{:?} We got parents response but already know the parents.", self.index());
@@ -549,9 +550,9 @@ where
 
     fn form_alert(
         &self,
-        proof: ForkProof<H, D, KB::Signature>,
-        units: Vec<SignedUnit<'a, H, D, KB>>,
-    ) -> Alert<H, D, KB::Signature> {
+        proof: ForkProof<H, D, MK::Signature>,
+        units: Vec<SignedUnit<'a, H, D, MK>>,
+    ) -> Alert<H, D, MK::Signature> {
         Alert::new(
             self.config.node_ix,
             proof,
@@ -559,7 +560,7 @@ where
         )
     }
 
-    fn on_new_forker_detected(&mut self, forker: NodeIndex, proof: ForkProof<H, D, KB::Signature>) {
+    fn on_new_forker_detected(&mut self, forker: NodeIndex, proof: ForkProof<H, D, MK::Signature>) {
         let max_units_alert = self.config.max_units_per_alert;
         let mut alerted_units = self.store.mark_forker(forker);
         if alerted_units.len() > max_units_alert {
@@ -576,7 +577,7 @@ where
             .expect("channel to alerter should be open")
     }
 
-    fn on_alert_notification(&mut self, notification: ForkingNotification<H, D, KB::Signature>) {
+    fn on_alert_notification(&mut self, notification: ForkingNotification<H, D, MK::Signature>) {
         use ForkingNotification::*;
         match notification {
             Forker(proof) => {
@@ -593,7 +594,7 @@ where
         }
     }
 
-    fn on_unit_message(&mut self, message: UnitMessage<H, D, KB::Signature>) {
+    fn on_unit_message(&mut self, message: UnitMessage<H, D, MK::Signature>) {
         use UnitMessage::*;
         match message {
             NewUnit(u) => {
@@ -635,7 +636,9 @@ where
         }
     }
 
-    pub async fn run_session<N: Network<H, D, KB::Signature> + 'static>(
+    pub async fn run_session<
+        N: Network<H, D, MK::Signature, MK::PartialMultisignature> + 'static,
+    >(
         mut self,
         network: N,
         mut exit: oneshot::Receiver<()>,
@@ -679,18 +682,24 @@ where
         let (alert_notifications_for_units, mut notifications_from_alerter) = mpsc::unbounded();
         let (alerts_for_alerter, alerts_from_units) = mpsc::unbounded();
         let (alerter_exit, exit_stream) = oneshot::channel();
-        let mut alerter = Alerter::new(
-            self.keybox.clone(),
-            alert_messages_for_network,
-            alert_messages_from_network,
-            alert_notifications_for_units,
-            alerts_from_units,
-            self.config.max_units_per_alert,
-        );
-        self.spawn_handle.spawn(
-            "member/alerter",
-            async move { alerter.run(exit_stream).await },
-        );
+        let keybox_for_alerter = self.keybox.clone();
+        let alert_config = AlertConfig {
+            session_id: self.config.session_id,
+            max_units_per_alert: self.config.max_units_per_alert,
+            n_members: self.n_members,
+        };
+        self.spawn_handle.spawn("member/alerts", async move {
+            alerts::run(
+                keybox_for_alerter,
+                alert_messages_for_network,
+                alert_messages_from_network,
+                alert_notifications_for_units,
+                alerts_from_units,
+                alert_config,
+                exit_stream,
+            )
+            .await
+        });
         self.alerts_for_alerter = Some(alerts_for_alerter);
         let ticker_delay = self.config.delay_config.tick_interval;
         let mut ticker = time::interval(ticker_delay);
@@ -735,6 +744,7 @@ where
             }
             self.move_units_to_consensus();
         }
+        debug!(target: "rush-member", "{:?} Ending run.", self.index());
 
         let _ = consensus_exit.send(());
         let _ = alerter_exit.send(());

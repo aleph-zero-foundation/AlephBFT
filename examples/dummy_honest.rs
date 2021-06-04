@@ -67,6 +67,7 @@ async fn main() {
     let (close_member, exit) = oneshot::channel();
     tokio::spawn(async move {
         let keybox = KeyBox {
+            count: n_members,
             index: my_id.into(),
         };
         let config = rush::default_config(n_members.into(), my_id.into(), 0);
@@ -148,8 +149,29 @@ impl DataIO {
 struct Signature;
 
 // This is not cryptographically secure, mocked only for demonstration purposes
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub(crate) struct PartialMultisignature {
+    signed_by: Vec<NodeIndex>,
+}
+
+impl rush::PartialMultisignature for PartialMultisignature {
+    type Signature = Signature;
+    fn add_signature(self, _: &Self::Signature, index: NodeIndex) -> Self {
+        let Self { mut signed_by } = self;
+        for id in &signed_by {
+            if *id == index {
+                return Self { signed_by };
+            }
+        }
+        signed_by.push(index);
+        Self { signed_by }
+    }
+}
+
+// This is not cryptographically secure, mocked only for demonstration purposes
 #[derive(Clone)]
 struct KeyBox {
+    count: usize,
     index: NodeIndex,
 }
 
@@ -160,6 +182,17 @@ impl rush::KeyBox for KeyBox {
     }
     fn verify(&self, _msg: &[u8], _sgn: &Self::Signature, _index: NodeIndex) -> bool {
         true
+    }
+}
+
+impl rush::MultiKeychain for KeyBox {
+    type PartialMultisignature = PartialMultisignature;
+    fn from_signature(&self, _: &Self::Signature, index: NodeIndex) -> Self::PartialMultisignature {
+        let signed_by = vec![index];
+        PartialMultisignature { signed_by }
+    }
+    fn is_complete(&self, _: &[u8], partial: &Self::PartialMultisignature) -> bool {
+        (self.count * 2) / 3 < partial.signed_by.len()
     }
 }
 
@@ -180,7 +213,7 @@ impl rush::SpawnHandle for Spawner {
 
 const ALEPH_PROTOCOL_NAME: &str = "aleph";
 
-type NetworkData = rush::NetworkData<Hasher64, Data, Signature>;
+type NetworkData = rush::NetworkData<Hasher64, Data, Signature, PartialMultisignature>;
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
@@ -222,7 +255,7 @@ struct Network {
 }
 
 #[async_trait::async_trait]
-impl rush::Network<Hasher64, Data, Signature> for Network {
+impl rush::Network<Hasher64, Data, Signature, PartialMultisignature> for Network {
     type Error = ();
     fn send(&self, data: NetworkData, _node: NodeIndex) -> Result<(), Self::Error> {
         self.outgoing_tx

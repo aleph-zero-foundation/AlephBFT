@@ -1,5 +1,9 @@
 use crate::{
-    alerts::AlertMessage, member::UnitMessage, nodes::NodeIndex, Data, Hasher, Receiver, Sender,
+    alerts::AlertMessage,
+    member::UnitMessage,
+    nodes::NodeIndex,
+    signed::{PartialMultisignature, Signature},
+    Data, Hasher, Receiver, Sender,
 };
 use codec::{Decode, Encode};
 use futures::{channel::oneshot, StreamExt};
@@ -10,27 +14,29 @@ use std::fmt::Debug;
 /// We only assume that every send has a nonzero probability of succeeding,
 /// and a nonerror result might still correspond to an unsuccessful transfer.
 #[async_trait::async_trait]
-pub trait Network<H: Hasher, D: Data, S: Encode + Decode>: Send {
+pub trait Network<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature>: Send {
     type Error: Debug;
-    fn send(&self, data: NetworkData<H, D, S>, node: NodeIndex) -> Result<(), Self::Error>;
-    fn broadcast(&self, data: NetworkData<H, D, S>) -> Result<(), Self::Error>;
-    async fn next_event(&mut self) -> Option<NetworkData<H, D, S>>;
+    fn send(&self, data: NetworkData<H, D, S, MS>, node: NodeIndex) -> Result<(), Self::Error>;
+    fn broadcast(&self, data: NetworkData<H, D, S, MS>) -> Result<(), Self::Error>;
+    async fn next_event(&mut self) -> Option<NetworkData<H, D, S, MS>>;
 }
 
 #[derive(Encode, Decode, Clone)]
-pub(crate) enum NetworkDataInner<H: Hasher, D: Data, S: Encode + Decode> {
+pub(crate) enum NetworkDataInner<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> {
     Units(UnitMessage<H, D, S>),
-    Alert(AlertMessage<H, D, S>),
+    Alert(AlertMessage<H, D, S, MS>),
 }
 
 /// NetworkData is the opaque format for all data that a committee member needs
 /// to send to other nodes to perform the protocol.
 #[derive(Clone)]
-pub struct NetworkData<H: Hasher, D: Data, S: Encode + Decode>(
-    pub(crate) NetworkDataInner<H, D, S>,
+pub struct NetworkData<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature>(
+    pub(crate) NetworkDataInner<H, D, S, MS>,
 );
 
-impl<H: Hasher, D: Data, S: Encode + Decode> Encode for NetworkData<H, D, S> {
+impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> Encode
+    for NetworkData<H, D, S, MS>
+{
     fn size_hint(&self) -> usize {
         self.0.size_hint()
     }
@@ -48,7 +54,9 @@ impl<H: Hasher, D: Data, S: Encode + Decode> Encode for NetworkData<H, D, S> {
     }
 }
 
-impl<H: Hasher, D: Data, S: Encode + Decode> Decode for NetworkData<H, D, S> {
+impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> Decode
+    for NetworkData<H, D, S, MS>
+{
     fn decode<I: codec::Input>(input: &mut I) -> Result<Self, codec::Error> {
         Ok(Self(NetworkDataInner::decode(input)?))
     }
@@ -59,21 +67,29 @@ pub(crate) enum Recipient {
     Node(NodeIndex),
 }
 
-pub(crate) struct NetworkHub<H: Hasher, D: Data, S: Encode + Decode, N: Network<H, D, S>> {
+pub(crate) struct NetworkHub<
+    H: Hasher,
+    D: Data,
+    S: Signature,
+    MS: PartialMultisignature,
+    N: Network<H, D, S, MS>,
+> {
     network: N,
     units_to_send: Receiver<(UnitMessage<H, D, S>, Recipient)>,
     units_received: Sender<UnitMessage<H, D, S>>,
-    alerts_to_send: Receiver<(AlertMessage<H, D, S>, Recipient)>,
-    alerts_received: Sender<AlertMessage<H, D, S>>,
+    alerts_to_send: Receiver<(AlertMessage<H, D, S, MS>, Recipient)>,
+    alerts_received: Sender<AlertMessage<H, D, S, MS>>,
 }
 
-impl<H: Hasher, D: Data, S: Encode + Decode, N: Network<H, D, S>> NetworkHub<H, D, S, N> {
+impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature, N: Network<H, D, S, MS>>
+    NetworkHub<H, D, S, MS, N>
+{
     pub fn new(
         network: N,
         units_to_send: Receiver<(UnitMessage<H, D, S>, Recipient)>,
         units_received: Sender<UnitMessage<H, D, S>>,
-        alerts_to_send: Receiver<(AlertMessage<H, D, S>, Recipient)>,
-        alerts_received: Sender<AlertMessage<H, D, S>>,
+        alerts_to_send: Receiver<(AlertMessage<H, D, S, MS>, Recipient)>,
+        alerts_received: Sender<AlertMessage<H, D, S, MS>>,
     ) -> Self {
         NetworkHub {
             network,
@@ -84,7 +100,7 @@ impl<H: Hasher, D: Data, S: Encode + Decode, N: Network<H, D, S>> NetworkHub<H, 
         }
     }
 
-    fn send(&self, data: NetworkData<H, D, S>, recipient: Recipient) {
+    fn send(&self, data: NetworkData<H, D, S, MS>, recipient: Recipient) {
         use Recipient::*;
         match recipient {
             Everyone => {
@@ -100,7 +116,7 @@ impl<H: Hasher, D: Data, S: Encode + Decode, N: Network<H, D, S>> NetworkHub<H, 
         }
     }
 
-    fn handle_incoming(&self, network_data: NetworkData<H, D, S>) {
+    fn handle_incoming(&self, network_data: NetworkData<H, D, S, MS>) {
         let NetworkData(network_data) = network_data;
         use NetworkDataInner::*;
         match network_data {

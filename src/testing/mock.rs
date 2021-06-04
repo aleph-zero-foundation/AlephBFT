@@ -22,12 +22,14 @@ use std::{
 };
 
 use crate::{
+    alerts,
     config::{exponential_slowdown, Config, DelayConfig},
     member::{NotificationIn, NotificationOut},
-    network::NetworkDataInner,
+    network,
     units::{Unit, UnitCoord},
-    DataIO as DataIOT, Hasher, Index, KeyBox as KeyBoxT, Network as NetworkT, NodeCount, NodeIndex,
-    OrderedBatch, SpawnHandle,
+    DataIO as DataIOT, Hasher, Index, KeyBox as KeyBoxT, MultiKeychain as MultiKeychainT,
+    Network as NetworkT, NodeCount, NodeIndex, OrderedBatch,
+    PartialMultisignature as PartialMultisignatureT, SpawnHandle,
 };
 
 use crate::member::Member;
@@ -202,7 +204,7 @@ impl Spawner {
     }
 }
 
-pub(crate) type NetworkData = crate::NetworkData<Hasher64, Data, Signature>;
+pub(crate) type NetworkData = crate::NetworkData<Hasher64, Data, Signature, PartialMultisignature>;
 type NetworkReceiver = UnboundedReceiver<(NetworkData, NodeIndex)>;
 type NetworkSender = UnboundedSender<(NetworkData, NodeIndex)>;
 
@@ -214,7 +216,7 @@ pub(crate) struct Network {
 }
 
 #[async_trait::async_trait]
-impl NetworkT<Hasher64, Data, Signature> for Network {
+impl NetworkT<Hasher64, Data, Signature, PartialMultisignature> for Network {
     type Error = ();
 
     fn broadcast(&self, data: NetworkData) -> Result<(), Self::Error> {
@@ -338,26 +340,38 @@ pub(crate) trait NetworkHook: Send {
 
 #[derive(Clone)]
 pub(crate) struct AlertHook {
-    alert_count: Arc<Mutex<usize>>,
+    alerts_sent_by_connection: Arc<Mutex<HashMap<(NodeIndex, NodeIndex), usize>>>,
 }
 
 impl AlertHook {
     pub(crate) fn new() -> Self {
         AlertHook {
-            alert_count: Arc::new(Mutex::new(0)),
+            alerts_sent_by_connection: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    pub(crate) fn count(&self) -> usize {
-        *self.alert_count.lock()
+    pub(crate) fn count(&self, sender: NodeIndex, recipient: NodeIndex) -> usize {
+        match self
+            .alerts_sent_by_connection
+            .lock()
+            .get(&(sender, recipient))
+        {
+            Some(count) => *count,
+            None => 0,
+        }
     }
 }
 
 impl NetworkHook for AlertHook {
-    fn update_state(&self, data: &mut NetworkData, _: NodeIndex, _: NodeIndex) {
-        use NetworkDataInner::*;
-        if let crate::NetworkData(Alert(_)) = data {
-            *self.alert_count.lock() += 1;
+    fn update_state(&self, data: &mut NetworkData, sender: NodeIndex, recipient: NodeIndex) {
+        use alerts::AlertMessage::*;
+        use network::NetworkDataInner::*;
+        if let crate::NetworkData(Alert(ForkAlert(_))) = data {
+            *self
+                .alerts_sent_by_connection
+                .lock()
+                .entry((sender, recipient))
+                .or_insert(0) += 1;
         }
     }
 }
@@ -376,6 +390,25 @@ impl Data {
 
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub(crate) struct Signature {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub(crate) struct PartialMultisignature {
+    signed_by: Vec<NodeIndex>,
+}
+
+impl PartialMultisignatureT for PartialMultisignature {
+    type Signature = Signature;
+    fn add_signature(self, _: &Self::Signature, index: NodeIndex) -> Self {
+        let Self { mut signed_by } = self;
+        for id in &signed_by {
+            if *id == index {
+                return Self { signed_by };
+            }
+        }
+        signed_by.push(index);
+        Self { signed_by }
+    }
+}
 
 pub(crate) struct DataIO {
     ix: NodeIndex,
@@ -417,12 +450,13 @@ impl DataIO {
 
 #[derive(Clone)]
 pub(crate) struct KeyBox {
+    count: NodeCount,
     ix: NodeIndex,
 }
 
 impl KeyBox {
-    pub(crate) fn new(ix: NodeIndex) -> Self {
-        KeyBox { ix }
+    pub(crate) fn new(count: NodeCount, ix: NodeIndex) -> Self {
+        KeyBox { count, ix }
     }
 }
 
@@ -439,6 +473,17 @@ impl KeyBoxT for KeyBox {
     }
     fn verify(&self, _msg: &[u8], _sgn: &Signature, _index: NodeIndex) -> bool {
         true
+    }
+}
+
+impl MultiKeychainT for KeyBox {
+    type PartialMultisignature = PartialMultisignature;
+    fn from_signature(&self, _: &Self::Signature, index: NodeIndex) -> Self::PartialMultisignature {
+        let signed_by = vec![index];
+        PartialMultisignature { signed_by }
+    }
+    fn is_complete(&self, _: &[u8], partial: &Self::PartialMultisignature) -> bool {
+        (self.count * 2) / 3 < NodeCount(partial.signed_by.len())
     }
 }
 
@@ -491,7 +536,7 @@ pub(crate) fn spawn_honest_member(
     let (exit_tx, exit_rx) = oneshot::channel();
     let spawner_inner = spawner.clone();
     let member_task = async move {
-        let keybox = KeyBox::new(node_index);
+        let keybox = KeyBox::new(NodeCount(n_members), node_index);
         let member = HonestMember::new(data_io, &keybox, config, spawner_inner.clone());
         member.run_session(network, exit_rx).await;
     };

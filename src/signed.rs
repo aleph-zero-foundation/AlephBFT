@@ -11,7 +11,7 @@ impl<T: Debug + Clone + Encode + Decode + Send + 'static> Signature for T {}
 
 /// Abstraction of the signing data and verifying signatures. Typically, consists of a private key
 /// of the node and the public keys of all nodes.
-pub trait KeyBox: Index + Clone + Send + 'static {
+pub trait KeyBox: Index + Clone + Send + Sync + 'static {
     type Signature: Signature;
     fn sign(&self, msg: &[u8]) -> Self::Signature;
     fn verify(&self, msg: &[u8], sgn: &Self::Signature, index: NodeIndex) -> bool;
@@ -44,6 +44,13 @@ pub trait MultiKeychain: KeyBox {
 pub trait Signable {
     type Hash: AsRef<[u8]>;
     fn hash(&self) -> Self::Hash;
+}
+
+impl<T: AsRef<[u8]> + Clone> Signable for T {
+    type Hash = T;
+    fn hash(&self) -> Self::Hash {
+        self.clone()
+    }
 }
 
 /// A pair consisting of an instance of the `Signable` trait and an (arbitrary) signature.
@@ -202,7 +209,7 @@ impl<'a, T: Signable + Index, KB: KeyBox> From<Signed<'a, T, KB>>
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Encode, Decode, Debug, PartialEq)]
 pub struct Indexed<T: Signable> {
     signable: T,
     index: NodeIndex,

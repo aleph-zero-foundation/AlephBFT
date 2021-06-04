@@ -10,7 +10,7 @@ use crate::{
     signed::Signed,
     testing::mock::{
         configure_network, init_log, spawn_honest_member, AlertHook, Data, Hasher64, KeyBox,
-        Network, Signature, Spawner,
+        Network, NetworkData, Spawner,
     },
     units::{ControlHash, FullUnit, PreUnit, SignedUnit, UnitCoord},
     Hasher, Network as NetworkT, NetworkData as NetworkDataT, NodeCount, NodeIndex, SessionId,
@@ -20,8 +20,6 @@ use crate::{
 type Hash64 = <Hasher64 as Hasher>::Hash;
 
 use crate::member::UnitMessage::NewUnit;
-
-type NetworkData = NetworkDataT<Hasher64, Data, Signature>;
 
 struct MaliciousMember<'a> {
     node_ix: NodeIndex,
@@ -194,7 +192,7 @@ fn spawn_malicious_member(
     let node_index = NodeIndex(ix);
     let (exit_tx, exit_rx) = oneshot::channel();
     let member_task = async move {
-        let keybox = KeyBox::new(node_index);
+        let keybox = KeyBox::new(NodeCount(n_members), node_index);
         let session_id = 0u64;
         let lesniak = MaliciousMember::new(
             &keybox,
@@ -250,16 +248,24 @@ async fn honest_members_agree_on_batches_byzantine(
         batches.push(batches_per_ix);
     }
 
+    let expected_forkers = n_members - n_honest;
     for node_ix in 1..n_honest {
         debug!("batch {} received", node_ix);
         assert_eq!(batches[0], batches[node_ix]);
+        for recipient_id in 1..n_members {
+            if node_ix != recipient_id {
+                let alerts_sent = alert_hook.count(NodeIndex(node_ix), NodeIndex(recipient_id));
+                assert!(
+                    alerts_sent >= expected_forkers,
+                    "Node {:?} sent only {:?} alerts to {:?}, expected at least {:?}.",
+                    node_ix,
+                    alerts_sent,
+                    recipient_id,
+                    expected_forkers
+                );
+            }
+        }
     }
-
-    // each honest node sends alert once for each malicious member (to each one except himself)
-    assert_eq!(
-        alert_hook.count(),
-        (n_members - n_honest) * n_honest * (n_members - 1)
-    );
 }
 
 #[tokio::test(max_threads = 1)]
