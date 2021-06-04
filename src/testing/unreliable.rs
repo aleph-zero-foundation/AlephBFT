@@ -54,7 +54,7 @@ mod tests {
         }
     }
 
-    #[tokio::test(max_threads = 1)]
+    #[tokio::test]
     async fn request_missing_coord() {
         init_log();
 

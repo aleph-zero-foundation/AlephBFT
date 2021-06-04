@@ -5,9 +5,10 @@ use crate::{
     units::{ControlHash, PreUnit, Unit},
     Hasher, Receiver, Round, Sender,
 };
-use futures::{channel::oneshot, StreamExt};
+use futures::{channel::oneshot, FutureExt, StreamExt};
+use futures_timer::Delay;
 use log::{debug, error};
-use tokio::time::{delay_for, Duration};
+use std::time::Duration;
 
 /// A process responsible for creating new units. It receives all the units added locally to the Dag
 /// via the parents_rx channel endpoint. It creates units according to an internal strategy respecting
@@ -119,28 +120,30 @@ impl<H: Hasher> Creator<H> {
     pub(crate) async fn create(&mut self, mut exit: oneshot::Receiver<()>) {
         let half_hour = Duration::from_secs(30 * 60);
         let mut round: usize = 0;
-        let mut delay_fut = delay_for(Duration::from_millis(0));
+        let mut delay_fut = Delay::new(Duration::from_millis(0)).fuse();
         let mut delay_passed = false;
         loop {
-            tokio::select! {
-                Some(u) = self.parents_rx.next() => {
-                    self.add_unit(u.round(), u.creator(), u.hash());
-                }
+            futures::select! {
+                unit = self.parents_rx.next() => {
+                    if let Some(u) = unit{
+                        self.add_unit(u.round(), u.creator(), u.hash());
+                    }
+                },
                 _ = &mut delay_fut => {
                     if delay_passed {
                         error!(target: "rush-creator", "{:?} more than half hour has passed since we created the previous unit.", self.node_ix);
                     }
                     delay_passed = true;
-                    delay_fut = delay_for(half_hour);
+                    delay_fut = Delay::new(half_hour).fuse();
                 }
-                _ = &mut exit=> {
+                _ = &mut exit => {
                     debug!(target: "rush-creator", "{:?} received exit signal.", self.node_ix);
                     break;
-                }
-            }
+                },
+            };
             if delay_passed && self.check_ready() {
                 self.create_unit();
-                delay_fut = delay_for((self.create_lag)(round));
+                delay_fut = Delay::new((self.create_lag)(round)).fuse();
                 round += 1;
                 delay_passed = false;
             }

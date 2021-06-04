@@ -350,19 +350,20 @@ impl<H: Hasher> Terminal<H> {
 
     pub(crate) async fn run(&mut self, mut exit: oneshot::Receiver<()>) {
         loop {
-            tokio::select! {
-                Some(n) = self.ntfct_rx.next() => {
+            futures::select! {
+                n = self.ntfct_rx.next() => {
                     match n {
-                        NotificationIn::NewUnits(units) => {
+                        Some(NotificationIn::NewUnits(units)) => {
                             for u in units {
                                 self.add_to_store(u);
                                 self.handle_events();
                             }
                         },
-                        NotificationIn::UnitParents(u_hash, p_hashes) => {
+                        Some(NotificationIn::UnitParents(u_hash, p_hashes)) => {
                             self.update_on_wrong_hash_response(u_hash, p_hashes);
                             self.handle_events();
-                        }
+                        },
+                        _ => {}
                     }
                 }
                 _ = &mut exit => {

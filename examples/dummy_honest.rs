@@ -15,8 +15,8 @@ use std::{
     hash::Hasher as StdHasher,
     pin::Pin,
     sync::Arc,
+    time::Duration,
 };
-use tokio::time::Duration;
 
 use libp2p::{
     development_transport,

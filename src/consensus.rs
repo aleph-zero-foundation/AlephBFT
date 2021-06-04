@@ -89,7 +89,7 @@ mod tests {
             .try_init();
     }
 
-    #[tokio::test(max_threads = 1)]
+    #[tokio::test]
     async fn agree_on_first_batch() {
         init_log();
         let n_members: usize = 16;
@@ -131,7 +131,7 @@ mod tests {
         spawner.wait().await;
     }
 
-    #[tokio::test(max_threads = 1)]
+    #[tokio::test]
     async fn catches_wrong_control_hash() {
         init_log();
         let n_nodes = 4;

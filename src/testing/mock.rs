@@ -2,8 +2,6 @@ use codec::{Decode, Encode};
 use log::{debug, error};
 use parking_lot::Mutex;
 
-use tokio::time::Duration;
-
 use futures::{
     channel::{
         mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
@@ -19,6 +17,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
+    time::Duration,
 };
 
 use crate::{

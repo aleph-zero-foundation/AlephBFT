@@ -142,7 +142,7 @@ impl<'a> TestData<'a> {
 }
 
 /// Create 10 honest nodes and let each of them start rmc for the same hash.
-#[tokio::test(max_threads = 1)]
+#[tokio::test]
 async fn simple_scenario() {
     let node_count = NodeCount(10);
     let keychains = prepare_keychains(node_count);
@@ -163,7 +163,7 @@ async fn simple_scenario() {
 }
 
 /// Each message is delivered with 20% probability
-#[tokio::test(max_threads = 1)]
+#[tokio::test]
 async fn faulty_network() {
     let node_count = NodeCount(10);
     let keychains = prepare_keychains(node_count);
@@ -186,7 +186,7 @@ async fn faulty_network() {
 
 /// Only 7 nodes start rmc and one of the nodes which didn't start rmc
 /// is delivered only messages with complete multisignatures
-#[tokio::test(max_threads = 1)]
+#[tokio::test]
 async fn node_hearing_only_multisignatures() {
     let node_count = NodeCount(10);
     let keychains = prepare_keychains(node_count);
@@ -224,7 +224,7 @@ fn bad_multisignature() -> TestPartialMultisignature {
 }
 
 /// 7 honest nodes and 3 dishonest nodes which emit bad signatures and multisignatures
-#[tokio::test(max_threads = 1)]
+#[tokio::test]
 async fn bad_signatures_and_multisignatures_are_ignored() {
     let node_count = NodeCount(10);
     let keychains = prepare_keychains(node_count);

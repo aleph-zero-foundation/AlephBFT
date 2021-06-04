@@ -6,7 +6,7 @@ use crate::{
     Data, Hasher, Receiver, Sender,
 };
 use codec::{Decode, Encode};
-use futures::{channel::oneshot, StreamExt};
+use futures::{channel::oneshot, FutureExt, StreamExt};
 use log::error;
 use std::fmt::Debug;
 
@@ -136,7 +136,7 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature, N: Network<H, 
     pub async fn run(&mut self, mut exit: oneshot::Receiver<()>) {
         loop {
             use NetworkDataInner::*;
-            tokio::select! {
+            futures::select! {
                 unit_message = self.units_to_send.next() => match unit_message {
                     Some((unit_message, recipient)) => self.send(NetworkData(Units(unit_message)), recipient),
                     None => {
@@ -151,7 +151,7 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature, N: Network<H, 
                         break;
                     }
                 },
-                incoming_message = self.network.next_event() => match incoming_message {
+                incoming_message = self.network.next_event().fuse() => match incoming_message {
                     Some(incoming_message) => self.handle_incoming(incoming_message),
                     None => {
                         error!(target: "network-hub", "Network stopped working.");

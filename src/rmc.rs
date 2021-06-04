@@ -11,13 +11,15 @@ use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     FutureExt, StreamExt,
 };
+use futures_timer::Delay;
 use log::debug;
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap},
     hash::Hash,
+    time,
+    time::Duration,
 };
-use tokio::time;
 
 /// An RMC message consisting of either a signed (indexed) hash, or a multisigned hash.
 #[derive(Debug, Encode, Decode, Clone)]
@@ -115,7 +117,14 @@ impl<T: Send + Clone> TaskScheduler<T> for DoublingDelayScheduler<T> {
 
     async fn next_task(&mut self) -> Option<T> {
         let mut delay: futures::future::Fuse<_> = match self.scheduled_instants.peek() {
-            Some(&Reverse(IndexedInstant(instant, _))) => tokio::time::delay_until(instant).fuse(),
+            Some(&Reverse(IndexedInstant(instant, _))) => {
+                let now = time::Instant::now();
+                if now > instant {
+                    Delay::new(Duration::new(0, 0)).fuse()
+                } else {
+                    Delay::new(instant - now).fuse()
+                }
+            }
             None => futures::future::Fuse::terminated(),
         };
         // wait until either the scheduled time of the peeked task or a next call of add_task
@@ -284,7 +293,7 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
 
     pub async fn next_multisigned_hash(&mut self) -> Multisigned<'a, H, MK> {
         loop {
-            tokio::select! {
+            futures::select! {
                 multisigned_hash = self.multisigned_hashes_rx.next() => {
                     return multisigned_hash.expect("We own the tx, so it is not closed");
                 }
@@ -297,7 +306,7 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
                     }
                 }
 
-                task = self.scheduler.next_task() => {
+                task = self.scheduler.next_task().fuse() => {
                     if let Some(task) = task {
                         self.do_task(task);
                     } else {

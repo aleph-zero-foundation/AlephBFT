@@ -1,7 +1,7 @@
 use codec::{Decode, Encode};
 use futures::{
     channel::{mpsc, oneshot},
-    StreamExt,
+    FutureExt, StreamExt,
 };
 use log::{debug, error};
 use rand::Rng;
@@ -20,8 +20,8 @@ use crate::{
     OrderedBatch, RequestAuxData, Sender, SpawnHandle,
 };
 
-use std::{cmp::Ordering, collections::BinaryHeap, fmt::Debug};
-use tokio::time;
+use futures_timer::Delay;
+use std::{cmp::Ordering, collections::BinaryHeap, fmt::Debug, time};
 
 /// A message concerning units, either about new units or some requests for them.
 #[derive(Debug, Encode, Decode, Clone)]
@@ -702,11 +702,11 @@ where
         });
         self.alerts_for_alerter = Some(alerts_for_alerter);
         let ticker_delay = self.config.delay_config.tick_interval;
-        let mut ticker = time::interval(ticker_delay);
+        let mut ticker = Delay::new(ticker_delay).fuse();
 
         debug!(target: "rush-member", "{:?} Start routing messages from consensus to network", self.index());
         loop {
-            tokio::select! {
+            futures::select! {
                 notification = rx_consensus.next() => match notification {
                         Some(notification) => self.on_consensus_notification(notification),
                         None => {
@@ -738,8 +738,10 @@ where
                         break;
                     }
                 },
-
-                _ = ticker.tick() => self.trigger_tasks(),
+                _ = &mut ticker => {
+                    self.trigger_tasks();
+                    ticker = Delay::new(ticker_delay).fuse();
+                },
                 _ = &mut exit => break,
             }
             self.move_units_to_consensus();

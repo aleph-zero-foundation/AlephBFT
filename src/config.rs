@@ -1,6 +1,5 @@
 use crate::SessionId;
-use std::sync::Arc;
-use tokio::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use crate::nodes::{NodeCount, NodeIndex};
 
