@@ -33,7 +33,7 @@ please refer to the [detailed version][reference-link].
   to some clock ticks
 - while being asynchronous, the performance is still optimal in partially
   synchronous environment
-- guaranteed safety in partially synchronous environment
+- guaranteed safety even in asynchronous environment
 - BFT - secure if less than one third of the committee is malicious
 - secure against fork bombs, for details see [the paper][paper-link]
 - network overhead optimized to not send all parents hashes but a bitmap and a control hash
@@ -41,20 +41,20 @@ please refer to the [detailed version][reference-link].
 
 ### Future work
 
-- asynchronous liveness - current version is not secure in a rather theoretic
-  scenario when an adversary controls all the delays in the network, including
-  honest nodes messages. However, we take security very seriously, so we plan to
-  make the consensus secure even in such a unusual scenario.
+- asynchronous liveness - the current version is not live under full asynchrony.
+  It is unclear whether this has any practical relevance, but we are making efforts to strengthen
+  the guarantees in this direction as well.
+  Adding a safe source of randomness to the protocol allows to make it fully asynchronous.
 - get rid of the only major dependency - `parity-scale-codec`
 
 ### Using the crate
 
-- Import rush in your crate
+- Import AlephBFT in your crate
   ```
   [dependencies]:
-  rush = "1"
+  AlephBFT = "1"
   ```
-- Rush requires user to provide it with an implementation of the following traits:
+- AlephBFT requires user to provide it with an implementation of the following traits:
   - The [DataIO][dataio-link] trait is an abstraction for a component that provides data items,
     checks availability of data items and allows to input ordered data items. `DataIO` is
     parametrized with a `Data` generic type representing the type of items we would like to order.
@@ -129,25 +129,25 @@ tools with `install_cov_tools.sh`.
 
 ### License
 
-rush is licensed under the terms of the the Apache License 2.0.
+AlephBFT is licensed under the terms of the the Apache License 2.0.
 
 ### Founding
 
 The implementation in this repository is founded by [Aleph Zero Foundation][webpage-link].
 
 [//]: ### "badges"
-[crate-image]: https://img.shields.io/crates/v/rush.svg
-[crate-link]: https://crates.io/crates/rush
-[docs-image]: https://docs.rs/rush/badge.svg
-[docs-link]: https://docs.rs/rush
-[build-image]: https://github.com/Cardinal-Cryptography/rush/workflows/CI/badge.svg
-[build-link]: https://github.com/Cardinal-Cryptography/rush/actions?query=workflow%3ACI
+[crate-image]: https://img.shields.io/crates/v/aleph-bft.svg
+[crate-link]: https://crates.io/crates/aleph-bft
+[docs-image]: https://docs.rs/aleph-bft/badge.svg
+[docs-link]: https://docs.rs/aleph-bft
+[build-image]: https://github.com/Cardinal-Cryptography/aleph-bft/workflows/CI/badge.svg
+[build-link]: https://github.com/Cardinal-Cryptography/aleph-bft/actions?query=workflow%3ACI
 [license-image]: https://img.shields.io/badge/license-Apache2.0-blue.svg
-[license-link]: https://github.com/Cardinal-Cryptography/rush/blob/main/LICENSE
+[license-link]: https://github.com/Cardinal-Cryptography/aleph-bft/blob/main/LICENSE
 [rustc-image]: https://img.shields.io/badge/rustc-stable-blue.svg
 [//]: ### "general links"
-[reference-link]: https://Cardinal-Cryptography.github.io/rush/index.html
-[paper-link]: https://dl.acm.org/doi/10.1145/3318041.3355467
+[reference-link]: https://Cardinal-Cryptography.github.io/aleph-bft/index.html
+[paper-link]: https://arxiv.org/abs/1908.05156
 [old-paper-link]: https://arxiv.org/abs/1810.05256
 [aleph-node-link]: https://github.com/Cardinal-Cryptography/aleph-node
 [webpage-link]: https://alephzero.org

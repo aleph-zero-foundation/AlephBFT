@@ -1,5 +1,5 @@
 [package]
-name = "rush"
+name = "aleph-bft"
 version = "0.3.0"
 edition = "2018"
 authors = ["Cardinal Cryptography"]
@@ -13,10 +13,9 @@ readme = "README.md"
 
 description = """
     Aleph is an asynchronous and Byzantine fault tolerant consensus protocol aimed
-    at ordering arbitrary messages (transactions). It has been designed to operate
-    continuously under conditions where there is no bound on message-delivery delay
-    and under the assumption that there is a significant probability of malicious
-    behavior, making it an excellent fit for blockchain-related applications.
+    at ordering arbitrary messages (transactions). It has been designed to continuously operate
+    even in the harshest conditions: with no bounds on message-delivery delays and in the presence
+    of malicious actors. This makes it an excellent fit for blockchain-related applications.
     """
 
 [dependencies]

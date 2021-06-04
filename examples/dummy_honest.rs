@@ -1,3 +1,4 @@
+use aleph_bft::{NodeIndex, OrderedBatch};
 use codec::{Decode, Encode};
 use futures::{
     channel::{
@@ -8,7 +9,6 @@ use futures::{
 };
 use log::info;
 use parking_lot::Mutex;
-use rush::{NodeIndex, OrderedBatch};
 use std::{
     collections::{hash_map::DefaultHasher, HashSet},
     error::Error,
@@ -70,8 +70,8 @@ async fn main() {
             count: n_members,
             index: my_id.into(),
         };
-        let config = rush::default_config(n_members.into(), my_id.into(), 0);
-        let member = rush::Member::new(data_io, &keybox, config, Spawner {});
+        let config = aleph_bft::default_config(n_members.into(), my_id.into(), 0);
+        let member = aleph_bft::Member::new(data_io, &keybox, config, Spawner {});
 
         member.run_session(network, exit).await
     });
@@ -96,7 +96,7 @@ async fn main() {
 #[derive(PartialEq, Eq, Clone, Debug)]
 struct Hasher64;
 
-impl rush::Hasher for Hasher64 {
+impl aleph_bft::Hasher for Hasher64 {
     type Hash = [u8; 8];
 
     fn hash(x: &[u8]) -> Self::Hash {
@@ -112,7 +112,7 @@ struct DataIO {
     finalized_tx: UnboundedSender<OrderedBatch<Data>>,
 }
 
-impl rush::DataIO<Data> for DataIO {
+impl aleph_bft::DataIO<Data> for DataIO {
     type Error = ();
     fn get_data(&self) -> Data {
         let mut data = self.next_data.lock();
@@ -154,7 +154,7 @@ pub(crate) struct PartialMultisignature {
     signed_by: Vec<NodeIndex>,
 }
 
-impl rush::PartialMultisignature for PartialMultisignature {
+impl aleph_bft::PartialMultisignature for PartialMultisignature {
     type Signature = Signature;
     fn add_signature(self, _: &Self::Signature, index: NodeIndex) -> Self {
         let Self { mut signed_by } = self;
@@ -175,7 +175,7 @@ struct KeyBox {
     index: NodeIndex,
 }
 
-impl rush::KeyBox for KeyBox {
+impl aleph_bft::KeyBox for KeyBox {
     type Signature = Signature;
     fn sign(&self, _msg: &[u8]) -> Self::Signature {
         Signature {}
@@ -185,7 +185,7 @@ impl rush::KeyBox for KeyBox {
     }
 }
 
-impl rush::MultiKeychain for KeyBox {
+impl aleph_bft::MultiKeychain for KeyBox {
     type PartialMultisignature = PartialMultisignature;
     fn from_signature(&self, _: &Self::Signature, index: NodeIndex) -> Self::PartialMultisignature {
         let signed_by = vec![index];
@@ -196,7 +196,7 @@ impl rush::MultiKeychain for KeyBox {
     }
 }
 
-impl rush::Index for KeyBox {
+impl aleph_bft::Index for KeyBox {
     fn index(&self) -> NodeIndex {
         self.index
     }
@@ -205,7 +205,7 @@ impl rush::Index for KeyBox {
 #[derive(Clone)]
 struct Spawner;
 
-impl rush::SpawnHandle for Spawner {
+impl aleph_bft::SpawnHandle for Spawner {
     fn spawn(&self, _: &str, task: impl Future<Output = ()> + Send + 'static) {
         tokio::spawn(task);
     }
@@ -213,7 +213,7 @@ impl rush::SpawnHandle for Spawner {
 
 const ALEPH_PROTOCOL_NAME: &str = "aleph";
 
-type NetworkData = rush::NetworkData<Hasher64, Data, Signature, PartialMultisignature>;
+type NetworkData = aleph_bft::NetworkData<Hasher64, Data, Signature, PartialMultisignature>;
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
@@ -255,7 +255,7 @@ struct Network {
 }
 
 #[async_trait::async_trait]
-impl rush::Network<Hasher64, Data, Signature, PartialMultisignature> for Network {
+impl aleph_bft::Network<Hasher64, Data, Signature, PartialMultisignature> for Network {
     type Error = ();
     fn send(&self, data: NetworkData, _node: NodeIndex) -> Result<(), Self::Error> {
         self.outgoing_tx
