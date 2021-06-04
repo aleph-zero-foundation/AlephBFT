@@ -49,11 +49,11 @@ impl Div<usize> for NodeCount {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, From, Encode, Decode)]
-pub struct NodeMap<T>(Vec<T>);
+pub(crate) struct NodeMap<T>(Vec<T>);
 
 impl<T> NodeMap<T> {
     /// Constructs a new node map with a given length.
-    pub fn new_with_len(len: NodeCount) -> Self
+    pub(crate) fn new_with_len(len: NodeCount) -> Self
     where
         T: Default + Clone,
     {
@@ -62,12 +62,12 @@ impl<T> NodeMap<T> {
     }
 
     /// Returns an iterator over all values.
-    pub fn iter(&self) -> impl Iterator<Item = &T> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &T> {
         self.0.iter()
     }
 
     /// Returns an iterator over all values, by node index.
-    pub fn enumerate(&self) -> impl Iterator<Item = (NodeIndex, &T)> {
+    pub(crate) fn enumerate(&self) -> impl Iterator<Item = (NodeIndex, &T)> {
         self.iter()
             .enumerate()
             .map(|(idx, value)| (NodeIndex(idx), value))
@@ -97,22 +97,25 @@ impl<T> IndexMut<NodeIndex> for NodeMap<T> {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct BoolNodeMap(bit_vec::BitVec<u32>);
+pub(crate) struct BoolNodeMap(bit_vec::BitVec<u32>);
 
+#[cfg(test)]
 impl BoolNodeMap {
-    pub fn with_capacity(capacity: NodeCount) -> Self {
+    pub(crate) fn with_capacity(capacity: NodeCount) -> Self {
         BoolNodeMap(bit_vec::BitVec::from_elem(capacity.0, false))
     }
 
-    pub fn set(&mut self, i: NodeIndex) {
+    pub(crate) fn set(&mut self, i: NodeIndex) {
         self.0.set(i.0, true);
     }
+}
 
-    pub fn capacity(&self) -> usize {
+impl BoolNodeMap {
+    pub(crate) fn capacity(&self) -> usize {
         self.0.len()
     }
 
-    pub fn true_indices(&self) -> impl Iterator<Item = NodeIndex> + '_ {
+    pub(crate) fn true_indices(&self) -> impl Iterator<Item = NodeIndex> + '_ {
         self.0
             .iter()
             .enumerate()

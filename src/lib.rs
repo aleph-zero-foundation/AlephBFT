@@ -19,7 +19,7 @@ mod creator;
 mod extender;
 mod member;
 mod network;
-pub mod nodes;
+mod nodes;
 mod signed;
 pub use signed::*;
 mod config;
@@ -62,22 +62,6 @@ impl<T> Data for T where T: Eq + Clone + Send + Sync + Debug + StdHash + Encode 
 /// A round.
 pub type Round = usize;
 
-/// Type used in NotificationOut::MissingUnits to give additional info about the missing units that might
-/// help the Environment to fetch them (currently this is the node_ix of the unit whose parents are missing).
-#[derive(Clone, Debug, PartialEq, Encode, Decode)]
-pub struct RequestAuxData {
-    child_creator: NodeIndex,
-}
-
-impl RequestAuxData {
-    fn new(child_creator: NodeIndex) -> Self {
-        RequestAuxData { child_creator }
-    }
-
-    pub fn child_creator(&self) -> NodeIndex {
-        self.child_creator
-    }
-}
 /// Type for sending a new ordered batch of units
 pub type OrderedBatch<Data> = Vec<Data>;
 

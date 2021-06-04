@@ -17,7 +17,7 @@ use crate::{
         ControlHash, FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore,
     },
     Data, DataIO, Hasher, Index, MultiKeychain, Network, NodeCount, NodeIndex, NodeMap,
-    OrderedBatch, RequestAuxData, Sender, SpawnHandle,
+    OrderedBatch, Sender, SpawnHandle,
 };
 
 use futures_timer::Delay;
@@ -55,8 +55,8 @@ pub(crate) enum NotificationOut<H: Hasher> {
     /// disseminate this preunit among other nodes.
     CreatedPreUnit(PreUnit<H>),
     /// Notification that some units are needed but missing. The role of the Member
-    /// is to fetch these unit (somehow). Auxiliary data is provided to help handle this request.
-    MissingUnits(Vec<UnitCoord>, RequestAuxData),
+    /// is to fetch these unit (somehow).
+    MissingUnits(Vec<UnitCoord>),
     /// Notification that Consensus has parents incompatible with the control hash.
     WrongControlHash(H::Hash),
     /// Notification that a new unit has been added to the DAG, list of decoded parents provided
@@ -306,7 +306,7 @@ where
             NotificationOut::CreatedPreUnit(pu) => {
                 self.on_create(pu);
             }
-            NotificationOut::MissingUnits(coords, _aux) => {
+            NotificationOut::MissingUnits(coords) => {
                 self.on_missing_coords(coords);
             }
             NotificationOut::WrongControlHash(h) => {

@@ -6,7 +6,7 @@ use crate::{
     member::{NotificationIn, NotificationOut},
     nodes::{NodeCount, NodeIndex, NodeMap},
     units::{ControlHash, Unit, UnitCoord},
-    Hasher, Receiver, RequestAuxData, Round, Sender,
+    Hasher, Receiver, Round, Sender,
 };
 use log::{debug, error};
 
@@ -218,11 +218,10 @@ impl<H: Hasher> Terminal<H> {
                 }
             }
             if !coords_to_request.is_empty() {
-                let aux_data = RequestAuxData::new(u.creator());
-                debug!(target: "aleph-terminal", "{:?} Missing coords {:?} aux {:?}", self.node_id, coords_to_request, aux_data);
+                debug!(target: "aleph-terminal", "{:?} Missing coords {:?}", self.node_id, coords_to_request);
                 let send_result = self
                     .ntfct_tx
-                    .unbounded_send(NotificationOut::MissingUnits(coords_to_request, aux_data));
+                    .unbounded_send(NotificationOut::MissingUnits(coords_to_request));
                 if let Err(e) = send_result {
                     error!(target: "aleph-terminal", "{:?} Unable to place a Fetch request: {:?}.", self.node_id, e);
                 }

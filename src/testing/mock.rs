@@ -119,7 +119,7 @@ impl HonestHub {
                 self.units_by_coord.insert(coord, u.clone());
                 self.send_to_all(NotificationIn::NewUnits(vec![u]));
             }
-            NotificationOut::MissingUnits(coords, _aux_data) => {
+            NotificationOut::MissingUnits(coords) => {
                 let mut response_units = Vec::new();
                 for coord in coords {
                     match self.units_by_coord.get(&coord) {
