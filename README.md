@@ -147,13 +147,13 @@ The implementation in this repository is founded by [Aleph Zero Foundation][webp
 [crate-link]: https://crates.io/crates/aleph-bft
 [docs-image]: https://docs.rs/aleph-bft/badge.svg
 [docs-link]: https://docs.rs/aleph-bft
-[build-image]: https://github.com/Cardinal-Cryptography/rush/workflows/CI/badge.svg
-[build-link]: https://github.com/Cardinal-Cryptography/rush/actions?query=workflow%3ACI
+[build-image]: https://github.com/Cardinal-Cryptography/AlephBFT/workflows/CI/badge.svg
+[build-link]: https://github.com/Cardinal-Cryptography/AlephBFT/actions?query=workflow%3ACI
 [license-image]: https://img.shields.io/badge/license-Apache2.0-blue.svg
-[license-link]: https://github.com/Cardinal-Cryptography/rush/blob/main/LICENSE
+[license-link]: https://github.com/Cardinal-Cryptography/AlephBFT/blob/main/LICENSE
 [rustc-image]: https://img.shields.io/badge/rustc-stable-blue.svg
 [//]: ### "general links"
-[reference-link]: https://Cardinal-Cryptography.github.io/rush/index.html
+[reference-link]: https://Cardinal-Cryptography.github.io/AlephBFT/index.html
 [paper-link]: https://arxiv.org/abs/1908.05156
 [old-paper-link]: https://arxiv.org/abs/1810.05256
 [aleph-node-link]: https://github.com/Cardinal-Cryptography/aleph-node
