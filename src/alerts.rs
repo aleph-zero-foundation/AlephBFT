@@ -171,9 +171,9 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
     fn on_new_forker_detected(&mut self, forker: NodeIndex, proof: ForkProof<H, D, MK::Signature>) {
         use ForkingNotification::Forker;
         self.known_forkers.insert(forker, proof.clone());
-        if let Err(e) = self.notifications_for_units.unbounded_send(Forker(proof)) {
-            error!(target: "alerter", "{:?} Failed to send for proof to units: {:?}.", self.index(), e);
-        }
+        self.notifications_for_units
+            .unbounded_send(Forker(proof))
+            .expect("Channel should be open")
     }
 
     // Correctness rules:
@@ -262,12 +262,12 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
         let forker = alert.forker();
         self.known_forkers.insert(forker, alert.proof.clone());
         let alert = Signed::sign(alert, self.keychain);
-        if let Err(e) = self.messages_for_network.unbounded_send((
-            AlertMessage::ForkAlert(alert.clone().into()),
-            Recipient::Everyone,
-        )) {
-            debug!(target: "alerter", "{:?} Error when broadcasting alert {:?}.", self.index(), e);
-        }
+        self.messages_for_network
+            .unbounded_send((
+                AlertMessage::ForkAlert(alert.clone().into()),
+                Recipient::Everyone,
+            ))
+            .expect("Channel should be open");
         self.rmc_alert(forker, alert);
     }
 
@@ -307,12 +307,9 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
                 return;
             }
         };
-        if let Err(e) = self
-            .messages_for_network
+        self.messages_for_network
             .unbounded_send((AlertMessage::ForkAlert(alert.into()), Recipient::Node(node)))
-        {
-            debug!(target: "alerter", "{:?} Error when sending alert to {:?}: {:?}.", self.index(), node, e);
-        }
+            .expect("Channel should be open")
     }
 
     fn on_rmc_message(
@@ -324,15 +321,17 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
         if let Some(alert) = self.known_alerts.get(hash) {
             let alert_id = (alert.as_signable().sender, alert.as_signable().forker());
             if self.known_rmcs.get(&alert_id) == Some(hash) || message.is_complete() {
-                if let Err(e) = self.messages_for_rmc.unbounded_send(message) {
-                    debug!(target: "alerter", "{:?} Error when forwarding RMC message to RMC: {:?}.", self.index(), e);
-                }
+                self.messages_for_rmc
+                    .unbounded_send(message)
+                    .expect("Channel should be open")
             }
-        } else if let Err(e) = self.messages_for_network.unbounded_send((
-            AlertMessage::AlertRequest(self.index(), *hash),
-            Recipient::Node(sender),
-        )) {
-            debug!(target: "alerter", "{:?} Error when sending alert request: {:?}.", self.index(), e);
+        } else {
+            self.messages_for_network
+                .unbounded_send((
+                    AlertMessage::AlertRequest(self.index(), *hash),
+                    Recipient::Node(sender),
+                ))
+                .expect("Channel should be open")
         }
     }
 
@@ -365,12 +364,9 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
             debug!(target: "alerter","{:?} We have received an incorrect unit commitment from {:?}.", self.index(), alert.sender);
             return;
         }
-        if let Err(e) = self
-            .notifications_for_units
+        self.notifications_for_units
             .unbounded_send(ForkingNotification::Units(alert.legit_units.clone()))
-        {
-            debug!(target: "alerter","{:?} Failed to send forking notification to units: {:?}.", self.index(), e);
-        }
+            .expect("Channel should be open")
     }
 
     fn rmc_message_to_network(
@@ -381,12 +377,12 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
         ),
     ) {
         let (node, message) = message;
-        if let Err(e) = self.messages_for_network.unbounded_send((
-            AlertMessage::RmcMessage(self.index(), message),
-            Recipient::Node(node),
-        )) {
-            debug!(target: "alerter", "{:?} Error when sending RMC message to {:?}: {:?}.", self.index(), node, e);
-        }
+        self.messages_for_network
+            .unbounded_send((
+                AlertMessage::RmcMessage(self.index(), message),
+                Recipient::Node(node),
+            ))
+            .expect("Channel should be open")
     }
 
     async fn run(&mut self, mut exit: oneshot::Receiver<()>) {

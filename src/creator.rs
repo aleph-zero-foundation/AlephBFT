@@ -77,12 +77,9 @@ impl<H: Hasher> Creator<H> {
 
         let new_preunit = PreUnit::new(self.node_ix, round, control_hash);
         debug!(target: "aleph-creator", "{:?} Created a new unit {:?} at round {:?}.", self.node_ix, new_preunit, self.current_round);
-        let send_result = self
-            .new_units_tx
-            .unbounded_send(NotificationOut::CreatedPreUnit(new_preunit));
-        if let Err(e) = send_result {
-            error!(target: "aleph-creator", "{:?} Unable to send a newly created unit: {:?}.", self.node_ix, e);
-        }
+        self.new_units_tx
+            .unbounded_send(NotificationOut::CreatedPreUnit(new_preunit))
+            .expect("Channel should be open");
 
         self.current_round += 1;
         self.init_round(self.current_round);

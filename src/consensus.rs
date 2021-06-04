@@ -1,5 +1,5 @@
 use futures::channel::{mpsc, oneshot};
-use log::{debug, error};
+use log::debug;
 
 use crate::{
     config::Config,
@@ -43,17 +43,15 @@ pub(crate) async fn run<H: Hasher + 'static>(
 
     // send a new parent candidate to the creator
     terminal.register_post_insert_hook(Box::new(move |u| {
-        let send_result = parents_tx.unbounded_send(u.into());
-        if let Err(e) = send_result {
-            error!(target:"aleph-terminal", "Unable to send a unit to Creator: {:?}.", e);
-        }
+        parents_tx
+            .unbounded_send(u.into())
+            .expect("Channel should be open");
     }));
     // try to extend the partial order after adding a unit to the dag
     terminal.register_post_insert_hook(Box::new(move |u| {
-        let send_result = electors_tx.unbounded_send(u.into());
-        if let Err(e) = send_result {
-            error!(target:"aleph-terminal", "Unable to send a unit to Extender: {:?}.", e);
-        }
+        electors_tx
+            .unbounded_send(u.into())
+            .expect("Channel should be open");
     }));
 
     let (terminal_exit, exit_rx) = oneshot::channel();

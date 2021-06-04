@@ -8,7 +8,7 @@ use crate::{
     units::{ControlHash, Unit, UnitCoord},
     Hasher, Receiver, Round, Sender,
 };
-use log::{debug, error};
+use log::debug;
 
 /// An enum describing the status of a Unit in the Terminal pipeline.
 #[derive(Clone, PartialEq)]
@@ -219,12 +219,9 @@ impl<H: Hasher> Terminal<H> {
             }
             if !coords_to_request.is_empty() {
                 debug!(target: "aleph-terminal", "{:?} Missing coords {:?}", self.node_id, coords_to_request);
-                let send_result = self
-                    .ntfct_tx
-                    .unbounded_send(NotificationOut::MissingUnits(coords_to_request));
-                if let Err(e) = send_result {
-                    error!(target: "aleph-terminal", "{:?} Unable to place a Fetch request: {:?}.", self.node_id, e);
-                }
+                self.ntfct_tx
+                    .unbounded_send(NotificationOut::MissingUnits(coords_to_request))
+                    .expect("Channel should be open");
             }
         }
     }
@@ -246,12 +243,9 @@ impl<H: Hasher> Terminal<H> {
             parent_hashes.push(*p_hash);
         }
 
-        let send_result = self
-            .ntfct_tx
-            .unbounded_send(NotificationOut::AddedToDag(*u_hash, parent_hashes));
-        if let Err(e) = send_result {
-            error!(target: "aleph-terminal", "{:?} Unable to place AddedToDag notification: {:?}.", self.node_id, e);
-        }
+        self.ntfct_tx
+            .unbounded_send(NotificationOut::AddedToDag(*u_hash, parent_hashes))
+            .expect("Channel should be open");
     }
 
     // We set the correct parent hashes for unit u.
@@ -308,12 +302,9 @@ impl<H: Hasher> Terminal<H> {
     }
 
     fn on_wrong_hash_detected(&mut self, u_hash: H::Hash) {
-        let send_result = self
-            .ntfct_tx
-            .unbounded_send(NotificationOut::WrongControlHash(u_hash));
-        if let Err(e) = send_result {
-            error!(target: "aleph-terminal", "{:?} Unable to place a Fetch request: {:?}.", self.node_id, e);
-        }
+        self.ntfct_tx
+            .unbounded_send(NotificationOut::WrongControlHash(u_hash))
+            .expect("Channel should be open");
     }
 
     // This drains the event queue. Note that new events might be added to the queue as the result of

@@ -98,7 +98,8 @@ impl HonestHub {
             "Must connect to all nodes before running the hub."
         );
         for (_ix, tx) in self.ntfct_in_txs.iter() {
-            tx.unbounded_send(ntfct.clone()).unwrap();
+            tx.unbounded_send(ntfct.clone())
+                .expect("Channel should be open");
         }
     }
 
@@ -107,7 +108,7 @@ impl HonestHub {
             .ntfct_in_txs
             .get(&node_ix)
             .expect("Must connect to all nodes before running the hub.");
-        let _ = tx.unbounded_send(ntfct);
+        tx.unbounded_send(ntfct).expect("Channel should be open");
     }
 
     fn on_notification(&mut self, node_ix: NodeIndex, ntfct: NotificationOut<Hasher64>) {

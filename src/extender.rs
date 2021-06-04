@@ -1,7 +1,7 @@
 use futures::{channel::oneshot, StreamExt};
 use std::collections::{HashMap, VecDeque};
 
-use log::{debug, error};
+use log::debug;
 
 use crate::{
     nodes::{NodeCount, NodeIndex, NodeMap},
@@ -148,10 +148,9 @@ impl<H: Hasher> Extender<H> {
 
         // We reverse for the batch to start with least recent units.
         batch.reverse();
-        let send_result = self.finalizer_tx.unbounded_send(batch);
-        if let Err(e) = send_result {
-            error!(target: "aleph-extender", "{:?} Unable to send a batch to Finalizer: {:?}.", self.node_id, e);
-        }
+        self.finalizer_tx
+            .unbounded_send(batch)
+            .expect("Channel should be open");
         debug!(target: "aleph-extender", "{:?} Finalized round {:?} with head {:?}.", self.node_id, round, head);
         self.units_by_round[round].clear();
     }
@@ -342,7 +341,9 @@ mod tests {
         for round in 0..rounds {
             for creator in 0..n_members {
                 let unit = construct_unit(creator, round, n_members);
-                let _ = electors_tx.unbounded_send(unit);
+                electors_tx
+                    .unbounded_send(unit)
+                    .expect("Channel should be open");
             }
         }
         let batch_round_0 = batch_rx.next().await.unwrap();

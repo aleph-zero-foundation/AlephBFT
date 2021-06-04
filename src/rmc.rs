@@ -228,7 +228,7 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
         );
         self.multisigned_hashes_tx
             .unbounded_send(multisigned.clone())
-            .unwrap();
+            .expect("Channel should be open");
         self.scheduler
             .add_task(Task::BroadcastMessage(Message::MultisignedHash(
                 multisigned.into_unchecked(),

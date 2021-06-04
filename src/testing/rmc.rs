@@ -70,7 +70,8 @@ impl TestNetwork {
 
     fn broadcast_message(&mut self, msg: TestMessage) {
         for tx in &mut self.incoming_txs {
-            tx.unbounded_send(msg.clone()).unwrap();
+            tx.unbounded_send(msg.clone())
+                .expect("Channel should be open");
         }
     }
 }
@@ -81,7 +82,7 @@ impl TestNetwork {
             if (self.message_filter)(recipient, message.clone()) {
                 self.incoming_txs[recipient.0]
                     .unbounded_send(message)
-                    .unwrap();
+                    .expect("Channel should be open");
             }
         }
     }

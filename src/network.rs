@@ -120,16 +120,14 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature, N: Network<H, 
         let NetworkData(network_data) = network_data;
         use NetworkDataInner::*;
         match network_data {
-            Units(unit_message) => {
-                if let Err(error) = self.units_received.unbounded_send(unit_message) {
-                    error!(target: "network-hub", "Unit message push error: {:?}", error)
-                }
-            }
-            Alert(alert_message) => {
-                if let Err(error) = self.alerts_received.unbounded_send(alert_message) {
-                    error!(target: "network-hub", "Alert message push error: {:?}", error)
-                }
-            }
+            Units(unit_message) => self
+                .units_received
+                .unbounded_send(unit_message)
+                .expect("Channel should be open"),
+            Alert(alert_message) => self
+                .alerts_received
+                .unbounded_send(alert_message)
+                .expect("Channel should be open"),
         }
     }
 
