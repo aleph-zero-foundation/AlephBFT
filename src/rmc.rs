@@ -1,3 +1,4 @@
+//! Reliable multicast functionality.
 use crate::{
     nodes::{NodeCount, NodeIndex},
     signed::{PartiallyMultisigned, Signable, Signed, UncheckedSigned},
@@ -18,7 +19,7 @@ use std::{
 };
 use tokio::time;
 
-/// A message consists of either a signed (indexed) hash, or a multisigned hash.
+/// An RMC message consisting of either a signed (indexed) hash, or a multisigned hash.
 #[derive(Debug, Encode, Decode, Clone)]
 pub enum Message<H: Signable, S: Signature, M: PartialMultisignature> {
     SignedHash(UncheckedSigned<Indexed<H>, S>),
@@ -37,11 +38,18 @@ impl<H: Signable, S: Signature, M: PartialMultisignature> Message<H, S, M> {
     }
 }
 
+/// A task of brodcasting a message.
 #[derive(Clone)]
 pub enum Task<H: Signable, MK: MultiKeychain> {
     BroadcastMessage(Message<H, MK::Signature, MK::PartialMultisignature>),
 }
 
+/// Abstraction of a task-scheduling logic
+///
+/// Because the network can be faulty, the task of sending a message must be performed multiple
+/// times to ensure that the recipient receives each message.
+/// The trait [`TaskScheduler<T>`] describes in what intervals some abstract task of type `T`
+/// should be performed.
 #[async_trait]
 pub trait TaskScheduler<T>: Send {
     fn add_task(&mut self, task: T);
@@ -70,6 +78,12 @@ impl IndexedInstant {
     }
 }
 
+/// A basic task scheduler scheduling tasks with an exponential slowdown
+///
+/// A scheduler parameterized by a duration `initial_delay`. When a task is added to the scheduler
+/// it is first scheduled immediately, then it is scheduled indefinitely, where the first delay is
+/// `initial_delay`, and each following delay for that task is two times longer than the previous
+/// one.
 pub struct DoublingDelayScheduler<T> {
     initial_delay: time::Duration,
     scheduled_instants: BinaryHeap<Reverse<IndexedInstant>>,
@@ -136,8 +150,19 @@ impl<T: Send + Clone> TaskScheduler<T> for DoublingDelayScheduler<T> {
     }
 }
 
-pub struct HashAlreadyExistsError {}
-
+/// Reliable Multicast Box
+///
+/// The instance of [`ReliableMulticast<'a, H, MK>`] reliably broadcasts hashes of type `H`,
+/// and when a hash is successfully broadcasted, the multisigned hash `Multisigned<'a, H, MK>`
+/// is asynchronously returned.
+///
+/// A node with an instance of [`ReliableMulticast<'a, H, MK>`] can initiate broadcasting
+/// a message `msg: H` by calling the [`ReliableMulticast::start_rmc`] method. As a result,
+/// the node signs `msg` and starts broadcasting the signed message via the network.
+/// When sufficintly many nodes call [`ReliableMulticast::start_rmc`] with the same message `msg`
+/// and a node collects enough signatures to form a complete multisignature under the message,
+/// the multisigned message is yielded by the instance of [`ReliableMulticast`].
+/// The multisigned messages can be polled by calling [`ReliableMulticast::next_multisigned_hash`].
 pub struct ReliableMulticast<'a, H: Signable + Hash, MK: MultiKeychain> {
     hash_states: HashMap<H, PartiallyMultisigned<'a, H, MK>>,
     network_rx: UnboundedReceiver<Message<H, MK::Signature, MK::PartialMultisignature>>,

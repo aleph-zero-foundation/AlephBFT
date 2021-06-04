@@ -17,12 +17,13 @@ pub trait KeyBox: Index + Clone + Send + Sync + 'static {
     fn verify(&self, msg: &[u8], sgn: &Self::Signature, index: NodeIndex) -> bool;
 }
 
-/// A type to which Signatures can be aggregated.
+/// A type to which signatures can be aggregated.
+///
 /// A single Signature can be rised to a Multisignature, and any signature can be added to
 /// multisignature.
 /// After adding sufficiently many signatures, the partial multisignature becomes a "complete"
 /// multisignature.
-/// Whether a multisignature is complete, can be verified with `[MultiKeychain::is_complete]` method.
+/// Whether a multisignature is complete, can be verified with [`MultiKeychain::is_complete`] method.
 /// The signature and the index passed to the `add_signature` method are required to be valid.
 pub trait PartialMultisignature: Debug + Clone + Encode + Decode + Send + 'static {
     type Signature: Signature;
@@ -30,7 +31,7 @@ pub trait PartialMultisignature: Debug + Clone + Encode + Decode + Send + 'stati
 }
 
 /// Extends KeyBox with multisigning functionalities. Allows to verify whether a partial multisignature
-/// is valid (or complete).
+/// is complete (and valid).
 pub trait MultiKeychain: KeyBox {
     type PartialMultisignature: PartialMultisignature<Signature = Self::Signature>;
     fn from_signature(
@@ -41,6 +42,11 @@ pub trait MultiKeychain: KeyBox {
     fn is_complete(&self, msg: &[u8], partial: &Self::PartialMultisignature) -> bool;
 }
 
+/// Data which can be signed.
+///
+/// Signable data should provide a hash of type [`Self::Hash`] which is build from all parts of the
+/// data which should be signed. The type [`Self::Hash`] should implement [`AsRef<[u8]>`], and
+/// the bytes returned by `hash.as_ref()` are used by a [`MultiKeychain`] to sign the data.
 pub trait Signable {
     type Hash: AsRef<[u8]>;
     fn hash(&self) -> Self::Hash;
@@ -65,6 +71,12 @@ pub struct UncheckedSigned<T: Signable, S> {
     signature: S,
 }
 
+/// A pair consisting of an instance of the `Signable` trait and an unchecked signature.
+///
+/// The method [`UncheckedSigned::check`] can be used
+/// to upgrade this `struct` to [`Signed<'a, T, KB>`] which ensures that the signature matches the
+/// signed object, and the method [`UncheckedSigned::check_multi`] can be used to upgrade to
+/// [`Multisigned<'a, T, MK>`].
 impl<T: Signable, S: Signature> UncheckedSigned<T, S> {
     pub(crate) fn as_signable(&self) -> &T {
         &self.signable
@@ -92,6 +104,7 @@ impl<T: Signable, S: Signature> Signable for UncheckedSigned<T, S> {
     }
 }
 
+/// Error type returned when a verification of a signature fails.
 #[derive(Clone, Debug)]
 pub struct SignatureError<T: Signable, S> {
     unchecked: UncheckedSigned<T, S>,
@@ -121,7 +134,7 @@ impl<T: Signable + Index, S: Clone> Index for UncheckedSigned<T, S> {
 }
 
 impl<T: Signable, S: Clone> UncheckedSigned<T, S> {
-    /// Verifies whether the signature matches the key with the index as in the signed data.
+    /// Verifies whether the multisignature matches the signed data.
     pub(crate) fn check_multi<MK: MultiKeychain<PartialMultisignature = S>>(
         self,
         keychain: &MK,
@@ -209,6 +222,14 @@ impl<'a, T: Signable + Index, KB: KeyBox> From<Signed<'a, T, KB>>
     }
 }
 
+/// A pair consistsing of signable data and a [`NodeIndex`].
+///
+/// This is a wrapper used for signing data which does not implement the [`Index`] trait.
+/// If a node with an index `i` needs to sign some data `signable` which does not
+/// implement the [`Index`] trait, then a wrapped instance `signable`: `Indexed::new(signable, i)`
+/// should be signed instead. Note that in the implementation of `Signable` for `Indexed<T>`,
+/// the hash is the hash of the underlying data `T`. Therefore, instances of the type
+/// [`Signed<'a, Indexed<T>, MK>`] can be aggregated into `Multisigned<'a, T, MK>`
 #[derive(Clone, Encode, Decode, Debug, PartialEq)]
 pub struct Indexed<T: Signable> {
     signable: T,
@@ -239,6 +260,12 @@ impl<T: Signable> Index for Indexed<T> {
     }
 }
 
+/// Signable data together with a complete multisignature.
+///
+/// An instance of `Multisigned<'a, T: Signable, MK: MultiKeychain>` consists of a data of type `T`
+/// together with a multisignature which is valid and complete according to a multikeychain
+/// reference `&'a MK`. The lifetime parameter ensures that the data with a multisignature do not
+/// outlive the session.
 #[derive(Debug)]
 pub struct Multisigned<'a, T: Signable, MK: MultiKeychain> {
     unchecked: UncheckedSigned<T, MK::PartialMultisignature>,
@@ -269,6 +296,11 @@ pub(crate) struct IncompleteMultisignatureError<'a, T: Signable, MK: MultiKeycha
     pub(crate) partial: PartiallyMultisigned<'a, T, MK>,
 }
 
+/// Signable data together with a valid partial multisignature.
+///
+/// Instances of this type keep track whether the partial multisignautre is complete or not.
+/// If the multisignature is complete, you can get [`Multisigned`] by pattern matching
+/// against the variant [`PartiallyMultisigned::Complete`].
 #[derive(Debug)]
 pub enum PartiallyMultisigned<'a, T: Signable, MK: MultiKeychain> {
     Incomplete {
