@@ -18,7 +18,7 @@ pub(crate) async fn run<H: Hasher + 'static>(
     spawn_handle: impl SpawnHandle,
     exit: oneshot::Receiver<()>,
 ) {
-    debug!(target: "rush-root", "{:?} Starting all services...", conf.node_ix);
+    debug!(target: "aleph-root", "{:?} Starting all services...", conf.node_ix);
 
     let n_members = conf.n_members;
 
@@ -45,14 +45,14 @@ pub(crate) async fn run<H: Hasher + 'static>(
     terminal.register_post_insert_hook(Box::new(move |u| {
         let send_result = parents_tx.unbounded_send(u.into());
         if let Err(e) = send_result {
-            error!(target:"rush-terminal", "Unable to send a unit to Creator: {:?}.", e);
+            error!(target:"aleph-terminal", "Unable to send a unit to Creator: {:?}.", e);
         }
     }));
     // try to extend the partial order after adding a unit to the dag
     terminal.register_post_insert_hook(Box::new(move |u| {
         let send_result = electors_tx.unbounded_send(u.into());
         if let Err(e) = send_result {
-            error!(target:"rush-terminal", "Unable to send a unit to Extender: {:?}.", e);
+            error!(target:"aleph-terminal", "Unable to send a unit to Extender: {:?}.", e);
         }
     }));
 
@@ -61,7 +61,7 @@ pub(crate) async fn run<H: Hasher + 'static>(
         "consensus/terminal",
         async move { terminal.run(exit_rx).await },
     );
-    debug!(target: "rush-root", "{:?} All services started.", conf.node_ix);
+    debug!(target: "aleph-root", "{:?} All services started.", conf.node_ix);
 
     let _ = exit.await;
     // we stop no matter if received Ok or Err
@@ -69,7 +69,7 @@ pub(crate) async fn run<H: Hasher + 'static>(
     let _ = terminal_exit.send(());
     let _ = extender_exit.send(());
 
-    debug!(target: "rush-root", "{:?} All services stopped.", conf.node_ix);
+    debug!(target: "aleph-root", "{:?} All services stopped.", conf.node_ix);
 }
 
 #[cfg(test)]

@@ -6,7 +6,7 @@ cargo cov -- show \
     --use-color \
     --ignore-filename-regex='/rustc' \
     --ignore-filename-regex='/.cargo/registry' \
-    --instr-profile=rush.profdata \
-    --object target/debug/deps/rush-"$version" \
+    --instr-profile=aleph_bft.profdata \
+    --object target/debug/deps/aleph_bft-"$version" \
     --show-instantiations --show-line-counts-or-regions \
     --Xdemangler=rustfilt | less -R

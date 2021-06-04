@@ -1,6 +1,6 @@
-## 5 Rush Internals
+## 5 AlephBFT Internals
 
-To explain the inner workings of Rush it is instructive to follow the path of a unit: from the very start when it is created to the moment when its round is decided and it's data is placed in one of the output batches. Here we give a brief overview and subsequently go more into details of specific components in dedicated subsections.
+To explain the inner workings of AlephBFT it is instructive to follow the path of a unit: from the very start when it is created to the moment when its round is decided and it's data is placed in one of the output batches. Here we give a brief overview and subsequently go more into details of specific components in dedicated subsections.
 
 1. The unit is created by one of the node's `Creator` component -- implemented in `src/creator.rs`. Creator sends a notification to an outer component.
 2. The newly created unit is filled with data, session information and a signature. This is done in `src/member.rs`. Subsequently a recurring task of broadcasting this unit is put in the task queue. The unit will be broadcast to all other nodes a few times (with some delays in between).
@@ -12,28 +12,26 @@ To explain the inner workings of Rush it is instructive to follow the path of a 
 8. Dag units are passed to a component called the `Extender` -- see `src/extender.rs`. The role of the extender is to efficiently run the `OrderData` algorithm, described in the [section on Aleph](what_is_aleph.md).
 9. Once a unit's data is placed in one of batches by the `Extender` then its path is over and can be safely discarded.
 
-
 ### 5.1 Creator
 
 The creator produces units according to the Aleph protocol rules. It will wait until the prespecified delay has passed and attempt to create a unit using a maximal number of parents. If it is not possible yet, it will wait till the first moment enough parents are available. After creating the last unit, the creator stops producing new ones, although this is never expected to happen during correct execution.
 
 Since the creator does not have access to the `DataIO` object and to the `KeyBox` it is not able to create the unit "fully", for this reason it only chooses parents, the rest is filled by the `Member`.
 
-
 ### 5.2 Unit Store in Member
 
-As mentioned, the idea is that this stores only legit units and passes them to the `Terminal` at an "appropriate" moment. In more detail it means that it internally keeps a `round_in_progress` which is the highest round for which the previous one has at least `floor(2N/3)+1` units from different creators. Units that are beyond `round_in_progress` are not moved to  the `Terminal` yet for efficiency (either we are falling behind, or there is something off with these units, better to move slowly).
+As mentioned, the idea is that this stores only legit units and passes them to the `Terminal` at an "appropriate" moment. In more detail it means that it internally keeps a `round_in_progress` which is the highest round for which the previous one has at least `floor(2N/3)+1` units from different creators. Units that are beyond `round_in_progress` are not moved to the `Terminal` yet for efficiency (either we are falling behind, or there is something off with these units, better to move slowly).
 
 A slight detail here is that units from beyond `round_in_progress` are not consider **legit** yet. And thus after a fork is detected by a node `i`, all `i`'s units beyond `round_in_progress` are removed from the store and forgotten. In particular only units in the store of round `<=round_in_progress` are attached to the alert.
 
-
 ### 5.3 Terminal
+
 The `Terminal` receives legit units, yet there might be two issues with such units that would not allow them to be added to Dag:
 
 1. A unit `U` might have a "wrong" control hash. From the perspective of the `Terminal` this means that naively picking `U`'s parents as units from previous round determined by `U.parent_map` results in a failed control hash check. Note that in case `U.creator` is honest and there are no forkers among `U` parents creators then this cannot happen and the control hash check always succeeds. Fail can happen because:
-         a) either `U`'s one or multiple parents are forks and the `Terminal` either does not have the correct variants yet, or just has them but performed the naive check on different variants (note that guessing the correct variants might require exponential time so there is no point for the terminal to even try it),
-         b) or `U`'s  creator is dishonest and just put a control hash in the unit that does not "unhash" to anything meaningful.
-    In any case the terminal triggers a request to `Member` to download the full list of `U`'s parent hashes, so that the ambiguity is resolved. Once a correct reponse is received by `Member` then it is passed back to the terminal so that it can "decode" the parents and proceed.
+   a) either `U`'s one or multiple parents are forks and the `Terminal` either does not have the correct variants yet, or just has them but performed the naive check on different variants (note that guessing the correct variants might require exponential time so there is no point for the terminal to even try it),
+   b) or `U`'s creator is dishonest and just put a control hash in the unit that does not "unhash" to anything meaningful.
+   In any case the terminal triggers a request to `Member` to download the full list of `U`'s parent hashes, so that the ambiguity is resolved. Once a correct reponse is received by `Member` then it is passed back to the terminal so that it can "decode" the parents and proceed.
 2. A unit `U` might have parents that are not legit. Before adding a unit `U` to the Dag, the terminal waits for all parents of `U` to be added to the Dag first.
 
 There is often a situation where the terminal receives a unit `U` and for some reason there is no unit yet for a particular slot in `U`'s parents, i.e., `U`'s parent map says that one of the parents was created by node `i` but terminal has no unit with "coordinates" `(U.round - 1, i)` (`UnitCoord` type in the implementation -- means a pair consising of `(V.round, V.creator)` for some unit `V`). In such a case terminal makes a request to the `Member` to get such a unit, which is then followed by `Member` sending a series of requests to random nodes in order to fetch such a unit.
@@ -41,7 +39,3 @@ There is often a situation where the terminal receives a unit `U` and for some r
 ### 5.3 Extender
 
 The `Extender`'s role is to receive Dag units (from `Terminal`) and extend the output stream. Towards this end it maintains the `round` for which the next `Head` must be chosen and the current unit `U` that is being decided for being `Head` or not. There is some caching made in the implementation so as to not recompute all the votes from scratch whenever a fresh unit arrives.
-
-
-
-

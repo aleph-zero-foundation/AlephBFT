@@ -9,7 +9,7 @@ So, roughly speaking, we want a broadcast primitive that is consistent even if a
 
 ### 6.1 Consistent Broadcast using multisignatures -- RMC
 
-The main idea behind the reliable broadcast implementation in Rush is the use of multisignatures. Without going too much into details, think of a multisignature over a message `m` as a list of `N-f` signatures by `N-f` different committee nodes over the same message `m` (more efficient ways to achieve such a functionality are possible, like threshold signatures or signature aggregates, but they are beyond the scope of this section). Someone holding a multisignature over `m` can be sure that a large fraction of nodes "agree" (with the meaning of "agree" depending on the particular application) on `m`.
+The main idea behind the reliable broadcast implementation in AlephBFT is the use of multisignatures. Without going too much into details, think of a multisignature over a message `m` as a list of `N-f` signatures by `N-f` different committee nodes over the same message `m` (more efficient ways to achieve such a functionality are possible, like threshold signatures or signature aggregates, but they are beyond the scope of this section). Someone holding a multisignature over `m` can be sure that a large fraction of nodes "agree" (with the meaning of "agree" depending on the particular application) on `m`.
 
 The RMC (Reliable MultiCast) protocol is a way to reliably disseminate a single hash `h` among all nodes (in the next section we explain how to extend it to disseminating arbitrary data and not only a hash). The idea is as follows:
 
@@ -24,8 +24,4 @@ The moment when a node receives `MULTISIG(h, msig)` is considered as the complet
 
 Having the idea of RMC, one can modify it quite easily to achieve reliable broadcast. A naive way to do so would be to let the sender node hash the message `m` it intends to reliably broadcast into `h=hash(m)` and use RMC on the hash `h`. This almost works, except for the data availability problem -- a malicious sender might simply send a random meaningless hash `h` and then the honest nodes would never be able to recover the underlying data.
 
-To circumvent the data availability problem we instruct the sender to send data `m` to all the nodes and only then to initiate RMC on `h = hash(m)`, if we make sure that no honest node proceeds with RMC before it receives the data `m`, then a successful RMC has the guarantee that most of the honest nodes hold the data `m`. This is the basic idea behind the protocol implemented for fork alerts in Rush, we refer to `/src/alerts.rs` for details.
-
-
-
-
+To circumvent the data availability problem we instruct the sender to send data `m` to all the nodes and only then to initiate RMC on `h = hash(m)`, if we make sure that no honest node proceeds with RMC before it receives the data `m`, then a successful RMC has the guarantee that most of the honest nodes hold the data `m`. This is the basic idea behind the protocol implemented for fork alerts in AlephBFT, we refer to `/src/alerts.rs` for details.

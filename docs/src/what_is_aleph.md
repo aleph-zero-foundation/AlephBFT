@@ -1,33 +1,32 @@
-## 2 How Rush Does it? What is Aleph?
+## 2 How AlephBFT Does it? What is Aleph?
 
-Rush implements  [Aleph Consensus Protocol](https://arxiv.org/abs/1908.05156) -- we highly encourage you to read the original paper, as it offers the best explanation of the ideas and does not require much background to understand. In this documentation we try to offer a self-contained sketch of the protocol, although, because of its compactness it might be harder to understand. For those who have read the paper we would like to note that there are certain minor differences between the paper and the actual implementation that we highlight in a [dedicated section](differences.md). However, these do not affect any of the fundamental ideas behind Aleph or its security guarantees and are mostly tricks and implementation details.
+AlephBFT implements [Aleph Consensus Protocol](https://arxiv.org/abs/1908.05156) -- we highly encourage you to read the original paper, as it offers the best explanation of the ideas and does not require much background to understand. In this documentation we try to offer a self-contained sketch of the protocol, although, because of its compactness it might be harder to understand. For those who have read the paper we would like to note that there are certain minor differences between the paper and the actual implementation that we highlight in a [dedicated section](differences.md). However, these do not affect any of the fundamental ideas behind Aleph or its security guarantees and are mostly tricks and implementation details.
 
 **Note:** for clarity, given `N` we define `f` to be the maximum number of malicious nodes allowed in Aleph: `f=floor(N-1)/3`. For instance, for `N`'s equal to `(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)` the corresponding `f`s are `(0,0,0,1,1,1,2,2,2,3)`. Then the number of honest nodes is guaranteed to be at least `N-f = floor(2*N/3)+1` which is strictly more than `2*f`.
-
 
 ### 2.1 Dag -- the main idea of Aleph.
 
 Recall that in the model we are interested in, the nodes keep receiving new data items from their input streams `in_i` and would like to produce a single output stream `out` (i.e., the unique stream consistent with their local output streams `out_i`). The main idea of Aleph is for the nodes to produce a **DAG** (Directed Acyclic Graph) of vertices that we call **Units** where each such unit is created by one of the nodes `i` and carries one piece of data from the input stream `in_i`. Whenever a unit is created by a node `i` it is then dispersed among all other nodes with the intention that each node at any given time has a sufficiently up-to-date version of the Dag. Aleph then specifies a combinatorial algorithm that given a Dag `D` allows to compute (statically, without any need for communication) a certain prefix of the output stream `out`, with the property that as the Dag `D` is updated with new vertices to form `D'` then the new prefix computed out of `D'` is either the same or **extends** the one obtained from `D`. In other words, by growing the Dag, we cannot "roll back" the output sequence.
 
-
 ### 2.2 Constructing the Dag -- Units.
 
-#### 2.2.1  Unit Structure.
+#### 2.2.1 Unit Structure.
 
-The structure of the Dag in the Rush implementation of Aleph is especially simple (some simplification here w.r.t. to the [Aleph Paper](https://arxiv.org/abs/1908.05156)). Each unit `U` (vertex in the Dag) holds the following fields:
+The structure of the Dag in the AlephBFT implementation of Aleph is especially simple (some simplification here w.r.t. to the [Aleph Paper](https://arxiv.org/abs/1908.05156)). Each unit `U` (vertex in the Dag) holds the following fields:
 
 1. The `creator` of `U` is simply a node index in `[0, N-1]` specifying who created this unit.
 2. The `data` in `U` is an element of some `Data` type -- this is supposed to be the most recent data item `U.creator` received from its input stream prior to creation of `U`.
 3. The `round` of `U` is a non-negative integer specifying the sequential number of the unit among the ones created by `U.creator`. It is convenient to think that `round` can be arbitrarily large, but for technical reasons it is bounded by a fixed constant `MAX_ROUND`.
-3. The `parent_map` of `U` is simply a bitarray of length `N` that specifies some subset of nodes `{1, 2, ..., N}`. The meaning of this set is that if `i` belongs to `parent_map` then `U` has an edge to a unit `V` created by `i` in round `U.round - 1`.
-4. The `control_hash` of `U` or rather of parents of `U` is a fingerprint of the list of actual units being parents of `U`. While Aleph protocol instructs honest nodes to create exactly one unit per each round, this behavior cannot be enforced among malicious nodes. This is the reason why the `parent_map` array by itself does not necessarily uniquely specify the parents of `U` and we thus attach a `control_hash = Hash(U_1, U_2, ..., U_k)` where `U_1, ..., U_k` are the parents of `U`.
-5. The `signature` is a signature under the unit (as a collection of all the above fields) generated by `U.creator`. The signature is a proof that a given node indeed created such a unit, all units must be sent along with signatures.
+4. The `parent_map` of `U` is simply a bitarray of length `N` that specifies some subset of nodes `{1, 2, ..., N}`. The meaning of this set is that if `i` belongs to `parent_map` then `U` has an edge to a unit `V` created by `i` in round `U.round - 1`.
+5. The `control_hash` of `U` or rather of parents of `U` is a fingerprint of the list of actual units being parents of `U`. While Aleph protocol instructs honest nodes to create exactly one unit per each round, this behavior cannot be enforced among malicious nodes. This is the reason why the `parent_map` array by itself does not necessarily uniquely specify the parents of `U` and we thus attach a `control_hash = Hash(U_1, U_2, ..., U_k)` where `U_1, ..., U_k` are the parents of `U`.
+6. The `signature` is a signature under the unit (as a collection of all the above fields) generated by `U.creator`. The signature is a proof that a given node indeed created such a unit, all units must be sent along with signatures.
 
 By `parents(U)` we denote the set of all units that `U` has edges to (these are always units of round one less than `U`'s round). By `Hash(U)` we mean the hash of a serialization of the fields of `U` not including the `signature`. Since `Hash(U)` is smaller than `U` and still uniquely specifies `U` we sometimes use hashes in the protocol instead of units.
 
-#### 2.2.2  Unit Creation Rules.
+#### 2.2.2 Unit Creation Rules.
 
 Below we provide a pseudocode for creating units that the honest nodes are expected to follow. In what follows `D` is the local copy of the Dag, i.e., the set of units that a particular node holds. We assume that a node can add a unit to `D` only if `parents(U)` are all in `D` (this requirement of course creates some challenges in the implementation, but we disregard them here).
+
 ```
 /* Written from the perspective of node k.  D is a global variable denoting the set of units held by k. */
 def can_create(r):
@@ -54,31 +53,29 @@ for r = 0, 1, 2, ...:
 
 The `creator_task` keeps creating units of growing rounds, with the requirement that, roughly, there are at least `(2/3)*N` units in the previous round available in `D`. There is a certain delay after each unit is created -- this technicality allows us to make sure the Dag does not grow too quickly, which is problematic for pragmatic reasons: the nodes have limited bandwidth (which also varies between different nodes) and have bounded RAM memory, where we would like to store the Dag.
 
+#### 2.2.3 Malicious Units: Forks (Equivocations).
 
-#### 2.2.3  Malicious Units: Forks (Equivocations).
-Note that from the pseudocode of the `creator_task` it follows that each node is supposed to create exactly one unit per round, so ideally a Dag of "height" `R` should have `R*N` units in total. In the version of the Aleph protocol that is described in the main body of the [paper](https://arxiv.org/abs/1908.05156), this rule (one unit per node, per round) is enforced via a special broadcast protocol: Reliable Broadcast for disseminating units among other nodes. Roughly speaking, it guarantees that there will always be at most one unit per creator, per round. This is extremely convenient for making the protocol simple and clean, but unfortunately implementing the protocol this way (with reliable broadcast, which is quite heavy) is rather inefficient. For this reason Rush implements a version of the protocol (referred to as *QuickAleph* in the [paper](https://arxiv.org/abs/1908.05156)) that "allows" malicious nodes to create multiple versions of a unit for a given round (we call these forks). This makes the protocol slightly more complex, but much more efficient in practice. One can think of QuickAleph as an "optimistic" version of Aleph that assumes that all nodes typically behave honestly and fork only in extremely rare cases, at which time the protocol, in a sense, falls back to Reliable Broadcast in order to alert all the nodes that a forker has been detected (we give a little more details on that in the section on [Reliable Broadcast](reliable_broadcast.md##6-reliable-broadcast)).
+Note that from the pseudocode of the `creator_task` it follows that each node is supposed to create exactly one unit per round, so ideally a Dag of "height" `R` should have `R*N` units in total. In the version of the Aleph protocol that is described in the main body of the [paper](https://arxiv.org/abs/1908.05156), this rule (one unit per node, per round) is enforced via a special broadcast protocol: Reliable Broadcast for disseminating units among other nodes. Roughly speaking, it guarantees that there will always be at most one unit per creator, per round. This is extremely convenient for making the protocol simple and clean, but unfortunately implementing the protocol this way (with reliable broadcast, which is quite heavy) is rather inefficient. For this reason AlephBFT implements a version of the protocol (referred to as _QuickAleph_ in the [paper](https://arxiv.org/abs/1908.05156)) that "allows" malicious nodes to create multiple versions of a unit for a given round (we call these forks). This makes the protocol slightly more complex, but much more efficient in practice. One can think of QuickAleph as an "optimistic" version of Aleph that assumes that all nodes typically behave honestly and fork only in extremely rare cases, at which time the protocol, in a sense, falls back to Reliable Broadcast in order to alert all the nodes that a forker has been detected (we give a little more details on that in the section on [Reliable Broadcast](reliable_broadcast.md##6-reliable-broadcast)).
 
+#### 2.2.4 Disseminating Units.
 
-#### 2.2.4  Disseminating Units.
-From now on we assume that whenever a unit `U` lands in a Dag `D` of an honest node `k` then all other honest nodes will eventually (maybe after some delay) receive `U` and place it in their copies of the Dag. To achieve this in practice there are several mechanisms in Rush to guarantee robustness of the process of disseminating units. First of all the creator broadcasts the unit several times (with exponentially increasing delays). Secondly, there is a request-response mechanism that allows to fetch missing units from other nodes.
+From now on we assume that whenever a unit `U` lands in a Dag `D` of an honest node `k` then all other honest nodes will eventually (maybe after some delay) receive `U` and place it in their copies of the Dag. To achieve this in practice there are several mechanisms in AlephBFT to guarantee robustness of the process of disseminating units. First of all the creator broadcasts the unit several times (with exponentially increasing delays). Secondly, there is a request-response mechanism that allows to fetch missing units from other nodes.
 
 ### 2.3 Computing the Ordering from Dag.
 
 So far (in Section 2.2) we learned that the main object in Aleph is the ever-growing Dag composed of units created by different nodes. We ensure (and thus assume this from now on) that all the honest nodes, at every moment in time, hold a reasonably up-to-date version of the Dag. We now proceed to describe an algorithm `OrderData`, which given a Dag `D` (a static object), computes a sequence (for instance `Vec<Data>` in Rust) of Data items (coming from some units in the Dag) which has the following fundamental **monotonicity** property:
 
- **If `D` is a subset of `D'` then  `OrderData(D)` is a prefix of `OrderData(D')`.**
+**If `D` is a subset of `D'` then `OrderData(D)` is a prefix of `OrderData(D')`.**
 
- Let us pause for a minute to realize how strong the property is, and that it already solves the consensus problem. Let us denote by `D_1`, `D_2`, ..., `D_N` the local Dags of nodes `1, 2, ..., N`, and by `order_1`, `order_2`, ..., `order_N` the results of applying the `OrderData` algorithm to these Dags. Further let `D` be the a dag being the union of all `D_i`'s for `i=1, 2, ..., N`. From the property above it follows that if `order = OrderData(D)` then each `order_i` is a prefix of `order`, and hence consequently `order_i` also agree with each other! Given now such an algorithm `OrderData` we can complete the description of the Aleph protocol: each node simply keeps its local dag `D` up-to-date and recomputes `OrderData(D)` over and over, the ever-growing sequence od Data items obtained from this procedure is this node's output stream.
+Let us pause for a minute to realize how strong the property is, and that it already solves the consensus problem. Let us denote by `D_1`, `D_2`, ..., `D_N` the local Dags of nodes `1, 2, ..., N`, and by `order_1`, `order_2`, ..., `order_N` the results of applying the `OrderData` algorithm to these Dags. Further let `D` be the a dag being the union of all `D_i`'s for `i=1, 2, ..., N`. From the property above it follows that if `order = OrderData(D)` then each `order_i` is a prefix of `order`, and hence consequently `order_i` also agree with each other! Given now such an algorithm `OrderData` we can complete the description of the Aleph protocol: each node simply keeps its local dag `D` up-to-date and recomputes `OrderData(D)` over and over, the ever-growing sequence od Data items obtained from this procedure is this node's output stream.
 
- **Note:** *The description of `OrderData` provided below is nowhere near to what happens in Rush's code. This description is optimized for ease of understanding the main concept. An efficient implementation of the idea is another pair of shoes. In fact, the name `OrderData` is not even used in the code -- the ordered data instead lands in an output stream that is produced asynchronously.*
+**Note:** _The description of `OrderData` provided below is nowhere near to what happens in AlephBFT's code. This description is optimized for ease of understanding the main concept. An efficient implementation of the idea is another pair of shoes. In fact, the name `OrderData` is not even used in the code -- the ordered data instead lands in an output stream that is produced asynchronously._
 
- Before we dive into the details and the pseudocode, let us first sketch an overall picture of what is going to happen in `OrderData`. First of all, there is a procedure of choosing a `Head` for each round in the Dag -- it essentially picks a single unit out of each round. The heads are then used to order all the units in the Dag: simply go over all the rounds `r=0, 1, 2, ...` and place the head `head_r` for this round along with all the units "below" the head that have not been ordered yet in a new batch. To choose heads we use virtual voting: the idea is that for each unit `U` in the dag, the units with round `>= U.round` cast virtual "votes" (computed deterministically from the dag structure) on whether `U` should be chosen as head or not. The voting rules are crafted in such a way that at a certain round (typically round 3 or 4) above `U`, all units votes are already unanimous: either all vote "yes" or all vote "no". This determines the "decision" for `U`. Then the head for a given round is chosen to be the first unit in the round (according to some deterministic ordering) that was decided as "yes". We strongly encourage the reader to inspect the [paper](https://arxiv.org/abs/1908.05156) for more intuitions.
-
-
+Before we dive into the details and the pseudocode, let us first sketch an overall picture of what is going to happen in `OrderData`. First of all, there is a procedure of choosing a `Head` for each round in the Dag -- it essentially picks a single unit out of each round. The heads are then used to order all the units in the Dag: simply go over all the rounds `r=0, 1, 2, ...` and place the head `head_r` for this round along with all the units "below" the head that have not been ordered yet in a new batch. To choose heads we use virtual voting: the idea is that for each unit `U` in the dag, the units with round `>= U.round` cast virtual "votes" (computed deterministically from the dag structure) on whether `U` should be chosen as head or not. The voting rules are crafted in such a way that at a certain round (typically round 3 or 4) above `U`, all units votes are already unanimous: either all vote "yes" or all vote "no". This determines the "decision" for `U`. Then the head for a given round is chosen to be the first unit in the round (according to some deterministic ordering) that was decided as "yes". We strongly encourage the reader to inspect the [paper](https://arxiv.org/abs/1908.05156) for more intuitions.
 
 #### 2.3.1 Description of OrderData.
 
-For a unit `U` in a certain dag let us denote by `below(U)` the set of all units that can be reached from `U` by following 0 or more forward edges from `U`, so this set consists of `U`, parents of `U`, parents of parents of `U`, and so on. Below we describe `OrderData(D)` based on a procedure `Head(r, D)` that given a round `r` and dag `D` outputs an element of type `Option<Unit>` thus either `None` or `Some(U)` where `U` is some unit in `D` of round `r`. The description of  `Head(r, D)` follows later.
+For a unit `U` in a certain dag let us denote by `below(U)` the set of all units that can be reached from `U` by following 0 or more forward edges from `U`, so this set consists of `U`, parents of `U`, parents of parents of `U`, and so on. Below we describe `OrderData(D)` based on a procedure `Head(r, D)` that given a round `r` and dag `D` outputs an element of type `Option<Unit>` thus either `None` or `Some(U)` where `U` is some unit in `D` of round `r`. The description of `Head(r, D)` follows later.
 
 ```
 def OrderData(D):
@@ -97,11 +94,12 @@ def OrderData(D):
 		order = order ++ [U_1.data, U_2.data, ..., U_k.data]
 	return order
 ```
- The `OrderData` algorithm is indeed quite simple: we choose a `Head` unit from each consecutive round (until it is no more possible) and generate a new batch of units, by taking all units below the head, and removing units from previous batches. The ordering is simply the data items from the units in subsequent batches, where each batch is ordered arbitrarily (yet using some deterministic ordering).  It is not hard to observe that `OrderData` has the desired monotonicity property as long as the black-box `Head(r, D)` is also "monotone", in the sense that:
 
-  **If `D` is a subset of `D'` and `Head(r, D)=Some(U)` then  `Head(r, D')=Some(U)`.**
+The `OrderData` algorithm is indeed quite simple: we choose a `Head` unit from each consecutive round (until it is no more possible) and generate a new batch of units, by taking all units below the head, and removing units from previous batches. The ordering is simply the data items from the units in subsequent batches, where each batch is ordered arbitrarily (yet using some deterministic ordering). It is not hard to observe that `OrderData` has the desired monotonicity property as long as the black-box `Head(r, D)` is also "monotone", in the sense that:
 
-  We proceed to describing `Head(r, D)`
+**If `D` is a subset of `D'` and `Head(r, D)=Some(U)` then `Head(r, D')=Some(U)`.**
+
+We proceed to describing `Head(r, D)`
 
 #### 2.3.2 Description of Head.
 
@@ -123,9 +121,11 @@ def Head(r, D):
 			return None
 	// The execution can never reach this line because at least one unit in round r must be decided true.
 ```
- To compute the head for a given round `r` we test all the units of this round in the dag `D` in some arbitrary canonical order (ordering by unit hashes is fine, but more sophisticated orderings here might give additional defense against delays caused by malicious nodes). The first unit that is decided `true` in this list is decided to be the head, however if `Decide()` outputs `None` at any time, `Head` must output `None` as well.
+
+To compute the head for a given round `r` we test all the units of this round in the dag `D` in some arbitrary canonical order (ordering by unit hashes is fine, but more sophisticated orderings here might give additional defense against delays caused by malicious nodes). The first unit that is decided `true` in this list is decided to be the head, however if `Decide()` outputs `None` at any time, `Head` must output `None` as well.
 
 #### 2.3.3 Description of Decide.
+
 Finally we describe the `Decide` procedure which is the last remaining piece to have a working consensus protocol. Again, `Decide` is based on a black-box `DecideVia(U, V, D)` which we describe subsequently:
 
 ```
@@ -175,29 +175,30 @@ def DecideVia(U, V, D):
 
 We are not going into details here why the above guarantees the kind of monotonicity properties that we defined above. For that we refer to the paper, let us however offer a quick argument why we should expect consistency among decisions. The idea here is that once the condition in `DecideVia` is satisfied, i.e., among parent votes there is at least `threshold` of them that agree with the CommonVote `cv`, then one can easily prove that starting from the next round, all units are going to vote for `cv`. Once that happens, it is easy to see that each unit beyond that will make a decision consistent with `cv`. For proper proofs we refer to the Appendix of the paper.
 
-
 ### 2.4 Randomness In Aleph.
 
-One of the differences between the paper and the Rush implementation of Aleph is in the use of randomness. The Aleph protocol in the paper uses randomness in two parts:
+One of the differences between the paper and the AlephBFT implementation of Aleph is in the use of randomness. The Aleph protocol in the paper uses randomness in two parts:
 
 1. The `CommonVote(round_diff)` for `round_diff >= 5` is not deterministic, but is a random bit that is obtained from a seed that is generated as part of the protocol execution specifically for the unit `U` the CommonVote concerns (thus in particular the `CommonVote` function takes a unit `U` as an additional parameter).
 2. The ordering over units in `Head(r, D)` is also random and seed is generated specifically for the round `r`.
 
-The corresponding seeds are generated with an appropriate timing, so that the randomness cannot be predicted well in advance. In the Rush implementation both the common votes and the permutation of units are deterministic. The consequence of this is that the version of Aleph implemented in Rush does not have the theoretical property called *Asynchronous Liveness*. This property means that in a theoretical scenario when the whole network is under control of a powerful adversary, who can schedule all the packets (even from honest nodes) according to its liking, the protocol should still make progress in producing the output stream. That being said there are two imporant comments to be made here:
+The corresponding seeds are generated with an appropriate timing, so that the randomness cannot be predicted well in advance. In the AlephBFT implementation both the common votes and the permutation of units are deterministic. The consequence of this is that the version of Aleph implemented in AlephBFT does not have the theoretical property called _Asynchronous Liveness_. This property means that in a theoretical scenario when the whole network is under control of a powerful adversary, who can schedule all the packets (even from honest nodes) according to its liking, the protocol should still make progress in producing the output stream. That being said there are two imporant comments to be made here:
 
-- Even without randomness Aleph is *Asynchronously Safe* and enjoys all the properties of the state-of-the art partially synchronous protocols such as  *HotStuff*, *Tendermint* or *Streamlet*. Moreover the asynchronous design of Aleph makes Rush especially robust and resistant against practical network issues that classical partially synchronous protocols might have troubles with. Asynchronous liveness is an important theoretical property and there is a lot of technical sophistication that comes in the design of Aleph in order to achieve it, however on the practical side there is still little evidence that performing such attacks against liveness in real-world scenarios is possible.
-- Still, no matter how unlikely such attacks might be, we take them very seriously and plan to add randomness to Rush in one of the future releases. We decided to go for a version without randomness first, as it gives an incredibly simple and at the same time secure and robust BFT consensus protocol. Adding randomness introduces some complexity into the protocol, so it makes sense to add it on top of a well-tested, working product. The API of the protocol will not change and we will make the use of randomness configurable.
+- Even without randomness Aleph is _Asynchronously Safe_ and enjoys all the properties of the state-of-the art partially synchronous protocols such as _HotStuff_, _Tendermint_ or _Streamlet_. Moreover the asynchronous design of Aleph makes AlephBFT especially robust and resistant against practical network issues that classical partially synchronous protocols might have troubles with. Asynchronous liveness is an important theoretical property and there is a lot of technical sophistication that comes in the design of Aleph in order to achieve it, however on the practical side there is still little evidence that performing such attacks against liveness in real-world scenarios is possible.
+- Still, no matter how unlikely such attacks might be, we take them very seriously and plan to add randomness to AlephBFT in one of the future releases. We decided to go for a version without randomness first, as it gives an incredibly simple and at the same time secure and robust BFT consensus protocol. Adding randomness introduces some complexity into the protocol, so it makes sense to add it on top of a well-tested, working product. The API of the protocol will not change and we will make the use of randomness configurable.
 
 ### 2.5 Alerts -- Dealing with Fork Spam.
+
 We note that the `OrderData` algorithm as described in previous subsections **is resistant to forks**, meaning that as long as there are at most `f` forking nodes, then the resulting consensus protocol is still safe.
-That being said, there are **practical** issues when it comes to dealing with huge amounts of forks. These are extensively described in the [paper](https://arxiv.org/abs/1908.05156) in the section on a  "Fork Bomb Attack" -- we encourage the reader to take a look. We describe here a mitigation to this issue that is implemented in Rush. It is based on the idea of "Alerts", described in the paper, but significantly simplified and made viable for implementation.
+That being said, there are **practical** issues when it comes to dealing with huge amounts of forks. These are extensively described in the [paper](https://arxiv.org/abs/1908.05156) in the section on a "Fork Bomb Attack" -- we encourage the reader to take a look. We describe here a mitigation to this issue that is implemented in AlephBFT. It is based on the idea of "Alerts", described in the paper, but significantly simplified and made viable for implementation.
 
 The main idea here is that we cannot afford to store an arbitrary amount of units that are forks -- most of them are useless, but without adding a specific mechanism to the protocol, there is no way to discard them. That's why we introduce **Fork Alerts**. A fork alert is a message
 
 **`ForkAlert(sender, forker, proof, units)`**
 
 where `sender` is the node index of the sender, `forker` is the node index of a forking node, `proof` is a pair of units created by forker that constitute a fork and `units` is simply some list of forker's units. Such a message is brodcast by `sender` to all other nodes:
-1. The broadcast is performed using a **Reliable Broadcast** primitive. Roughly speaking, this means that the node does not simply multicast this message to all the nodes but runs a specialized protocol that guarantees that all the nodes receive this message (if the sender is honest) and receive the exact same version of this message (even if the sender is **dishonest**). We give more details on the Rush's implementation of reliable broadcast in the [Reliable Broadcast](reliable_broadcast.md##6-reliable-broadcast) section.
+
+1. The broadcast is performed using a **Reliable Broadcast** primitive. Roughly speaking, this means that the node does not simply multicast this message to all the nodes but runs a specialized protocol that guarantees that all the nodes receive this message (if the sender is honest) and receive the exact same version of this message (even if the sender is **dishonest**). We give more details on the AlephBFT's implementation of reliable broadcast in the [Reliable Broadcast](reliable_broadcast.md##6-reliable-broadcast) section.
 2. The intuitive meaning of such an alert is that: "I, `sender`, am aware that `forker` forked and I attach a `proof` of that. Moreover, before I realized this fact, I accepted the following list of units from `forker` to my local copy of the Dag. Please accept these units as well."
 3. Each sender can send at most one alert regarding a specific `forker`. So in the worst case, sender would send roughly `f` alerts.
 4. Each node, right after it realizes about a new node forking, sends its own alert right away, attaching a list of units by forker that it added to its Dag.
@@ -207,4 +208,5 @@ Having this mechanism in place we define the (semi-formal) notion of **legit uni
 
 **Each honest node adds to its Dag only legit units.**
 
-This ensures that there is a reasonable upper bound on the number of units a single node must hold and thus guarantees that Rush will not run out of memory.
+This ensures that there is a reasonable upper bound on the number of units a single node must hold and thus guarantees that AlephBFT will not run out of memory.
+

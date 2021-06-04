@@ -92,7 +92,7 @@ impl<H: Hasher> Extender<H> {
     }
 
     fn add_unit(&mut self, u: ExtenderUnit<H>) {
-        debug!(target: "rush-extender", "{:?} New unit in Extender round {:?} creator {:?} hash {:?}.", self.node_id, u.round, u.creator, u.hash);
+        debug!(target: "aleph-extender", "{:?} New unit in Extender round {:?} creator {:?} hash {:?}.", self.node_id, u.round, u.creator, u.hash);
         let round = u.round;
         if round > self.state.highest_round {
             self.state.highest_round = round;
@@ -150,9 +150,9 @@ impl<H: Hasher> Extender<H> {
         batch.reverse();
         let send_result = self.finalizer_tx.unbounded_send(batch);
         if let Err(e) = send_result {
-            error!(target: "rush-extender", "{:?} Unable to send a batch to Finalizer: {:?}.", self.node_id, e);
+            error!(target: "aleph-extender", "{:?} Unable to send a batch to Finalizer: {:?}.", self.node_id, e);
         }
-        debug!(target: "rush-extender", "{:?} Finalized round {:?} with head {:?}.", self.node_id, round, head);
+        debug!(target: "aleph-extender", "{:?} Finalized round {:?} with head {:?}.", self.node_id, round, head);
         self.units_by_round[round].clear();
     }
 
@@ -293,7 +293,7 @@ impl<H: Hasher> Extender<H> {
                     }
                 }
                 _ = &mut exit => {
-                    debug!(target: "rush-extender", "{:?} received exit signal.", self.node_id);
+                    debug!(target: "aleph-extender", "{:?} received exit signal.", self.node_id);
                     break
                 }
             }
