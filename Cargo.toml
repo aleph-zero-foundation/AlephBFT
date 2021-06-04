@@ -7,7 +7,7 @@ categories = ["algorithms", "data-structures", "cryptography", "database"]
 documentation = "https://docs.rs/?"
 homepage = "https://alephzero.org"
 repository = "https://github.com/cardinal-cryptography/?"
-keywords = ["aleph", "asynchronous", "consensus", "bft", "blockchain", "distributed-systems"]
+keywords = ["asynchronous", "consensus", "bft", "blockchain", "distributed-systems"]
 license = "Apache-2.0"
 readme = "README.md"
 
