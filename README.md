@@ -57,7 +57,7 @@ please refer to the [detailed version][reference-link].
 ### Using the crate
 
 - Import AlephBFT in your crate
-  ```
+  ```toml
   [dependencies]:
   AlephBFT = "1"
   ```
@@ -65,7 +65,7 @@ please refer to the [detailed version][reference-link].
   - The [DataIO][dataio-link] trait is an abstraction for a component that provides data items,
     checks availability of data items and allows to input ordered data items. `DataIO` is
     parametrized with a `Data` generic type representing the type of items we would like to order.
-    ```
+    ```rust
     pub trait DataIO<Data> {
       type Error: Debug + 'static;
         fn get_data(&self) -> Data;
@@ -78,7 +78,7 @@ please refer to the [detailed version][reference-link].
     ```
   - The [KeyBox][keybox-link] trait is an abstraction for digitally signing arbitrary data and
     verifying signatures created by other nodes.
-    ```
+    ```rust
     pub trait KeyBox: Index + Clone + Send {
         type Signature: Signature;
         fn sign(&self, msg: &[u8]) -> Self::Signature;
@@ -86,7 +86,7 @@ please refer to the [detailed version][reference-link].
     }
     ```
   - The [Network][network-link] trait defines the functionality we expect from the network layer:
-    ```
+    ```rust
     pub trait Network<H: Hasher, D: Data, S: Encode + Decode>: Send {
         type Error: Debug;
         fn send(&self, data: NetworkData<H, D, S>, node: NodeIndex) -> Result<(), Self::Error>;
