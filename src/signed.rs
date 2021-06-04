@@ -94,6 +94,12 @@ impl<T: Signable, S: Signature> UncheckedSigned<T, S> {
     pub(crate) fn as_signable_mut(&mut self) -> &mut T {
         &mut self.signable
     }
+    pub(crate) fn signature(&self) -> &S {
+        &self.signature
+    }
+    pub(crate) fn signature_mut(&mut self) -> &mut S {
+        &mut self.signature
+    }
 }
 
 impl<T: Signable, S: Signature> Signable for UncheckedSigned<T, S> {
@@ -240,9 +246,15 @@ impl<T: Signable> Indexed<T> {
     pub(crate) fn new(signable: T, index: NodeIndex) -> Self {
         Indexed { signable, index }
     }
-
     pub(crate) fn as_signable(&self) -> &T {
         &self.signable
+    }
+}
+
+#[cfg(test)]
+impl<T: Signable> Indexed<T> {
+    pub(crate) fn index_mut(&mut self) -> &mut NodeIndex {
+        &mut self.index
     }
 }
 
@@ -364,6 +376,3 @@ impl<'a, T: Signable, MK: MultiKeychain> PartiallyMultisigned<'a, T, MK> {
         }
     }
 }
-
-#[cfg(test)]
-pub(crate) mod tests;

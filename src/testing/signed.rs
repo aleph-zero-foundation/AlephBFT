@@ -1,7 +1,7 @@
-use super::*;
 use crate::{
     nodes::{BoolNodeMap, NodeCount, NodeIndex},
-    KeyBox, MultiKeychain, PartialMultisignature, Signable,
+    signed::*,
+    Index, KeyBox, MultiKeychain, PartialMultisignature, Signable,
 };
 use codec::{Decode, Encode};
 
@@ -76,7 +76,7 @@ fn test_valid_signatures() {
         for j in 0..node_count.0 {
             let msg = indexed_test_message(i);
             let signed_msg = Signed::sign(msg.clone(), &keychains[i]);
-            let unchecked_msg = signed_msg.unchecked;
+            let unchecked_msg = signed_msg.into_unchecked();
             assert!(
                 unchecked_msg.check(&keychains[j]).is_ok(),
                 "Signed message should be valid"
@@ -92,8 +92,8 @@ fn test_invalid_signatures() {
     let keychain = TestMultiKeychain { node_count, index };
     let msg = indexed_test_message(index.0);
     let signed_msg = Signed::sign(msg, &keychain);
-    let mut unchecked_msg = signed_msg.unchecked;
-    unchecked_msg.signature.index = 1.into();
+    let mut unchecked_msg = signed_msg.into_unchecked();
+    unchecked_msg.signature_mut().index = 1.into();
 
     assert!(
         unchecked_msg.check(&keychain).is_err(),
@@ -164,11 +164,11 @@ fn test_multisignatures() {
         })
         .collect();
 
-    let mut partial = PartiallyMultisigned::sign(msg.signable.clone(), &keychains[0]);
+    let mut partial = PartiallyMultisigned::sign(msg.as_signable().clone(), &keychains[0]);
     for (i, keychain) in keychains.iter().enumerate().skip(1).take(4) {
-        let hash = partial.as_unchecked().signable.hash().clone();
-        assert!(!keychain.is_complete(hash.as_ref(), &partial.as_unchecked().signature));
-        msg.index = i.into();
+        let hash = partial.as_unchecked().as_signable().hash().clone();
+        assert!(!keychain.is_complete(hash.as_ref(), partial.as_unchecked().signature()));
+        *msg.index_mut() = i.into();
         let signed = Signed::sign(msg.clone(), keychain);
         partial = partial.add_signature(signed, keychain);
     }

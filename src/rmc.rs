@@ -317,6 +317,3 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
         }
     }
 }
-
-#[cfg(test)]
-mod tests;
