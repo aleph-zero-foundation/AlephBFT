@@ -41,11 +41,18 @@ please refer to the [detailed version][reference-link].
 
 ### Future work
 
-- asynchronous liveness - the current version is not live under full asynchrony.
-  It is unclear whether this has any practical relevance, but we are making efforts to strengthen
-  the guarantees in this direction as well.
-  Adding a safe source of randomness to the protocol allows to make it fully asynchronous.
-- get rid of the only major dependency - `parity-scale-codec`
+- Asynchronous liveness is an important theoretical property and there is a lot of technical
+  sophistication that comes in the design of Aleph in order to achieve it, however on the practical
+  side there is still little evidence that performing such attacks against liveness in real-world
+  scenarios is possible. Still, no matter how unlikely such attacks might be, we take them very
+  seriously and plan to add randomness to AlephBFT in one of the future releases. We decided to go
+  for a version without randomness first, as it gives an incredibly simple and at the same time
+  secure and robust BFT consensus protocol. Adding randomness introduces some complexity into the
+  protocol, so it makes sense to add it on top of a well-tested, working product. The API of the
+  protocol will not change and we will make the use of randomness configurable.
+- We see a big value in keeping a critical piece of code such as a consensus protocol as
+  self-contained as possible, so we would like to get rid of the only major dependency -
+  `parity-scale-codec`
 
 ### Using the crate
 
