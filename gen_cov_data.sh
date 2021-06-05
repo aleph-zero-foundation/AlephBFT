@@ -4,7 +4,7 @@ set -e
 
 RUSTFLAGS="-Z instrument-coverage" \
     LLVM_PROFILE_FILE="aleph_bft-%m.profraw" \
-    cargo +nightly test --tests $1 -- --skip medium 2> covtest.out
+    cargo +nightly test --tests $1 2> covtest.out
 
 cargo profdata -- merge -sparse aleph_bft-*.profraw -o aleph_bft.profdata
 

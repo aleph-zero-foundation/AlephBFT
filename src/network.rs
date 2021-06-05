@@ -178,3 +178,156 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature, N: Network<H, 
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        nodes::BoolNodeMap,
+        testing::mock::{self, Data, Hasher64, PartialMultisignature, Signature},
+        units::{ControlHash, FullUnit, PreUnit, UncheckedSignedUnit, UnitCoord},
+        Round, Signable, UncheckedSigned,
+    };
+
+    fn test_unchecked_unit(
+        creator: NodeIndex,
+        round: Round,
+        variant: u32,
+    ) -> UncheckedSignedUnit<Hasher64, Data, Signature> {
+        let control_hash = ControlHash {
+            parents_mask: BoolNodeMap::with_capacity(7.into()),
+            combined_hash: 0.using_encoded(Hasher64::hash),
+        };
+        let pu = PreUnit::new(creator, round, control_hash);
+        let data = Data::new(UnitCoord::new(7, 13.into()), variant);
+        UncheckedSigned::new(FullUnit::new(pu, data, 0), Signature {})
+    }
+
+    #[test]
+    fn decoding_network_data_units_new_unit() {
+        use NetworkDataInner::Units;
+        use UnitMessage::NewUnit;
+
+        let uu = test_unchecked_unit(5.into(), 43, 1729);
+        let nd = NetworkData::<Hasher64, Data, Signature, PartialMultisignature>(Units(NewUnit(
+            uu.clone(),
+        )));
+        let decoded = mock::NetworkData::decode(&mut &nd.encode()[..]);
+        assert!(decoded.is_ok(), "Bug in dencode/decode for Units(NewUnit)");
+        if let Units(NewUnit(decoded_unchecked)) = decoded.unwrap().0 {
+            assert!(
+                uu.as_signable() == decoded_unchecked.as_signable(),
+                "decoded should equel encodee"
+            );
+        }
+    }
+
+    #[test]
+    fn decoding_network_data_units_request_coord() {
+        use NetworkDataInner::Units;
+        use UnitMessage::RequestCoord;
+
+        let ni = 7.into();
+        let uc = UnitCoord::new(3, 13.into());
+        let nd = NetworkData::<Hasher64, Data, Signature, PartialMultisignature>(Units(
+            RequestCoord(ni, uc),
+        ));
+        let decoded = mock::NetworkData::decode(&mut &nd.encode()[..]);
+        assert!(decoded.is_ok(), "Bug in dencode/decode for Units(NewUnit)");
+        if let Units(RequestCoord(dni, duc)) = decoded.unwrap().0 {
+            assert!(ni == dni && uc == duc, "decoded should equel encodee");
+        }
+    }
+
+    #[test]
+    fn decoding_network_data_units_response_coord() {
+        use NetworkDataInner::Units;
+        use UnitMessage::ResponseCoord;
+
+        let uu = test_unchecked_unit(5.into(), 43, 1729);
+        let nd = NetworkData::<Hasher64, Data, Signature, PartialMultisignature>(Units(
+            ResponseCoord(uu.clone()),
+        ));
+        let decoded = mock::NetworkData::decode(&mut &nd.encode()[..]);
+        assert!(decoded.is_ok(), "Bug in dencode/decode for Units(NewUnit)");
+        if let Units(ResponseCoord(decoded_unchecked)) = decoded.unwrap().0 {
+            assert!(
+                uu.as_signable() == decoded_unchecked.as_signable(),
+                "decoded should equel encodee"
+            );
+        }
+    }
+
+    #[test]
+    fn decoding_network_data_units_request_parents() {
+        use NetworkDataInner::Units;
+        use UnitMessage::RequestParents;
+
+        let ni = 7.into();
+        let h = 43.using_encoded(Hasher64::hash);
+        let nd = NetworkData::<Hasher64, Data, Signature, PartialMultisignature>(Units(
+            RequestParents(ni, h),
+        ));
+        let decoded = mock::NetworkData::decode(&mut &nd.encode()[..]);
+        assert!(decoded.is_ok(), "Bug in dencode/decode for Units(NewUnit)");
+        if let Units(RequestParents(dni, dh)) = decoded.unwrap().0 {
+            assert!(ni == dni && h == dh, "decoded should equel encodee");
+        }
+    }
+
+    #[test]
+    fn decoding_network_data_units_response_parents() {
+        use NetworkDataInner::Units;
+        use UnitMessage::ResponseParents;
+
+        let h = 43.using_encoded(Hasher64::hash);
+        let p1 = test_unchecked_unit(5.into(), 43, 1729);
+        let p2 = test_unchecked_unit(13.into(), 43, 1729);
+        let p3 = test_unchecked_unit(17.into(), 43, 1729);
+        let parents = vec![p1, p2, p3];
+
+        let nd = NetworkData::<Hasher64, Data, Signature, PartialMultisignature>(Units(
+            ResponseParents(h, parents.clone()),
+        ));
+        let decoded = mock::NetworkData::decode(&mut &nd.encode()[..]);
+        assert!(decoded.is_ok(), "Bug in dencode/decode for Units(NewUnit)");
+        if let Units(ResponseParents(dh, dparents)) = decoded.unwrap().0 {
+            assert!(h == dh, "decoded should equel encodee");
+            assert!(
+                parents.len() == dparents.len(),
+                "decoded should equel encodee"
+            );
+            for (p, dp) in parents.iter().zip(dparents.iter()) {
+                assert!(
+                    p.as_signable() == dp.as_signable(),
+                    "decoded should equel encodee"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn decoding_network_data_alert_fork_alert() {
+        use AlertMessage::ForkAlert;
+        use NetworkDataInner::Alert;
+
+        let forker = 9.into();
+        let f1 = test_unchecked_unit(forker, 10, 0);
+        let f2 = test_unchecked_unit(forker, 10, 1);
+        let lu1 = test_unchecked_unit(forker, 11, 0);
+        let lu2 = test_unchecked_unit(forker, 12, 0);
+        let alert = crate::alerts::Alert::new(7.into(), (f1, f2), vec![lu1, lu2]);
+
+        let nd = NetworkData::<Hasher64, Data, Signature, PartialMultisignature>(Alert(ForkAlert(
+            UncheckedSigned::new(alert.clone(), Signature {}),
+        )));
+        let decoded = mock::NetworkData::decode(&mut &nd.encode()[..]);
+        assert!(decoded.is_ok(), "Bug in dencode/decode for Units(NewUnit)");
+        if let Alert(ForkAlert(unchecked_alert)) = decoded.unwrap().0 {
+            assert!(
+                alert.hash() == unchecked_alert.as_signable().hash(),
+                "decoded should equel encodee"
+            )
+        }
+    }
+}
