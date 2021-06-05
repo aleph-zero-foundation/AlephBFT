@@ -477,7 +477,7 @@ where
             debug!(target: "AlephBFT-member", "{:?} Answering parents request for hash {:?} from {:?}.", self.index(), u_hash, peer_id);
             let mut full_units = Vec::new();
             for hash in p_hashes.iter() {
-                if let Some(fu) = self.store.unit_by_hash(&hash) {
+                if let Some(fu) = self.store.unit_by_hash(hash) {
                     full_units.push(fu.clone().into());
                 } else {
                     debug!(target: "AlephBFT-member", "{:?} Not answering parents request, one of the parents missing from store.", self.index());

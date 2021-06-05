@@ -194,7 +194,7 @@ impl<'a, T: Signable + Index, KB: KeyBox> Signed<'a, T, KB> {
     /// Create a signed object from a signable. The index of `signable` must match the index of the `key_box`.
     pub fn sign(signable: T, key_box: &'a KB) -> Self {
         assert_eq!(signable.index(), key_box.index());
-        let signature = key_box.sign(&signable.hash().as_ref());
+        let signature = key_box.sign(signable.hash().as_ref());
         Signed {
             unchecked: UncheckedSigned {
                 signable,

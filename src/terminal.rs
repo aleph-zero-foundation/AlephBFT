@@ -275,7 +275,7 @@ impl<H: Hasher> Terminal<H> {
     }
 
     fn inspect_parents_in_dag(&mut self, u_hash: &H::Hash) {
-        let u_parents = self.unit_store.get(&u_hash).unwrap().parents.clone();
+        let u_parents = self.unit_store.get(u_hash).unwrap().parents.clone();
         let mut n_parents_in_dag = NodeCount(0);
         for p_hash in u_parents.into_iter().flatten() {
             let maybe_p = self.unit_store.get(&p_hash);
@@ -289,7 +289,7 @@ impl<H: Hasher> Terminal<H> {
                 }
             }
         }
-        let u = self.unit_store.get_mut(&u_hash).unwrap();
+        let u = self.unit_store.get_mut(u_hash).unwrap();
         u.n_miss_par_dag -= n_parents_in_dag;
         debug!(target: "AlephBFT-terminal", "{:?} Inspecting parents for {:?}, missing {:?}", self.node_id, u_hash, u.n_miss_par_dag);
         if u.n_miss_par_dag == NodeCount(0) {

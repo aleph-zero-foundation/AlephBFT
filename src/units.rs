@@ -40,7 +40,7 @@ pub(crate) struct ControlHash<H: Hasher> {
 
 impl<H: Hasher> ControlHash<H> {
     pub(crate) fn new(parent_map: &NodeMap<Option<H::Hash>>) -> Self {
-        let hash = Self::combine_hashes(&parent_map);
+        let hash = Self::combine_hashes(parent_map);
         let parents = parent_map.iter().map(Option::is_some).collect();
 
         ControlHash {
@@ -139,7 +139,7 @@ impl<H: Hasher, D: Data> FullUnit<H, D> {
         self.pre_unit.round()
     }
     pub(crate) fn control_hash(&self) -> &ControlHash<H> {
-        &self.pre_unit.control_hash()
+        self.pre_unit.control_hash()
     }
     pub(crate) fn coord(&self) -> UnitCoord {
         self.pre_unit.coord
