@@ -17,7 +17,7 @@ and under the assumption that there is a significant probability of malicious
 behavior, making it an excellent fit for blockchain-related applications.
 For more information, check [the paper][paper-link]
 
-This repository contains a Rust implementation of Aleph that offers a convenient
+This repository contains a Rust implementation of AlephBFT that offers a convenient
 API enabling seamless application to various problems. The prime application of
 the repository is the consensus engine (sometimes called the "finality gadget")
 of the [Aleph Zero blockchain][aleph-node-link].
@@ -42,7 +42,7 @@ please refer to the [detailed version][reference-link].
 ### Future work
 
 - Asynchronous liveness is an important theoretical property and there is a lot of technical
-  sophistication that comes in the design of Aleph in order to achieve it, however on the practical
+  sophistication that comes in the design of AlephBFT in order to achieve it, however on the practical
   side there is still little evidence that performing such attacks against liveness in real-world
   scenarios is possible. Still, no matter how unlikely such attacks might be, we take them very
   seriously and plan to add randomness to AlephBFT in one of the future releases. We decided to go
@@ -59,7 +59,7 @@ please refer to the [detailed version][reference-link].
 - Import AlephBFT in your crate
   ```toml
   [dependencies]
-  AlephBFT = "1"
+  aleph-bft = "0.3.1"
   ```
 - AlephBFT requires user to provide it with an implementation of the following traits:
   - The [DataIO][dataio-link] trait is an abstraction for a component that provides data items,

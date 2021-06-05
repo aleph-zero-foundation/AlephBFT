@@ -1,6 +1,6 @@
 [package]
 name = "aleph-bft"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2018"
 authors = ["Cardinal Cryptography"]
 categories = ["algorithms", "data-structures", "cryptography", "database"]
@@ -11,12 +11,7 @@ keywords = ["asynchronous", "consensus", "bft", "blockchain", "distributed-syste
 license = "Apache-2.0"
 readme = "README.md"
 
-description = """
-    Aleph is an asynchronous and Byzantine fault tolerant consensus protocol aimed
-    at ordering arbitrary messages (transactions). It has been designed to continuously operate
-    even in the harshest conditions: with no bounds on message-delivery delays and in the presence
-    of malicious actors. This makes it an excellent fit for blockchain-related applications.
-    """
+description = """AlephBFT is an asynchronous and Byzantine fault tolerant consensus protocol aimed at ordering arbitrary messages (transactions). It has been designed to continuously operate even in the harshest conditions: with no bounds on message-delivery delays and in the presence of malicious actors. This makes it an excellent fit for blockchain-related applications."""
 
 [dependencies]
 bit-vec = "0.6"

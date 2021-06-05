@@ -218,7 +218,7 @@ impl<H: Hasher> Terminal<H> {
                 }
             }
             if !coords_to_request.is_empty() {
-                debug!(target: "aleph-terminal", "{:?} Missing coords {:?}", self.node_id, coords_to_request);
+                debug!(target: "AlephBFT-terminal", "{:?} Missing coords {:?}", self.node_id, coords_to_request);
                 self.ntfct_tx
                     .unbounded_send(NotificationOut::MissingUnits(coords_to_request))
                     .expect("Channel should be open");
@@ -255,19 +255,19 @@ impl<H: Hasher> Terminal<H> {
             .get_mut(&u_hash)
             .expect("unit with wrong control hash must be in store");
         if u.status != UnitStatus::WrongControlHash {
-            debug!(target: "aleph-terminal", "{:?} Received parents response without it being expected for {:?}. Ignoring.", self.node_id, u_hash);
+            debug!(target: "AlephBFT-terminal", "{:?} Received parents response without it being expected for {:?}. Ignoring.", self.node_id, u_hash);
             return;
         }
         for (counter, i) in u.unit.control_hash().parents().enumerate() {
             u.parents[i] = Some(p_hashes[counter]);
         }
-        debug!(target: "aleph-terminal", "{:?} Updating parent hashes for wrong control hash unit {:?}", self.node_id, u_hash);
+        debug!(target: "AlephBFT-terminal", "{:?} Updating parent hashes for wrong control hash unit {:?}", self.node_id, u_hash);
         u.n_miss_par_decoded = NodeCount(0);
         self.inspect_parents_in_dag(&u_hash);
     }
 
     fn add_to_store(&mut self, u: Unit<H>) {
-        debug!(target: "aleph-terminal", "{:?} Adding to store {:?} round {:?} index {:?}", self.node_id, u.hash(), u.round(), u.creator());
+        debug!(target: "AlephBFT-terminal", "{:?} Adding to store {:?} round {:?} index {:?}", self.node_id, u.hash(), u.round(), u.creator());
         if let Entry::Vacant(entry) = self.unit_store.entry(u.hash()) {
             entry.insert(TerminalUnit::<H>::blank_from_unit(&u));
             self.update_on_store_add(u);
@@ -291,7 +291,7 @@ impl<H: Hasher> Terminal<H> {
         }
         let u = self.unit_store.get_mut(&u_hash).unwrap();
         u.n_miss_par_dag -= n_parents_in_dag;
-        debug!(target: "aleph-terminal", "{:?} Inspecting parents for {:?}, missing {:?}", self.node_id, u_hash, u.n_miss_par_dag);
+        debug!(target: "AlephBFT-terminal", "{:?} Inspecting parents for {:?}, missing {:?}", self.node_id, u_hash, u.n_miss_par_dag);
         if u.n_miss_par_dag == NodeCount(0) {
             self.event_queue
                 .push_back(TerminalEvent::ParentsInDag(*u_hash));
@@ -320,14 +320,14 @@ impl<H: Hasher> Terminal<H> {
                         self.inspect_parents_in_dag(&u_hash);
                     } else {
                         u.status = UnitStatus::WrongControlHash;
-                        debug!(target: "aleph-terminal", "{:?} wrong control hash", self.node_id);
+                        debug!(target: "AlephBFT-terminal", "{:?} wrong control hash", self.node_id);
                         self.on_wrong_hash_detected(u_hash);
                     }
                 }
                 TerminalEvent::ParentsInDag(u_hash) => {
                     let u = self.unit_store.get_mut(&u_hash).unwrap();
                     u.status = UnitStatus::InDag;
-                    debug!(target: "aleph-terminal", "{:?} Adding to Dag {:?} round {:?} index {:?}.", self.node_id, u_hash, u.unit.round(), u.unit.creator());
+                    debug!(target: "AlephBFT-terminal", "{:?} Adding to Dag {:?} round {:?} index {:?}.", self.node_id, u_hash, u.unit.round(), u.unit.creator());
                     self.update_on_dag_add(&u_hash);
                 }
             }
@@ -357,7 +357,7 @@ impl<H: Hasher> Terminal<H> {
                     }
                 }
                 _ = &mut exit => {
-                    debug!(target: "aleph-terminal", "{:?} received exit signal.", self.node_id);
+                    debug!(target: "AlephBFT-terminal", "{:?} received exit signal.", self.node_id);
                     break
                 }
             }

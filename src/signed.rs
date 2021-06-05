@@ -353,7 +353,7 @@ impl<'a, T: Signable, MK: MultiKeychain> PartiallyMultisigned<'a, T, MK> {
 
     pub fn add_signature(self, signed: Signed<'a, Indexed<T>, MK>, keychain: &'a MK) -> Self {
         if self.as_unchecked().signable.hash().as_ref() != signed.as_signable().hash().as_ref() {
-            debug!("Tried to add a signature of a different object");
+            debug!(target: "AlephBFT-add_signature", "Tried to add a signature of a different object");
             return self;
         }
         match self {

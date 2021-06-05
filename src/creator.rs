@@ -76,7 +76,7 @@ impl<H: Hasher> Creator<H> {
         let control_hash = ControlHash::new(&parents);
 
         let new_preunit = PreUnit::new(self.node_ix, round, control_hash);
-        debug!(target: "aleph-creator", "{:?} Created a new unit {:?} at round {:?}.", self.node_ix, new_preunit, self.current_round);
+        debug!(target: "AlephBFT-creator", "{:?} Created a new unit {:?} at round {:?}.", self.node_ix, new_preunit, self.current_round);
         self.new_units_tx
             .unbounded_send(NotificationOut::CreatedPreUnit(new_preunit))
             .expect("Channel should be open");
@@ -102,7 +102,7 @@ impl<H: Hasher> Creator<H> {
             return true;
         }
         if self.current_round > self.max_round {
-            debug!(target: "aleph-creator", "{:?} Maximum round reached. Not creating another unit.", self.node_ix);
+            debug!(target: "AlephBFT-creator", "{:?} Maximum round reached. Not creating another unit.", self.node_ix);
             return false;
         }
         // To create a new unit, we need to have at least >floor(2*N/3) parents available in previous round.
@@ -128,13 +128,13 @@ impl<H: Hasher> Creator<H> {
                 },
                 _ = &mut delay_fut => {
                     if delay_passed {
-                        error!(target: "aleph-creator", "{:?} more than half hour has passed since we created the previous unit.", self.node_ix);
+                        error!(target: "AlephBFT-creator", "{:?} more than half hour has passed since we created the previous unit.", self.node_ix);
                     }
                     delay_passed = true;
                     delay_fut = Delay::new(half_hour).fuse();
                 }
                 _ = &mut exit => {
-                    debug!(target: "aleph-creator", "{:?} received exit signal.", self.node_ix);
+                    debug!(target: "AlephBFT-creator", "{:?} received exit signal.", self.node_ix);
                     break;
                 },
             };

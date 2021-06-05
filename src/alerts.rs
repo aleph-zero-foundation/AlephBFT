@@ -189,7 +189,7 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
         units: &[UncheckedSignedUnit<H, D, MK::Signature>],
     ) -> bool {
         if units.len() > self.max_units_per_alert {
-            debug!(target: "alerter", "{:?} Too many units: {} included in alert.", self.index(), units.len());
+            debug!(target: "AlephBFT-alerter", "{:?} Too many units: {} included in alert.", self.index(), units.len());
             return false;
         }
         let mut rounds: HashSet<usize> = HashSet::new();
@@ -197,17 +197,17 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
             let u = match u.clone().check(self.keychain) {
                 Ok(u) => u,
                 Err(_) => {
-                    debug!(target: "alerter", "{:?} One of the units is incorrectly signed.", self.index());
+                    debug!(target: "AlephBFT-alerter", "{:?} One of the units is incorrectly signed.", self.index());
                     return false;
                 }
             };
             let full_unit = u.as_signable();
             if full_unit.creator() != forker {
-                debug!(target: "alerter", "{:?} One of the units {:?} has wrong creator.", self.index(), full_unit);
+                debug!(target: "AlephBFT-alerter", "{:?} One of the units {:?} has wrong creator.", self.index(), full_unit);
                 return false;
             }
             if rounds.contains(&full_unit.round()) {
-                debug!(target: "alerter", "{:?} Two or more alerted units have the same round {:?}.", self.index(), full_unit.round());
+                debug!(target: "AlephBFT-alerter", "{:?} Two or more alerted units have the same round {:?}.", self.index(), full_unit.round());
                 return false;
             }
             rounds.insert(full_unit.round());
@@ -223,7 +223,7 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
             match (u1, u2) {
                 (Ok(u1), Ok(u2)) => (u1, u2),
                 _ => {
-                    debug!(target: "alerter", "{:?} Invalid signatures in a proof.", self.index());
+                    debug!(target: "AlephBFT-alerter", "{:?} Invalid signatures in a proof.", self.index());
                     return None;
                 }
             }
@@ -232,19 +232,19 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
         let full_unit2 = u2.as_signable();
         if full_unit1.session_id() != self.session_id || full_unit2.session_id() != self.session_id
         {
-            debug!(target: "alerter", "{:?} Alert from different session.", self.index());
+            debug!(target: "AlephBFT-alerter", "{:?} Alert from different session.", self.index());
             return None;
         }
         if full_unit1 == full_unit2 {
-            debug!(target: "alerter", "{:?} Two copies of the same unit do not constitute a fork.", self.index());
+            debug!(target: "AlephBFT-alerter", "{:?} Two copies of the same unit do not constitute a fork.", self.index());
             return None;
         }
         if full_unit1.creator() != full_unit2.creator() {
-            debug!(target: "alerter", "{:?} One of the units creators in proof does not match.", self.index());
+            debug!(target: "AlephBFT-alerter", "{:?} One of the units creators in proof does not match.", self.index());
             return None;
         }
         if full_unit1.round() != full_unit2.round() {
-            debug!(target: "alerter", "{:?} The rounds in proof's units do not match.", self.index());
+            debug!(target: "AlephBFT-alerter", "{:?} The rounds in proof's units do not match.", self.index());
             return None;
         }
         Some(full_unit1.creator())
@@ -278,14 +278,14 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
         let alert = match alert.check(self.keychain) {
             Ok(alert) => alert,
             Err(e) => {
-                debug!(target: "alerter","{:?} We have received an incorrectly signed alert: {:?}.", self.index(), e);
+                debug!(target: "AlephBFT-alerter","{:?} We have received an incorrectly signed alert: {:?}.", self.index(), e);
                 return;
             }
         };
         let contents = alert.as_signable();
         if let Some(forker) = self.who_is_forking(&contents.proof) {
             if self.known_rmcs.contains_key(&(contents.sender, forker)) {
-                debug!(target: "alerter","{:?} We already know about an alert by {:?} about {:?}.", self.index(), alert.as_signable().sender, forker);
+                debug!(target: "AlephBFT-alerter","{:?} We already know about an alert by {:?} about {:?}.", self.index(), alert.as_signable().sender, forker);
                 self.known_alerts.insert(contents.hash(), alert);
                 return;
             }
@@ -295,7 +295,7 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
             }
             self.rmc_alert(forker, alert);
         } else {
-            debug!(target: "alerter","{:?} We have received an incorrect forking proof from {:?}.", self.index(), alert.as_signable().sender);
+            debug!(target: "AlephBFT-alerter","{:?} We have received an incorrect forking proof from {:?}.", self.index(), alert.as_signable().sender);
         }
     }
 
@@ -303,7 +303,7 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
         let alert = match self.known_alerts.get(&hash) {
             Some(alert) => alert.clone(),
             None => {
-                debug!(target: "alerter", "{:?} Received request for unknown alert.", self.index());
+                debug!(target: "AlephBFT-alerter", "{:?} Received request for unknown alert.", self.index());
                 return;
             }
         };
@@ -342,7 +342,7 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
         use AlertMessage::*;
         match message {
             ForkAlert(alert) => {
-                debug!(target: "alerter", "{:?} Fork alert received {:?}.", self.index(), alert);
+                debug!(target: "AlephBFT-alerter", "{:?} Fork alert received {:?}.", self.index(), alert);
                 self.on_network_alert(alert);
             }
             RmcMessage(sender, message) => self.on_rmc_message(sender, message),
@@ -354,14 +354,14 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
         let alert = match self.known_alerts.get(multisigned.as_signable()) {
             Some(alert) => alert.as_signable(),
             None => {
-                error!(target: "alerter", "{:?} Completed an RMC for an unknown alert.", self.index());
+                error!(target: "AlephBFT-alerter", "{:?} Completed an RMC for an unknown alert.", self.index());
                 return;
             }
         };
         let forker = alert.proof.0.as_signable().creator();
         self.known_rmcs.insert((alert.sender, forker), alert.hash());
         if !self.correct_commitment(forker, &alert.legit_units) {
-            debug!(target: "alerter","{:?} We have received an incorrect unit commitment from {:?}.", self.index(), alert.sender);
+            debug!(target: "AlephBFT-alerter","{:?} We have received an incorrect unit commitment from {:?}.", self.index(), alert.sender);
             return;
         }
         self.notifications_for_units
@@ -391,21 +391,21 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
                 message = self.messages_from_network.next() => match message {
                     Some(message) => self.on_message(message),
                     None => {
-                        error!(target: "alerter", "{:?} Message stream closed.", self.index());
+                        error!(target: "AlephBFT-alerter", "{:?} Message stream closed.", self.index());
                         break;
                     }
                 },
                 alert = self.alerts_from_units.next() => match alert {
                     Some(alert) => self.on_own_alert(alert),
                     None => {
-                        error!(target: "alerter", "{:?} Alert stream closed.", self.index());
+                        error!(target: "AlephBFT-alerter", "{:?} Alert stream closed.", self.index());
                         break;
                     }
                 },
                 message = self.messages_from_rmc.next() => match message {
                     Some(message) => self.rmc_message_to_network(message),
                     None => {
-                        error!(target: "alerter", "{:?} RMC message stream closed.", self.index());
+                        error!(target: "AlephBFT-alerter", "{:?} RMC message stream closed.", self.index());
                         break;
                     }
                 },

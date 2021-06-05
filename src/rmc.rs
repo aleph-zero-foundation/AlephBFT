@@ -138,7 +138,7 @@ impl<T: Send + Clone> TaskScheduler<T> for DoublingDelayScheduler<T> {
                     let scheduled_task = ScheduledTask::new(task, self.initial_delay);
                     self.scheduled_tasks.push(scheduled_task);
                 } else {
-                    debug!(target: "rmc", "The tasks ended");
+                    debug!(target: "AlephBFT-rmc", "The tasks ended");
                     return None;
                 }
             }
@@ -246,14 +246,14 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
                     self.on_complete_multisignature(multisigned);
                 }
                 Err(_) => {
-                    debug!(target: "rmc", "Received a hash with a bad multisignature");
+                    debug!(target: "AlephBFT-rmc", "Received a hash with a bad multisignature");
                 }
             },
             Message::SignedHash(unchecked) => {
                 let signed_hash = match unchecked.check(self.keychain) {
                     Ok(signed_hash) => signed_hash,
                     Err(_) => {
-                        debug!(target: "rmc", "Received a hash with a bad signature");
+                        debug!(target: "AlephBFT-rmc", "Received a hash with a bad signature");
                         return;
                     }
                 };
@@ -302,7 +302,7 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
                     if let Some(incoming_message) = incoming_message {
                         self.handle_message(incoming_message);
                     } else {
-                        debug!(target: "rmc", "Network connection closed");
+                        debug!(target: "AlephBFT-rmc", "Network connection closed");
                     }
                 }
 
@@ -310,7 +310,7 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
                     if let Some(task) = task {
                         self.do_task(task);
                     } else {
-                        debug!(target: "rmc", "Tasks ended");
+                        debug!(target: "AlephBFT-rmc", "Tasks ended");
                     }
                 }
             }

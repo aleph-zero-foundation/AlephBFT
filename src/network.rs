@@ -105,12 +105,12 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature, N: Network<H, 
         match recipient {
             Everyone => {
                 if let Err(error) = self.network.broadcast(data) {
-                    error!(target: "network-hub", "Broadcast error: {:?}", error);
+                    error!(target: "AlephBFT-etwork-hub", "Broadcast error: {:?}", error);
                 }
             }
             Node(node_id) => {
                 if let Err(error) = self.network.send(data, node_id) {
-                    error!(target: "network-hub", "Send to {:?} error: {:?}", node_id, error);
+                    error!(target: "AlephBFT-etwork-hub", "Send to {:?} error: {:?}", node_id, error);
                 }
             }
         }
@@ -138,21 +138,21 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature, N: Network<H, 
                 unit_message = self.units_to_send.next() => match unit_message {
                     Some((unit_message, recipient)) => self.send(NetworkData(Units(unit_message)), recipient),
                     None => {
-                        error!(target: "network-hub", "Outgoing units stream closed.");
+                        error!(target: "AlephBFT-etwork-hub", "Outgoing units stream closed.");
                         break;
                     }
                 },
                 alert_message = self.alerts_to_send.next() => match alert_message {
                     Some((alert_message, recipient)) => self.send(NetworkData(Alert(alert_message)), recipient),
                     None => {
-                        error!(target: "network-hub", "Outgoing alerts stream closed.");
+                        error!(target: "AlephBFT-etwork-hub", "Outgoing alerts stream closed.");
                         break;
                     }
                 },
                 incoming_message = self.network.next_event().fuse() => match incoming_message {
                     Some(incoming_message) => self.handle_incoming(incoming_message),
                     None => {
-                        error!(target: "network-hub", "Network stopped working.");
+                        error!(target: "AlephBFT-etwork-hub", "Network stopped working.");
                         break;
                     }
                 },

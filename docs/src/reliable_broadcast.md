@@ -1,6 +1,6 @@
 ## 6 Reliable Broadcast
 
-Recall that Reliable Broadcast is the primitive we use to broadcast `fork alerts` among nodes -- see [the section on alerts](what_is_aleph.md#25-alerts----dealing-with-fork-spam). There are two requirements for a protocol realizing reliable broadcast:
+Recall that Reliable Broadcast is the primitive we use to broadcast `fork alerts` among nodes -- see [the section on alerts](how_alephbft_does_it.md#25-alerts----dealing-with-fork-spam). There are two requirements for a protocol realizing reliable broadcast:
 
 1. If an honest sender initiates a reliable broadcast with some message `m` then the protocol terminates and as a result all honest nodes receive `m`.
 2. If a malicious sender initiates a reliable broadcast then either it terminates for all honest nodes and they receive the same message `m`, or it does not terminate for any honest node.

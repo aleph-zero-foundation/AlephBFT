@@ -5,16 +5,16 @@ To explain the inner workings of AlephBFT it is instructive to follow the path o
 1. The unit is created by one of the node's `Creator` component -- implemented in `src/creator.rs`. Creator sends a notification to an outer component.
 2. The newly created unit is filled with data, session information and a signature. This is done in `src/member.rs`. Subsequently a recurring task of broadcasting this unit is put in the task queue. The unit will be broadcast to all other nodes a few times (with some delays in between).
 3. The unit is received by another node -- happens in `src/member.rs` and passes some validation (signature checks etc.). If all these checks pass and the unit is not detected to be a fork, then it is placed in the `UnitStore` -- the `store` field of the `Member` struct.
-4. The idea is that this store keeps only **legit units** in the sense defined in [the section on alerts](what_is_aleph.md#25-alerts----dealing-with-fork-spam). Thus no fork is ever be put there unless coming from an alert.
+4. The idea is that this store keeps only **legit units** in the sense defined in [the section on alerts](how_alephbft_does_it.md#25-alerts----dealing-with-fork-spam). Thus no fork is ever be put there unless coming from an alert.
 5. At a suitable moment the units from the store are passed through a data availability check and upon passing it, they are further moved to a component called `Terminal` -- implemented in `src/terminal.rs`.
 6. Roughly speaking, terminal is expected to "unpack" the unit, so that their parents become explicit (instead of being control hashes only).
 7. Each unit whose parents are successfully decoded, is added to the "Dag". Each unit in the Dag is legit + has all its parents in the Dag.
-8. Dag units are passed to a component called the `Extender` -- see `src/extender.rs`. The role of the extender is to efficiently run the `OrderData` algorithm, described in the [section on Aleph](what_is_aleph.md).
+8. Dag units are passed to a component called the `Extender` -- see `src/extender.rs`. The role of the extender is to efficiently run the `OrderData` algorithm, described in the [section on AlephBFT](how_alephbft_does_it.md).
 9. Once a unit's data is placed in one of batches by the `Extender` then its path is over and can be safely discarded.
 
 ### 5.1 Creator
 
-The creator produces units according to the Aleph protocol rules. It will wait until the prespecified delay has passed and attempt to create a unit using a maximal number of parents. If it is not possible yet, it will wait till the first moment enough parents are available. After creating the last unit, the creator stops producing new ones, although this is never expected to happen during correct execution.
+The creator produces units according to the AlephBFT protocol rules. It will wait until the prespecified delay has passed and attempt to create a unit using a maximal number of parents. If it is not possible yet, it will wait till the first moment enough parents are available. After creating the last unit, the creator stops producing new ones, although this is never expected to happen during correct execution.
 
 Since the creator does not have access to the `DataIO` object and to the `KeyBox` it is not able to create the unit "fully", for this reason it only chooses parents, the rest is filled by the `Member`.
 
