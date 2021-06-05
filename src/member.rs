@@ -99,6 +99,18 @@ impl<H: Hasher> PartialOrd for ScheduledTask<H> {
     }
 }
 
+/// A representation of a committee member responsible for establishing the consensus.
+///
+/// It depends on the following objects (for more detailed description of the above obejcts, see their references):
+/// - [`Hasher`] - an abstraction for creating identifiers for units, alerts, and other internal objects,
+/// - [`DataIO`] - an abstraction for a component that outputs data items and allows to input ordered data items,
+/// - [`MultiKeychain`] - an abstraction for digitally signing arbitrary data and verifying signatures,
+/// - [`Network`] - an abstraction for a network connecting the committee members,
+/// - [`SpawnHandle`] - an abstraction for an executor of asynchronous tasks.
+///
+/// For a detailed description of the consensus implemented in Member see
+/// [docs for devs](https://cardinal-cryptography.github.io/AlephBFT/index.html)
+/// or the [original paper](https://arxiv.org/abs/1908.05156).
 pub struct Member<'a, H, D, DP, MK, SH>
 where
     H: Hasher,
@@ -128,6 +140,9 @@ where
     MK: MultiKeychain,
     SH: SpawnHandle,
 {
+    /// Create a new instance of the Member for a given session. Under the hood, the Member implementation
+    /// makes an extensive use of asynchronous features of Rust, so creating a new Member doesn't start it.
+    /// See [`Member::run_session`].
     pub fn new(data_io: DP, keybox: &'a MK, config: Config, spawn_handle: SH) -> Self {
         let n_members = config.n_members;
         let threshold = (n_members * 2) / 3 + NodeCount(1);
@@ -636,6 +651,8 @@ where
         }
     }
 
+    /// Actually start the Member as an async task. It stops establishing consensus for new data items after
+    /// reaching the threshold specified in [`Config::max_round`] or upon receiving a stop signal from `exit`.
     pub async fn run_session<
         N: Network<H, D, MK::Signature, MK::PartialMultisignature> + 'static,
     >(

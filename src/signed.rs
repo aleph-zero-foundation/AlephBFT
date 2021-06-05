@@ -3,42 +3,54 @@ use codec::{Decode, Encode};
 use log::debug;
 use std::{fmt::Debug, marker::PhantomData};
 
-/// The type used as a signature. The Signature typically does not contain the index of the node who
-/// signed the data.
+/// The type used as a signature.
+///
+/// The Signature typically does not contain the index of the node who signed the data.
 pub trait Signature: Debug + Clone + Encode + Decode + Send + 'static {}
 
 impl<T: Debug + Clone + Encode + Decode + Send + 'static> Signature for T {}
 
-/// Abstraction of the signing data and verifying signatures. Typically, consists of a private key
-/// of the node and the public keys of all nodes.
+/// Abstraction of the signing data and verifying signatures.
+///
+/// A typical implementation of KeyBox would be a collection of `N` public keys,
+/// an index `i` and a single private key corresponding to the public key number `i`.
+/// The meaning of sign is then to produce a signature `s` using the given private key,
+/// and `verify(msg, s, j)` is to verify whether the signature s under the message msg is
+/// correct with respect to the public key of the jth node.
 pub trait KeyBox: Index + Clone + Send + Sync + 'static {
     type Signature: Signature;
+    /// Signs a message `msg`.
     fn sign(&self, msg: &[u8]) -> Self::Signature;
+    /// Verifies whether a node with `index` correctly signed the message `msg`.
     fn verify(&self, msg: &[u8], sgn: &Self::Signature, index: NodeIndex) -> bool;
 }
 
 /// A type to which signatures can be aggregated.
 ///
-/// A single Signature can be rised to a Multisignature, and any signature can be added to
-/// multisignature.
+/// Any signature can be added to multisignature.
 /// After adding sufficiently many signatures, the partial multisignature becomes a "complete"
 /// multisignature.
 /// Whether a multisignature is complete, can be verified with [`MultiKeychain::is_complete`] method.
 /// The signature and the index passed to the `add_signature` method are required to be valid.
 pub trait PartialMultisignature: Debug + Clone + Encode + Decode + Send + 'static {
     type Signature: Signature;
+    /// Adds the signature.
     fn add_signature(self, signature: &Self::Signature, index: NodeIndex) -> Self;
 }
 
-/// Extends KeyBox with multisigning functionalities. Allows to verify whether a partial multisignature
-/// is complete (and valid).
+/// Extends KeyBox with multisigning functionalities.
+///
+/// A single Signature can be rised to a Multisignature.
+/// Allows to verify whether a partial multisignature is complete (and valid).
 pub trait MultiKeychain: KeyBox {
     type PartialMultisignature: PartialMultisignature<Signature = Self::Signature>;
+    /// Transform a single signature to a multisignature consisting of the signature.
     fn from_signature(
         &self,
         signature: &Self::Signature,
         index: NodeIndex,
     ) -> Self::PartialMultisignature;
+    /// Checks if enough signatures have beed added.
     fn is_complete(&self, msg: &[u8], partial: &Self::PartialMultisignature) -> bool;
 }
 
@@ -49,6 +61,7 @@ pub trait MultiKeychain: KeyBox {
 /// the bytes returned by `hash.as_ref()` are used by a [`MultiKeychain`] to sign the data.
 pub trait Signable {
     type Hash: AsRef<[u8]>;
+    /// Return a hash for signing.
     fn hash(&self) -> Self::Hash;
 }
 
@@ -178,6 +191,7 @@ impl<'a, T: Signable + Clone + Index, KB: KeyBox> Clone for Signed<'a, T, KB> {
 }
 
 impl<'a, T: Signable + Index, KB: KeyBox> Signed<'a, T, KB> {
+    /// Create a signed object from a signable. The index of `signable` must match the index of the `key_box`.
     pub fn sign(signable: T, key_box: &'a KB) -> Self {
         assert_eq!(signable.index(), key_box.index());
         let signature = key_box.sign(&signable.hash().as_ref());
@@ -200,6 +214,8 @@ impl<'a, T: Signable + Index, KB: KeyBox> Signed<'a, T, KB> {
 }
 
 impl<'a, T: Signable, MK: MultiKeychain> Signed<'a, Indexed<T>, MK> {
+    /// Transform a singly signed object into a partially multisigned consisting of just the signed object.
+    /// Note that depending on the setup, it may yield a complete signature.
     pub fn into_partially_multisigned(self, keychain: &'a MK) -> PartiallyMultisigned<'a, T, MK> {
         let multisignature =
             keychain.from_signature(&self.unchecked.signature, self.unchecked.signable.index);
@@ -324,12 +340,14 @@ pub enum PartiallyMultisigned<'a, T: Signable, MK: MultiKeychain> {
 }
 
 impl<'a, T: Signable, MK: MultiKeychain> PartiallyMultisigned<'a, T, MK> {
+    /// Create a partially multisigned object.
     pub fn sign(signable: T, keychain: &'a MK) -> Self {
         let indexed = Indexed::new(signable, keychain.index());
         let signed = Signed::sign(indexed, keychain);
         signed.into_partially_multisigned(keychain)
     }
 
+    /// Chceck if the partial multisignature is complete.
     pub fn is_complete(&self) -> bool {
         match self {
             PartiallyMultisigned::Incomplete { .. } => false,
@@ -337,6 +355,7 @@ impl<'a, T: Signable, MK: MultiKeychain> PartiallyMultisigned<'a, T, MK> {
         }
     }
 
+    /// Return a reference to the object that is being signed.
     pub fn as_unchecked(&self) -> &UncheckedSigned<T, MK::PartialMultisignature> {
         match self {
             PartiallyMultisigned::Incomplete { unchecked } => unchecked,
@@ -344,6 +363,7 @@ impl<'a, T: Signable, MK: MultiKeychain> PartiallyMultisigned<'a, T, MK> {
         }
     }
 
+    /// Return the object that is being signed.
     pub fn into_unchecked(self) -> UncheckedSigned<T, MK::PartialMultisignature> {
         match self {
             PartiallyMultisigned::Incomplete { unchecked } => unchecked,
@@ -351,6 +371,7 @@ impl<'a, T: Signable, MK: MultiKeychain> PartiallyMultisigned<'a, T, MK> {
         }
     }
 
+    /// Adds a signature and checks if multisignature is complete.
     pub fn add_signature(self, signed: Signed<'a, Indexed<T>, MK>, keychain: &'a MK) -> Self {
         if self.as_unchecked().signable.hash().as_ref() != signed.as_signable().hash().as_ref() {
             debug!(target: "AlephBFT-add_signature", "Tried to add a signature of a different object");

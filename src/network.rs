@@ -11,13 +11,31 @@ use log::error;
 use std::fmt::Debug;
 
 /// Network represents an interface for sending and receiving NetworkData.
-/// We only assume that every send has a nonzero probability of succeeding,
-/// and a nonerror result might still correspond to an unsuccessful transfer.
+///
+/// Note on Rate Control: it is assumed that Network implements a rate control mechanism guaranteeing
+/// that no node is allowed to spam messages without limits. We do not specify details yet, but in
+/// future releases we plan to publish recommended upper bounds for the amounts of bandwidth and
+/// number of messages allowed per node per a unit of time. These bounds must be carefully crafted
+/// based upon the number of nodes N and the configured delays between subsequent Dag rounds, so
+/// that at the same time spammers are cut off but honest nodes are able function correctly within
+/// these bounds.
+///
+/// Note on Network Reliability: it is not assumed that each message that AlephBFT orders to send
+/// reaches its intended recipient, there are some built-in reliability mechanisms within AlephBFT
+/// that will automatically detect certain failures and resend messages as needed. Clearly, the less
+/// reliable the network is, the worse the performarmence of AlephBFT will be (generally slower to
+/// produce output). Also, not surprisingly if the percentage of dropped messages is too high
+/// AlephBFT might stop making progress, but from what we observe in tests, this happens only when
+/// the reliability is extremely bad, i.e., drops below 50% (which means there is some significant
+/// issue with the network).
 #[async_trait::async_trait]
 pub trait Network<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature>: Send {
     type Error: Debug;
+    /// Send a message to a single node.
     fn send(&self, data: NetworkData<H, D, S, MS>, node: NodeIndex) -> Result<(), Self::Error>;
+    /// Send a message to all nodes.
     fn broadcast(&self, data: NetworkData<H, D, S, MS>) -> Result<(), Self::Error>;
+    /// Receive a message from the network.
     async fn next_event(&mut self) -> Option<NetworkData<H, D, S, MS>>;
 }
 
@@ -27,8 +45,7 @@ pub(crate) enum NetworkDataInner<H: Hasher, D: Data, S: Signature, MS: PartialMu
     Alert(AlertMessage<H, D, S, MS>),
 }
 
-/// NetworkData is the opaque format for all data that a committee member needs
-/// to send to other nodes to perform the protocol.
+/// NetworkData is the opaque format for all data that a committee member needs to send to other nodes.
 #[derive(Clone)]
 pub struct NetworkData<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature>(
     pub(crate) NetworkDataInner<H, D, S, MS>,

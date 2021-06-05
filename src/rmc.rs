@@ -1,4 +1,4 @@
-//! Reliable multicast functionality.
+//! Reliable MultiCast - a primitive for Reliable Broadcast protocol.
 use crate::{
     nodes::{NodeCount, NodeIndex},
     signed::{PartiallyMultisigned, Signable, Signed, UncheckedSigned},
@@ -210,6 +210,7 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
         }
     }
 
+    /// Initiate a new instance of RMC for `hash`.
     pub fn start_rmc(&mut self, hash: H) {
         let indexed_hash = Indexed::new(hash, self.keychain.index());
         let signed_hash = Signed::sign(indexed_hash, self.keychain);
@@ -284,6 +285,7 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
         }
     }
 
+    /// Fetches final multisignature.
     pub fn get_multisigned(&self, hash: &H) -> Option<Multisigned<'a, H, MK>> {
         match self.hash_states.get(hash)? {
             PartiallyMultisigned::Complete { multisigned } => Some(multisigned.clone()),
@@ -291,6 +293,7 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
         }
     }
 
+    /// Perform underlying tasks until the multisignature for the hash of this instance is collected.
     pub async fn next_multisigned_hash(&mut self) -> Multisigned<'a, H, MK> {
         loop {
             futures::select! {
