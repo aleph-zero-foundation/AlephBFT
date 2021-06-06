@@ -55,6 +55,8 @@ impl Hasher for Hasher64 {
     }
 }
 
+pub(crate) type Hash64 = <Hasher64 as Hasher>::Hash;
+
 // This struct allows to create a Hub to interconnect several instances of the Consensus engine, without
 // requiring the Member wrapper. The Hub notifies all connected instances about newly created units and
 // is able to answer unit requests as well. WrongControlHashes are not supported, which means that this

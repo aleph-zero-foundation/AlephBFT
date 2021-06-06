@@ -5,6 +5,8 @@ mod consensus;
 #[cfg(test)]
 mod crash;
 #[cfg(test)]
+mod dag;
+#[cfg(test)]
 pub(crate) mod mock;
 #[cfg(test)]
 mod rmc;
