@@ -43,15 +43,15 @@ pub(crate) async fn run<H: Hasher + 'static>(
 
     // send a new parent candidate to the creator
     terminal.register_post_insert_hook(Box::new(move |u| {
-        parents_tx
-            .unbounded_send(u.into())
-            .expect("Channel should be open");
+        if let Err(e) = parents_tx.unbounded_send(u.into()) {
+            debug!(target: "AlephBFT", "channel to creator is closed {:?}", e);
+        }
     }));
     // try to extend the partial order after adding a unit to the dag
     terminal.register_post_insert_hook(Box::new(move |u| {
-        electors_tx
-            .unbounded_send(u.into())
-            .expect("Channel should be open");
+        if let Err(e) = electors_tx.unbounded_send(u.into()) {
+            debug!(target: "AlephBFT", "channel to extender is closed {:?}", e);
+        }
     }));
 
     let (terminal_exit, exit_rx) = oneshot::channel();
@@ -63,8 +63,8 @@ pub(crate) async fn run<H: Hasher + 'static>(
 
     let _ = exit.await;
     // we stop no matter if received Ok or Err
-    let _ = creator_exit.send(());
     let _ = terminal_exit.send(());
+    let _ = creator_exit.send(());
     let _ = extender_exit.send(());
 
     debug!(target: "AlephBFT", "{:?} All services stopped.", conf.node_ix);

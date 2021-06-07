@@ -100,8 +100,7 @@ impl HonestHub {
             "Must connect to all nodes before running the hub."
         );
         for (_ix, tx) in self.ntfct_in_txs.iter() {
-            tx.unbounded_send(ntfct.clone())
-                .expect("Channel should be open");
+            tx.unbounded_send(ntfct.clone()).ok();
         }
     }
 

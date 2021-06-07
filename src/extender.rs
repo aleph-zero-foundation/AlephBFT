@@ -132,7 +132,7 @@ impl<H: Hasher> Extender<H> {
     }
 
     /// Prepares a batch and removes all unnecessary units from the data structures
-    fn finalize_round(&mut self, round: Round, head: &H::Hash) {
+    fn finalize_round(&mut self, round: Round, head: &H::Hash) -> Result<(), ()> {
         let mut batch = vec![];
         let mut queue = VecDeque::new();
         queue.push_back(self.units.remove(head).unwrap());
@@ -150,9 +150,14 @@ impl<H: Hasher> Extender<H> {
         batch.reverse();
         self.finalizer_tx
             .unbounded_send(batch)
-            .expect("Channel should be open");
+            .map_err(|e| {
+                debug!(target: "AlephBFT-extender", "{:?} channel for batches is closed {:?}, closing", self.node_id, e);
+            })?;
+
         debug!(target: "AlephBFT-extender", "{:?} Finalized round {:?} with head {:?}.", self.node_id, round, head);
         self.units_by_round[round].clear();
+
+        Ok(())
     }
 
     fn vote_and_decision(
@@ -211,7 +216,7 @@ impl<H: Hasher> Extender<H> {
     }
 
     // Tries to make progress in extending the partial order after adding a new unit to the Dag.
-    fn progress(&mut self, u_new_hash: H::Hash) {
+    fn progress(&mut self, u_new_hash: H::Hash) -> Result<(), ()> {
         loop {
             if !self.state.round_initialized {
                 if self.state.highest_round >= self.state.current_round + 3 {
@@ -265,7 +270,7 @@ impl<H: Hasher> Extender<H> {
             }
 
             if decision == Some(true) {
-                self.finalize_round(self.state.current_round, &candidate_hash);
+                self.finalize_round(self.state.current_round, &candidate_hash)?;
                 self.state.current_round += 1;
                 self.state.round_initialized = false;
                 continue;
@@ -279,6 +284,7 @@ impl<H: Hasher> Extender<H> {
             self.state.votes_up_to_date = true;
             break;
         }
+        Ok(())
     }
 
     pub(crate) async fn extend(&mut self, mut exit: oneshot::Receiver<()>) {
@@ -288,7 +294,9 @@ impl<H: Hasher> Extender<H> {
                     if let Some(v) = v {
                         let v_hash = v.hash;
                         self.add_unit(v);
-                        self.progress(v_hash);
+                        if self.progress(v_hash).is_err(){
+                            break
+                        }
                     }
                 }
                 _ = &mut exit => {

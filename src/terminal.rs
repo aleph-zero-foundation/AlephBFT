@@ -188,7 +188,7 @@ impl<H: Hasher> Terminal<H> {
         wait_list.push(*u_hash);
     }
 
-    fn update_on_store_add(&mut self, u: Unit<H>) {
+    fn update_on_store_add(&mut self, u: Unit<H>) -> Result<(), ()> {
         let u_hash = u.hash();
         let (u_round, pid) = (u.round(), u.creator());
         // If u is a fork, then the below line will overwrite the previous unit at this coord, but this is intended
@@ -221,12 +221,16 @@ impl<H: Hasher> Terminal<H> {
                 debug!(target: "AlephBFT-terminal", "{:?} Missing coords {:?}", self.node_id, coords_to_request);
                 self.ntfct_tx
                     .unbounded_send(NotificationOut::MissingUnits(coords_to_request))
-                    .expect("Channel should be open");
+                    .map_err(|e| {
+                        debug!(target: "AlephBFT-terminal", "{:?} notification channel is closed {:?}, closing", self.node_id, e);
+                    })?
             }
         }
+
+        Ok(())
     }
 
-    fn update_on_dag_add(&mut self, u_hash: &H::Hash) {
+    fn update_on_dag_add(&mut self, u_hash: &H::Hash) -> Result<(), ()> {
         let u = self
             .unit_store
             .get(u_hash)
@@ -245,7 +249,9 @@ impl<H: Hasher> Terminal<H> {
 
         self.ntfct_tx
             .unbounded_send(NotificationOut::AddedToDag(*u_hash, parent_hashes))
-            .expect("Channel should be open");
+            .map_err(|e| {
+                debug!(target: "AlephBFT-terminal", "{:?} notification channel is closed {:?}, closing", self.node_id, e);
+            })
     }
 
     // We set the correct parent hashes for unit u.
@@ -266,12 +272,14 @@ impl<H: Hasher> Terminal<H> {
         self.inspect_parents_in_dag(&u_hash);
     }
 
-    fn add_to_store(&mut self, u: Unit<H>) {
+    fn add_to_store(&mut self, u: Unit<H>) -> Result<(), ()> {
         debug!(target: "AlephBFT-terminal", "{:?} Adding to store {:?} round {:?} index {:?}", self.node_id, u.hash(), u.round(), u.creator());
         if let Entry::Vacant(entry) = self.unit_store.entry(u.hash()) {
             entry.insert(TerminalUnit::<H>::blank_from_unit(&u));
-            self.update_on_store_add(u);
+            self.update_on_store_add(u)?;
         }
+
+        Ok(())
     }
 
     fn inspect_parents_in_dag(&mut self, u_hash: &H::Hash) {
@@ -301,17 +309,19 @@ impl<H: Hasher> Terminal<H> {
         }
     }
 
-    fn on_wrong_hash_detected(&mut self, u_hash: H::Hash) {
+    fn on_wrong_hash_detected(&mut self, u_hash: H::Hash) -> Result<(), ()> {
         self.ntfct_tx
             .unbounded_send(NotificationOut::WrongControlHash(u_hash))
-            .expect("Channel should be open");
+            .map_err(|e| {
+                debug!(target: "AlephBFT-terminal", "{:?} notification channel is closed {:?}, closing", self.node_id, e);
+            })
     }
 
     // This drains the event queue. Note that new events might be added to the queue as the result of
     // handling other events -- for instance when a unit u is waiting for its parent p, and this parent p waits
     // for his parent pp. In this case adding pp to the Dag, will trigger adding p, which in turns triggers
     // adding u.
-    fn handle_events(&mut self) {
+    fn handle_events(&mut self) -> Result<(), ()> {
         while let Some(event) = self.event_queue.pop_front() {
             match event {
                 TerminalEvent::ParentsReconstructed(u_hash) => {
@@ -321,17 +331,18 @@ impl<H: Hasher> Terminal<H> {
                     } else {
                         u.status = UnitStatus::WrongControlHash;
                         debug!(target: "AlephBFT-terminal", "{:?} wrong control hash", self.node_id);
-                        self.on_wrong_hash_detected(u_hash);
+                        self.on_wrong_hash_detected(u_hash)?;
                     }
                 }
                 TerminalEvent::ParentsInDag(u_hash) => {
                     let u = self.unit_store.get_mut(&u_hash).unwrap();
                     u.status = UnitStatus::InDag;
                     debug!(target: "AlephBFT-terminal", "{:?} Adding to Dag {:?} round {:?} index {:?}.", self.node_id, u_hash, u.unit.round(), u.unit.creator());
-                    self.update_on_dag_add(&u_hash);
+                    self.update_on_dag_add(&u_hash)?;
                 }
             }
         }
+        Ok(())
     }
 
     pub(crate) fn register_post_insert_hook(&mut self, hook: SyncClosure<TerminalUnit<H>, ()>) {
@@ -345,13 +356,16 @@ impl<H: Hasher> Terminal<H> {
                     match n {
                         Some(NotificationIn::NewUnits(units)) => {
                             for u in units {
-                                self.add_to_store(u);
-                                self.handle_events();
+                                if self.add_to_store(u).is_err() || self.handle_events().is_err() {
+                                    break
+                                };
                             }
                         },
                         Some(NotificationIn::UnitParents(u_hash, p_hashes)) => {
                             self.update_on_wrong_hash_response(u_hash, p_hashes);
-                            self.handle_events();
+                            if self.handle_events().is_err() {
+                                break
+                            }
                         },
                         _ => {}
                     }
