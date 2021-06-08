@@ -170,12 +170,12 @@ where
             .expect("channel to consensus should be open")
     }
 
-    fn on_create(&mut self, u: PreUnit<H>) {
+    async fn on_create(&mut self, u: PreUnit<H>) {
         debug!(target: "AlephBFT-member", "{:?} On create notification.", self.index());
         let data = self.data_io.get_data();
         let full_unit = FullUnit::new(u, data, self.config.session_id);
         let hash = full_unit.hash();
-        let signed_unit = Signed::sign(full_unit, self.keybox);
+        let signed_unit = Signed::sign(full_unit, self.keybox).await;
         self.store.add_unit(signed_unit, false);
         let curr_time = time::Instant::now();
         let task = ScheduledTask::new(Task::UnitMulticast(hash, 0), curr_time);
@@ -316,10 +316,10 @@ where
         }
     }
 
-    fn on_consensus_notification(&mut self, notification: NotificationOut<H>) {
+    async fn on_consensus_notification(&mut self, notification: NotificationOut<H>) {
         match notification {
             NotificationOut::CreatedPreUnit(pu) => {
-                self.on_create(pu);
+                self.on_create(pu).await;
             }
             NotificationOut::MissingUnits(coords) => {
                 self.on_missing_coords(coords);
@@ -725,7 +725,7 @@ where
         loop {
             futures::select! {
                 notification = rx_consensus.next() => match notification {
-                        Some(notification) => self.on_consensus_notification(notification),
+                        Some(notification) => self.on_consensus_notification(notification).await,
                         None => {
                             error!(target: "AlephBFT-member", "{:?} Consensus notification stream closed.", self.index());
                             break;

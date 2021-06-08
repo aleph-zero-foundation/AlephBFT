@@ -1,7 +1,5 @@
+use async_trait::async_trait;
 use codec::{Decode, Encode};
-use log::{debug, error};
-use parking_lot::Mutex;
-
 use futures::{
     channel::{
         mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
@@ -9,6 +7,8 @@ use futures::{
     },
     Future, StreamExt,
 };
+use log::{debug, error};
+use parking_lot::Mutex;
 
 use std::{
     cell::Cell,
@@ -467,9 +467,10 @@ impl Index for KeyBox {
     }
 }
 
+#[async_trait]
 impl KeyBoxT for KeyBox {
     type Signature = Signature;
-    fn sign(&self, _msg: &[u8]) -> Signature {
+    async fn sign(&self, _msg: &[u8]) -> Signature {
         Signature {}
     }
     fn verify(&self, _msg: &[u8], _sgn: &Signature, _index: NodeIndex) -> bool {

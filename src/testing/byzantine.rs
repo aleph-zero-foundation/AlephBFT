@@ -109,7 +109,7 @@ impl<'a> MaliciousMember<'a> {
         }
     }
 
-    fn create_if_possible(&mut self) {
+    async fn create_if_possible(&mut self) {
         if let Some(parents) = self.pick_parents(self.round_in_progress) {
             debug!(target: "malicious-member", "Creating a legit unit for round {}.", self.round_in_progress);
             let round = self.round_in_progress;
@@ -119,19 +119,19 @@ impl<'a> MaliciousMember<'a> {
             if round != self.forking_round {
                 let data = Data::new(coord, 0);
                 let full_unit = FullUnit::new(new_preunit, data, self.session_id);
-                let signed_unit = Signed::sign(full_unit, self.keybox);
+                let signed_unit = Signed::sign(full_unit, self.keybox).await;
                 self.on_unit_received(signed_unit.clone());
                 self.send_legit_unit(signed_unit);
             } else {
                 // FORKING HAPPENS HERE!
                 debug!(target: "malicious-member", "Creating forks for round {}.", self.round_in_progress);
-                let variants: Vec<SignedUnit<Hasher64, Data, KeyBox>> = (0u32..2u32)
-                    .map(|var| {
-                        let data = Data::new(coord, var);
-                        let full_unit = FullUnit::new(new_preunit.clone(), data, self.session_id);
-                        Signed::sign(full_unit, self.keybox)
-                    })
-                    .collect();
+                let mut variants = Vec::new();
+                for var in 0u32..2u32 {
+                    let data = Data::new(coord, var);
+                    let full_unit = FullUnit::new(new_preunit.clone(), data, self.session_id);
+                    let signed = Signed::sign(full_unit, self.keybox).await;
+                    variants.push(signed);
+                }
                 self.send_two_variants(variants[0].clone(), variants[1].clone());
             }
             self.round_in_progress += 1;
@@ -161,7 +161,7 @@ impl<'a> MaliciousMember<'a> {
     }
 
     pub async fn run_session(mut self, mut exit: oneshot::Receiver<()>) {
-        self.create_if_possible();
+        self.create_if_possible().await;
         loop {
             tokio::select! {
                 event = self.network.next_event() => match event {
@@ -175,7 +175,7 @@ impl<'a> MaliciousMember<'a> {
                 },
                 _ = &mut exit => break,
             }
-            self.create_if_possible();
+            self.create_if_possible().await;
         }
     }
 }

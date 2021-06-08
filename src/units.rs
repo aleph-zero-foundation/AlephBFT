@@ -5,7 +5,7 @@ use crate::{
 };
 use codec::{Decode, Encode};
 use log::{debug, error};
-use std::{cell::RefCell, collections::HashMap, hash::Hash as StdHash};
+use std::{collections::HashMap, hash::Hash as StdHash};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Encode, Decode, StdHash)]
 pub(crate) struct UnitCoord {
@@ -103,13 +103,25 @@ impl<H: Hasher> PreUnit<H> {
 }
 
 ///
-#[derive(Debug, Clone, Encode, Decode)]
+#[derive(Debug, Encode, Decode)]
 pub(crate) struct FullUnit<H: Hasher, D: Data> {
     pre_unit: PreUnit<H>,
     data: D,
     session_id: SessionId,
     #[codec(skip)]
-    hash: RefCell<Option<H::Hash>>,
+    hash: RwLock<Option<H::Hash>>,
+}
+
+impl<H: Hasher, D: Data> Clone for FullUnit<H, D> {
+    fn clone(&self) -> Self {
+        let hash = self.hash.try_read().and_then(|guard| *guard);
+        FullUnit {
+            pre_unit: self.pre_unit.clone(),
+            data: self.data.clone(),
+            session_id: self.session_id,
+            hash: RwLock::new(hash),
+        }
+    }
 }
 
 impl<H: Hasher, D: Data> PartialEq for FullUnit<H, D> {
@@ -126,7 +138,7 @@ impl<H: Hasher, D: Data> FullUnit<H, D> {
             pre_unit,
             data,
             session_id,
-            hash: RefCell::new(Default::default()),
+            hash: RwLock::new(None),
         }
     }
     pub(crate) fn as_pre_unit(&self) -> &PreUnit<H> {
@@ -151,12 +163,12 @@ impl<H: Hasher, D: Data> FullUnit<H, D> {
         self.session_id
     }
     pub(crate) fn hash(&self) -> H::Hash {
-        let hash = *self.hash.borrow();
+        let hash = *self.hash.read();
         match hash {
             Some(hash) => hash,
             None => {
                 let hash = self.using_encoded(H::hash);
-                *self.hash.borrow_mut() = Some(hash);
+                *self.hash.write() = Some(hash);
                 hash
             }
         }
@@ -212,6 +224,7 @@ impl<H: Hasher> Unit<H> {
 }
 
 mod store;
+use parking_lot::RwLock;
 pub(crate) use store::*;
 
 #[cfg(test)]

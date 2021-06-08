@@ -155,7 +155,7 @@ async fn simple_scenario() {
 
     let hash = Hash { byte: 56 };
     for i in 0..node_count.0 {
-        data.rmcs[i].start_rmc(hash);
+        data.rmcs[i].start_rmc(hash).await;
     }
 
     let hashes = data.collect_multisigned_hashes(node_count.0).await;
@@ -177,7 +177,7 @@ async fn faulty_network() {
 
     let hash = Hash { byte: 56 };
     for i in 0..node_count.0 {
-        data.rmcs[i].start_rmc(hash);
+        data.rmcs[i].start_rmc(hash).await;
     }
 
     let hashes = data.collect_multisigned_hashes(node_count.0).await;
@@ -202,7 +202,7 @@ async fn node_hearing_only_multisignatures() {
     let threshold = (2 * node_count.0 + 1) / 3;
     let hash = Hash { byte: 56 };
     for i in 0..threshold {
-        data.rmcs[i].start_rmc(hash);
+        data.rmcs[i].start_rmc(hash).await;
     }
 
     let hashes = data.collect_multisigned_hashes(node_count.0).await;
@@ -247,7 +247,7 @@ async fn bad_signatures_and_multisignatures_are_ignored() {
 
     let hash = Hash { byte: 56 };
     for i in 0..node_count.0 {
-        data.rmcs[i].start_rmc(hash);
+        data.rmcs[i].start_rmc(hash).await;
     }
 
     let hashes = data.collect_multisigned_hashes(node_count.0).await;

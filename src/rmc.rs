@@ -53,7 +53,7 @@ pub enum Task<H: Signable, MK: MultiKeychain> {
 /// The trait [`TaskScheduler<T>`] describes in what intervals some abstract task of type `T`
 /// should be performed.
 #[async_trait]
-pub trait TaskScheduler<T>: Send {
+pub trait TaskScheduler<T>: Send + Sync {
     fn add_task(&mut self, task: T);
     async fn next_task(&mut self) -> Option<T>;
 }
@@ -108,7 +108,7 @@ impl<T> DoublingDelayScheduler<T> {
 }
 
 #[async_trait]
-impl<T: Send + Clone> TaskScheduler<T> for DoublingDelayScheduler<T> {
+impl<T: Send + Sync + Clone> TaskScheduler<T> for DoublingDelayScheduler<T> {
     fn add_task(&mut self, task: T) {
         self.on_new_task_tx
             .unbounded_send(task)
@@ -211,9 +211,9 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
     }
 
     /// Initiate a new instance of RMC for `hash`.
-    pub fn start_rmc(&mut self, hash: H) {
+    pub async fn start_rmc(&mut self, hash: H) {
         let indexed_hash = Indexed::new(hash, self.keychain.index());
-        let signed_hash = Signed::sign(indexed_hash, self.keychain);
+        let signed_hash = Signed::sign(indexed_hash, self.keychain).await;
         let message = Message::SignedHash(signed_hash.into_unchecked());
         self.handle_message(message.clone());
         self.scheduler.add_task(Task::BroadcastMessage(message))

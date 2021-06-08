@@ -1,14 +1,14 @@
 use crate::{nodes::NodeIndex, Index};
+use async_trait::async_trait;
 use codec::{Decode, Encode};
 use log::debug;
 use std::{fmt::Debug, marker::PhantomData};
-
 /// The type used as a signature.
 ///
 /// The Signature typically does not contain the index of the node who signed the data.
-pub trait Signature: Debug + Clone + Encode + Decode + Send + 'static {}
+pub trait Signature: Debug + Clone + Encode + Decode + Send + Sync + 'static {}
 
-impl<T: Debug + Clone + Encode + Decode + Send + 'static> Signature for T {}
+impl<T: Debug + Clone + Encode + Decode + Send + Sync + 'static> Signature for T {}
 
 /// Abstraction of the signing data and verifying signatures.
 ///
@@ -17,10 +17,11 @@ impl<T: Debug + Clone + Encode + Decode + Send + 'static> Signature for T {}
 /// The meaning of sign is then to produce a signature `s` using the given private key,
 /// and `verify(msg, s, j)` is to verify whether the signature s under the message msg is
 /// correct with respect to the public key of the jth node.
+#[async_trait]
 pub trait KeyBox: Index + Clone + Send + Sync + 'static {
     type Signature: Signature;
     /// Signs a message `msg`.
-    fn sign(&self, msg: &[u8]) -> Self::Signature;
+    async fn sign(&self, msg: &[u8]) -> Self::Signature;
     /// Verifies whether a node with `index` correctly signed the message `msg`.
     fn verify(&self, msg: &[u8], sgn: &Self::Signature, index: NodeIndex) -> bool;
 }
@@ -32,7 +33,7 @@ pub trait KeyBox: Index + Clone + Send + Sync + 'static {
 /// multisignature.
 /// Whether a multisignature is complete, can be verified with [`MultiKeychain::is_complete`] method.
 /// The signature and the index passed to the `add_signature` method are required to be valid.
-pub trait PartialMultisignature: Debug + Clone + Encode + Decode + Send + 'static {
+pub trait PartialMultisignature: Signature {
     type Signature: Signature;
     /// Adds the signature.
     fn add_signature(self, signature: &Self::Signature, index: NodeIndex) -> Self;
@@ -79,7 +80,7 @@ impl<T: AsRef<[u8]> + Clone> Signable for T {
 /// signed object, and the method `[UncheckedSigned::check_partial]` can be used to upgrade to
 /// `[PartiallyMultisigned<'a, T, MK>]`.
 #[derive(Clone, Debug, Decode, Encode)]
-pub struct UncheckedSigned<T: Signable, S> {
+pub struct UncheckedSigned<T: Signable, S: Signature> {
     signable: T,
     signature: S,
 }
@@ -125,11 +126,11 @@ impl<T: Signable, S: Signature> Signable for UncheckedSigned<T, S> {
 
 /// Error type returned when a verification of a signature fails.
 #[derive(Clone, Debug)]
-pub struct SignatureError<T: Signable, S> {
+pub struct SignatureError<T: Signable, S: Signature> {
     unchecked: UncheckedSigned<T, S>,
 }
 
-impl<T: Signable + Index, S: Clone> UncheckedSigned<T, S> {
+impl<T: Signable + Index, S: Signature> UncheckedSigned<T, S> {
     /// Verifies whether the signature matches the key with the index as in the signed data.
     pub(crate) fn check<KB: KeyBox<Signature = S>>(
         self,
@@ -146,13 +147,13 @@ impl<T: Signable + Index, S: Clone> UncheckedSigned<T, S> {
     }
 }
 
-impl<T: Signable + Index, S: Clone> Index for UncheckedSigned<T, S> {
+impl<T: Signable + Index, S: Signature> Index for UncheckedSigned<T, S> {
     fn index(&self) -> NodeIndex {
         self.signable.index()
     }
 }
 
-impl<T: Signable, S: Clone> UncheckedSigned<T, S> {
+impl<T: Signable, S: Signature> UncheckedSigned<T, S> {
     /// Verifies whether the multisignature matches the signed data.
     pub(crate) fn check_multi<MK: MultiKeychain<PartialMultisignature = S>>(
         self,
@@ -192,9 +193,9 @@ impl<'a, T: Signable + Clone + Index, KB: KeyBox> Clone for Signed<'a, T, KB> {
 
 impl<'a, T: Signable + Index, KB: KeyBox> Signed<'a, T, KB> {
     /// Create a signed object from a signable. The index of `signable` must match the index of the `key_box`.
-    pub fn sign(signable: T, key_box: &'a KB) -> Self {
+    pub async fn sign(signable: T, key_box: &'a KB) -> Signed<'a, T, KB> {
         assert_eq!(signable.index(), key_box.index());
-        let signature = key_box.sign(signable.hash().as_ref());
+        let signature = key_box.sign(signable.hash().as_ref()).await;
         Signed {
             unchecked: UncheckedSigned {
                 signable,
@@ -341,9 +342,9 @@ pub enum PartiallyMultisigned<'a, T: Signable, MK: MultiKeychain> {
 
 impl<'a, T: Signable, MK: MultiKeychain> PartiallyMultisigned<'a, T, MK> {
     /// Create a partially multisigned object.
-    pub fn sign(signable: T, keychain: &'a MK) -> Self {
+    pub async fn sign(signable: T, keychain: &'a MK) -> PartiallyMultisigned<'a, T, MK> {
         let indexed = Indexed::new(signable, keychain.index());
-        let signed = Signed::sign(indexed, keychain);
+        let signed = Signed::sign(indexed, keychain).await;
         signed.into_partially_multisigned(keychain)
     }
 

@@ -13,21 +13,37 @@ use futures::{
     FutureExt, StreamExt,
 };
 use log::{debug, error};
+use parking_lot::RwLock;
 use std::{
-    cell::RefCell,
     collections::{HashMap, HashSet},
+    ops::Deref,
     time,
 };
 
 pub(crate) type ForkProof<H, D, S> = (UncheckedSignedUnit<H, D, S>, UncheckedSignedUnit<H, D, S>);
 
-#[derive(Clone, Debug, Decode, Encode)]
+#[derive(Debug, Decode, Encode)]
 pub(crate) struct Alert<H: Hasher, D: Data, S: Signature> {
     sender: NodeIndex,
     proof: ForkProof<H, D, S>,
     legit_units: Vec<UncheckedSignedUnit<H, D, S>>,
     #[codec(skip)]
-    hash: RefCell<Option<H::Hash>>,
+    hash: RwLock<Option<H::Hash>>,
+}
+
+impl<H: Hasher, D: Data, S: Signature> Clone for Alert<H, D, S> {
+    fn clone(&self) -> Self {
+        let hash = match self.hash.try_read() {
+            None => None,
+            Some(guard) => *guard.deref(),
+        };
+        Alert {
+            sender: self.sender,
+            proof: self.proof.clone(),
+            legit_units: self.legit_units.clone(),
+            hash: RwLock::new(hash),
+        }
+    }
 }
 
 impl<H: Hasher, D: Data, S: Signature> Alert<H, D, S> {
@@ -40,16 +56,16 @@ impl<H: Hasher, D: Data, S: Signature> Alert<H, D, S> {
             sender,
             proof,
             legit_units,
-            hash: RefCell::new(None),
+            hash: RwLock::new(None),
         }
     }
     fn hash(&self) -> H::Hash {
-        let hash = *self.hash.borrow();
+        let hash = *self.hash.read();
         match hash {
             Some(hash) => hash,
             None => {
                 let hash = self.using_encoded(H::hash);
-                *self.hash.borrow_mut() = Some(hash);
+                *self.hash.write() = Some(hash);
                 hash
             }
         }
@@ -250,28 +266,32 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
         Some(full_unit1.creator())
     }
 
-    fn rmc_alert(&mut self, forker: NodeIndex, alert: Signed<'a, Alert<H, D, MK::Signature>, MK>) {
+    async fn rmc_alert(
+        &mut self,
+        forker: NodeIndex,
+        alert: Signed<'a, Alert<H, D, MK::Signature>, MK>,
+    ) {
         let hash = alert.as_signable().hash();
         self.known_rmcs
             .insert((alert.as_signable().sender, forker), hash);
         self.known_alerts.insert(hash, alert);
-        self.rmc.start_rmc(hash);
+        self.rmc.start_rmc(hash).await;
     }
 
-    fn on_own_alert(&mut self, alert: Alert<H, D, MK::Signature>) {
+    async fn on_own_alert(&mut self, alert: Alert<H, D, MK::Signature>) {
         let forker = alert.forker();
         self.known_forkers.insert(forker, alert.proof.clone());
-        let alert = Signed::sign(alert, self.keychain);
+        let alert = Signed::sign(alert, self.keychain).await;
         self.messages_for_network
             .unbounded_send((
                 AlertMessage::ForkAlert(alert.clone().into()),
                 Recipient::Everyone,
             ))
             .expect("Channel should be open");
-        self.rmc_alert(forker, alert);
+        self.rmc_alert(forker, alert).await;
     }
 
-    fn on_network_alert(
+    async fn on_network_alert(
         &mut self,
         alert: UncheckedSigned<Alert<H, D, MK::Signature>, MK::Signature>,
     ) {
@@ -293,7 +313,7 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
                 // We learn about this forker for the first time, need to send our own alert
                 self.on_new_forker_detected(forker, contents.proof.clone());
             }
-            self.rmc_alert(forker, alert);
+            self.rmc_alert(forker, alert).await;
         } else {
             debug!(target: "AlephBFT-alerter","{:?} We have received an incorrect forking proof from {:?}.", self.index(), alert.as_signable().sender);
         }
@@ -335,7 +355,7 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
         }
     }
 
-    fn on_message(
+    async fn on_message(
         &mut self,
         message: AlertMessage<H, D, MK::Signature, MK::PartialMultisignature>,
     ) {
@@ -343,7 +363,7 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
         match message {
             ForkAlert(alert) => {
                 debug!(target: "AlephBFT-alerter", "{:?} Fork alert received {:?}.", self.index(), alert);
-                self.on_network_alert(alert);
+                self.on_network_alert(alert).await;
             }
             RmcMessage(sender, message) => self.on_rmc_message(sender, message),
             AlertRequest(node, hash) => self.send_alert_to(hash, node),
@@ -389,14 +409,14 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
         loop {
             futures::select! {
                 message = self.messages_from_network.next() => match message {
-                    Some(message) => self.on_message(message),
+                    Some(message) => self.on_message(message).await,
                     None => {
                         error!(target: "AlephBFT-alerter", "{:?} Message stream closed.", self.index());
                         break;
                     }
                 },
                 alert = self.alerts_from_units.next() => match alert {
-                    Some(alert) => self.on_own_alert(alert),
+                    Some(alert) => self.on_own_alert(alert).await,
                     None => {
                         error!(target: "AlephBFT-alerter", "{:?} Alert stream closed.", self.index());
                         break;

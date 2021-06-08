@@ -3,6 +3,7 @@ use crate::{
     signed::*,
     Index, KeyBox, MultiKeychain, PartialMultisignature, Signable,
 };
+use async_trait::async_trait;
 use codec::{Decode, Encode};
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -50,9 +51,10 @@ pub(crate) struct TestSignature {
     pub(crate) index: NodeIndex,
 }
 
+#[async_trait]
 impl KeyBox for TestMultiKeychain {
     type Signature = TestSignature;
-    fn sign(&self, msg: &[u8]) -> Self::Signature {
+    async fn sign(&self, msg: &[u8]) -> Self::Signature {
         TestSignature {
             msg: msg.to_vec(),
             index: self.index,
@@ -63,8 +65,8 @@ impl KeyBox for TestMultiKeychain {
     }
 }
 
-#[test]
-fn test_valid_signatures() {
+#[tokio::test]
+async fn test_valid_signatures() {
     let node_count: NodeCount = 7.into();
     let keychains: Vec<TestMultiKeychain> = (0_usize..node_count.0)
         .map(|i| TestMultiKeychain {
@@ -75,7 +77,7 @@ fn test_valid_signatures() {
     for i in 0..node_count.0 {
         for j in 0..node_count.0 {
             let msg = indexed_test_message(i);
-            let signed_msg = Signed::sign(msg.clone(), &keychains[i]);
+            let signed_msg = Signed::sign(msg.clone(), &keychains[i]).await;
             let unchecked_msg = signed_msg.into_unchecked();
             assert!(
                 unchecked_msg.check(&keychains[j]).is_ok(),
@@ -85,13 +87,13 @@ fn test_valid_signatures() {
     }
 }
 
-#[test]
-fn test_invalid_signatures() {
+#[tokio::test]
+async fn test_invalid_signatures() {
     let node_count: NodeCount = 1.into();
     let index: NodeIndex = 0.into();
     let keychain = TestMultiKeychain { node_count, index };
     let msg = indexed_test_message(index.0);
-    let signed_msg = Signed::sign(msg, &keychain);
+    let signed_msg = Signed::sign(msg, &keychain).await;
     let mut unchecked_msg = signed_msg.into_unchecked();
     unchecked_msg.signature_mut().index = 1.into();
 
@@ -139,22 +141,22 @@ impl MultiKeychain for TestMultiKeychain {
     }
 }
 
-#[test]
-fn test_incomplete_multisignature() {
+#[tokio::test]
+async fn test_incomplete_multisignature() {
     let msg = indexed_test_message(0);
     let index: NodeIndex = 0.into();
     let node_count: NodeCount = 2.into();
     let keychain = TestMultiKeychain { node_count, index };
 
-    let partial = PartiallyMultisigned::sign(msg, &keychain);
+    let partial = PartiallyMultisigned::sign(msg, &keychain).await;
     assert!(
         !partial.is_complete(),
         "One signature does not form a complete multisignature",
     );
 }
 
-#[test]
-fn test_multisignatures() {
+#[tokio::test]
+async fn test_multisignatures() {
     let mut msg = indexed_test_message(0);
     let node_count: NodeCount = 7.into();
     let keychains: Vec<TestMultiKeychain> = (0..node_count.0)
@@ -164,12 +166,12 @@ fn test_multisignatures() {
         })
         .collect();
 
-    let mut partial = PartiallyMultisigned::sign(msg.as_signable().clone(), &keychains[0]);
+    let mut partial = PartiallyMultisigned::sign(msg.as_signable().clone(), &keychains[0]).await;
     for (i, keychain) in keychains.iter().enumerate().skip(1).take(4) {
         let hash = partial.as_unchecked().as_signable().hash().clone();
         assert!(!keychain.is_complete(hash.as_ref(), partial.as_unchecked().signature()));
         *msg.index_mut() = i.into();
-        let signed = Signed::sign(msg.clone(), keychain);
+        let signed = Signed::sign(msg.clone(), keychain).await;
         partial = partial.add_signature(signed, keychain);
     }
     assert!(
