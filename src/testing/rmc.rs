@@ -2,7 +2,9 @@ use crate::{
     nodes::NodeCount,
     rmc::*,
     signed::*,
-    testing::signed::{TestMultiKeychain, TestPartialMultisignature, TestSignature},
+    testing::signed::{
+        test_multi_keychain, TestMultiKeychain, TestPartialMultisignature, TestSignature,
+    },
     NodeIndex,
 };
 use futures::{
@@ -90,7 +92,7 @@ impl TestNetwork {
 
 fn prepare_keychains(node_count: NodeCount) -> Vec<TestMultiKeychain> {
     (0..node_count.0)
-        .map(|i| TestMultiKeychain::new(node_count, i.into()))
+        .map(|i| test_multi_keychain(node_count, i.into()))
         .collect()
 }
 
@@ -221,11 +223,8 @@ fn bad_signature() -> TestSignature {
     }
 }
 
-fn bad_multisignature() -> TestPartialMultisignature {
-    TestPartialMultisignature {
-        msg: Vec::new(),
-        signers: Default::default(),
-    }
+fn bad_multisignature(node_count: NodeCount) -> TestPartialMultisignature {
+    SignatureSet::new(node_count)
 }
 
 /// 7 honest nodes and 3 dishonest nodes which emit bad signatures and multisignatures
@@ -241,8 +240,10 @@ async fn bad_signatures_and_multisignatures_are_ignored() {
         bad_signature(),
     ));
     data.network.broadcast_message(bad_msg);
-    let bad_msg =
-        TestMessage::MultisignedHash(UncheckedSigned::new(bad_hash, bad_multisignature()));
+    let bad_msg = TestMessage::MultisignedHash(UncheckedSigned::new(
+        bad_hash,
+        bad_multisignature(node_count),
+    ));
     data.network.broadcast_message(bad_msg);
 
     let hash = Hash { byte: 56 };

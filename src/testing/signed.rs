@@ -1,7 +1,7 @@
 use crate::{
-    nodes::{BoolNodeMap, NodeCount, NodeIndex},
+    nodes::{NodeCount, NodeIndex},
     signed::*,
-    Index, KeyBox, MultiKeychain, PartialMultisignature, Signable,
+    Index, KeyBox, MultiKeychain, Signable,
 };
 use async_trait::async_trait;
 use codec::{Decode, Encode};
@@ -27,52 +27,64 @@ fn indexed_test_message(i: usize) -> Indexed<TestMessage> {
     )
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct TestMultiKeychain {
-    node_count: NodeCount,
-    index: NodeIndex,
-}
-
-impl TestMultiKeychain {
-    pub(crate) fn new(node_count: NodeCount, index: NodeIndex) -> Self {
-        TestMultiKeychain { node_count, index }
-    }
-}
-
-impl Index for TestMultiKeychain {
-    fn index(&self) -> NodeIndex {
-        self.index
-    }
-}
-
 #[derive(Debug, Clone, Encode, Decode)]
 pub(crate) struct TestSignature {
     pub(crate) msg: Vec<u8>,
     pub(crate) index: NodeIndex,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct TestKeyBox {
+    count: NodeCount,
+    index: NodeIndex,
+}
+
+impl TestKeyBox {
+    fn new(count: NodeCount, index: NodeIndex) -> Self {
+        TestKeyBox { count, index }
+    }
+}
+
+impl Index for TestKeyBox {
+    fn index(&self) -> NodeIndex {
+        self.index
+    }
+}
+
 #[async_trait]
-impl KeyBox for TestMultiKeychain {
+impl KeyBox for TestKeyBox {
     type Signature = TestSignature;
+
+    fn node_count(&self) -> NodeCount {
+        self.count
+    }
+
     async fn sign(&self, msg: &[u8]) -> Self::Signature {
         TestSignature {
             msg: msg.to_vec(),
             index: self.index,
         }
     }
+
     fn verify(&self, msg: &[u8], sgn: &Self::Signature, index: NodeIndex) -> bool {
-        sgn.msg == msg && sgn.index == index
+        index == sgn.index && msg == sgn.msg
     }
+}
+
+pub(crate) type TestMultiKeychain = DefaultMultiKeychain<TestKeyBox>;
+
+pub(crate) type TestPartialMultisignature = SignatureSet<TestSignature>;
+
+pub(crate) fn test_multi_keychain(node_count: NodeCount, index: NodeIndex) -> TestMultiKeychain {
+    let key_box = TestKeyBox::new(node_count, index);
+    DefaultMultiKeychain::new(key_box)
 }
 
 #[tokio::test]
 async fn test_valid_signatures() {
     let node_count: NodeCount = 7.into();
     let keychains: Vec<TestMultiKeychain> = (0_usize..node_count.0)
-        .map(|i| TestMultiKeychain {
-            node_count,
-            index: i.into(),
-        })
+        .map(|i| test_multi_keychain(node_count, i.into()))
         .collect();
     for i in 0..node_count.0 {
         for j in 0..node_count.0 {
@@ -91,7 +103,7 @@ async fn test_valid_signatures() {
 async fn test_invalid_signatures() {
     let node_count: NodeCount = 1.into();
     let index: NodeIndex = 0.into();
-    let keychain = TestMultiKeychain { node_count, index };
+    let keychain = test_multi_keychain(node_count, index);
     let msg = indexed_test_message(index.0);
     let signed_msg = Signed::sign(msg, &keychain).await;
     let mut unchecked_msg = signed_msg.into_unchecked();
@@ -103,50 +115,12 @@ async fn test_invalid_signatures() {
     );
 }
 
-#[derive(Clone, Debug, Default, Encode, Decode, PartialEq)]
-pub(crate) struct TestPartialMultisignature {
-    pub(crate) msg: Vec<u8>,
-    pub(crate) signers: BoolNodeMap,
-}
-
-impl PartialMultisignature for TestPartialMultisignature {
-    type Signature = TestSignature;
-
-    fn add_signature(mut self, signature: &Self::Signature, index: NodeIndex) -> Self {
-        assert_eq!(self.msg, signature.msg);
-        self.signers.set(index);
-        self
-    }
-}
-
-impl MultiKeychain for TestMultiKeychain {
-    type PartialMultisignature = TestPartialMultisignature;
-
-    fn from_signature(
-        &self,
-        signature: &Self::Signature,
-        index: NodeIndex,
-    ) -> Self::PartialMultisignature {
-        let mut signers = BoolNodeMap::with_capacity(self.node_count);
-        signers.set(index);
-        TestPartialMultisignature {
-            msg: signature.msg.clone(),
-            signers,
-        }
-    }
-
-    fn is_complete(&self, msg: &[u8], partial: &Self::PartialMultisignature) -> bool {
-        return msg == partial.msg
-            && 3 * partial.signers.true_indices().count() > 2 * self.node_count.0;
-    }
-}
-
 #[tokio::test]
 async fn test_incomplete_multisignature() {
     let msg = indexed_test_message(0);
     let index: NodeIndex = 0.into();
     let node_count: NodeCount = 2.into();
-    let keychain = TestMultiKeychain { node_count, index };
+    let keychain = test_multi_keychain(node_count, index);
 
     let partial = PartiallyMultisigned::sign(msg, &keychain).await;
     assert!(
@@ -160,10 +134,7 @@ async fn test_multisignatures() {
     let mut msg = indexed_test_message(0);
     let node_count: NodeCount = 7.into();
     let keychains: Vec<TestMultiKeychain> = (0..node_count.0)
-        .map(|i| TestMultiKeychain {
-            node_count,
-            index: i.into(),
-        })
+        .map(|i| test_multi_keychain(node_count, i.into()))
         .collect();
 
     let mut partial = PartiallyMultisigned::sign(msg.as_signable().clone(), &keychains[0]).await;

@@ -470,9 +470,15 @@ impl Index for KeyBox {
 #[async_trait]
 impl KeyBoxT for KeyBox {
     type Signature = Signature;
+
+    fn node_count(&self) -> NodeCount {
+        self.count
+    }
+
     async fn sign(&self, _msg: &[u8]) -> Signature {
         Signature {}
     }
+
     fn verify(&self, _msg: &[u8], _sgn: &Signature, _index: NodeIndex) -> bool {
         true
     }

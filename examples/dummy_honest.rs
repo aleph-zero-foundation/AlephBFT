@@ -1,4 +1,4 @@
-use aleph_bft::{NodeIndex, OrderedBatch};
+use aleph_bft::{NodeCount, NodeIndex, OrderedBatch};
 use async_trait::async_trait;
 use codec::{Decode, Encode};
 use futures::{
@@ -179,6 +179,11 @@ struct KeyBox {
 #[async_trait]
 impl aleph_bft::KeyBox for KeyBox {
     type Signature = Signature;
+
+    fn node_count(&self) -> NodeCount {
+        self.count.into()
+    }
+
     async fn sign(&self, _msg: &[u8]) -> Self::Signature {
         Signature {}
     }
