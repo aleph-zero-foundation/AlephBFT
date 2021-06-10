@@ -27,7 +27,7 @@ fn indexed_test_message(i: usize) -> Indexed<TestMessage> {
     )
 }
 
-#[derive(Debug, Clone, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub(crate) struct TestSignature {
     pub(crate) msg: Vec<u8>,
     pub(crate) index: NodeIndex,

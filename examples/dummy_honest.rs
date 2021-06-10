@@ -146,7 +146,7 @@ impl DataIO {
 }
 
 // This is not cryptographically secure, mocked only for demonstration purposes
-#[derive(Clone, Debug, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 struct Signature;
 
 // This is not cryptographically secure, mocked only for demonstration purposes

@@ -96,7 +96,7 @@ impl<T> IndexMut<NodeIndex> for NodeMap<T> {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub(crate) struct BoolNodeMap(bit_vec::BitVec<u32>);
 
 #[cfg(test)]

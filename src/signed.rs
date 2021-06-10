@@ -9,9 +9,9 @@ use std::{fmt::Debug, marker::PhantomData};
 /// The type used as a signature.
 ///
 /// The Signature typically does not contain the index of the node who signed the data.
-pub trait Signature: Debug + Clone + Encode + Decode + Send + Sync + 'static {}
+pub trait Signature: Debug + Clone + Encode + Decode + Send + Sync + Eq + 'static {}
 
-impl<T: Debug + Clone + Encode + Decode + Send + Sync + 'static> Signature for T {}
+impl<T: Debug + Clone + Encode + Decode + Send + Sync + Eq + 'static> Signature for T {}
 
 /// Abstraction of the signing data and verifying signatures.
 ///
@@ -84,7 +84,7 @@ impl<T: AsRef<[u8]> + Clone> Signable for T {
 /// to upgrade this `struct` to `[Signed<'a, T, KB>]` which ensures that the signature matches the
 /// signed object, and the method `[UncheckedSigned::check_partial]` can be used to upgrade to
 /// `[PartiallyMultisigned<'a, T, MK>]`.
-#[derive(Clone, Debug, Decode, Encode)]
+#[derive(Clone, Debug, Decode, Encode, PartialEq, Eq, Hash)]
 pub struct UncheckedSigned<T: Signable, S: Signature> {
     signable: T,
     signature: S,
@@ -258,7 +258,7 @@ impl<'a, T: Signable + Index, KB: KeyBox> From<Signed<'a, T, KB>>
 /// should be signed instead. Note that in the implementation of `Signable` for `Indexed<T>`,
 /// the hash is the hash of the underlying data `T`. Therefore, instances of the type
 /// [`Signed<'a, Indexed<T>, MK>`] can be aggregated into `Multisigned<'a, T, MK>`
-#[derive(Clone, Encode, Decode, Debug, PartialEq)]
+#[derive(Clone, Encode, Decode, Debug, PartialEq, Eq, Hash)]
 pub struct Indexed<T: Signable> {
     signable: T,
     index: NodeIndex,
@@ -405,7 +405,7 @@ impl<'a, T: Signable, MK: MultiKeychain> PartiallyMultisigned<'a, T, MK> {
 }
 
 /// A set of signatures of a subset of nodes serving as a (partial) multisignature
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignatureSet<S: Signature> {
     signatures: NodeMap<Option<S>>,
 }

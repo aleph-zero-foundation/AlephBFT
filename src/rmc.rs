@@ -22,7 +22,7 @@ use std::{
 };
 
 /// An RMC message consisting of either a signed (indexed) hash, or a multisigned hash.
-#[derive(Debug, Encode, Decode, Clone)]
+#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, Hash)]
 pub enum Message<H: Signable, S: Signature, M: PartialMultisignature> {
     SignedHash(UncheckedSigned<Indexed<H>, S>),
     MultisignedHash(UncheckedSigned<H, M>),

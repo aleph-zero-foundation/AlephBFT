@@ -8,6 +8,7 @@ use crate::{
     Data, Hasher, Index, MultiKeychain, NodeIndex, Receiver, Sender, SessionId,
 };
 use codec::{Decode, Encode};
+use derivative::Derivative;
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,
@@ -22,12 +23,15 @@ use std::{
 
 pub(crate) type ForkProof<H, D, S> = (UncheckedSignedUnit<H, D, S>, UncheckedSignedUnit<H, D, S>);
 
-#[derive(Debug, Decode, Encode)]
+#[derive(Debug, Decode, Encode, Derivative)]
+#[derivative(PartialEq, Eq, Hash)]
 pub(crate) struct Alert<H: Hasher, D: Data, S: Signature> {
     sender: NodeIndex,
     proof: ForkProof<H, D, S>,
     legit_units: Vec<UncheckedSignedUnit<H, D, S>>,
     #[codec(skip)]
+    #[derivative(PartialEq = "ignore")]
+    #[derivative(Hash = "ignore")]
     hash: RwLock<Option<H::Hash>>,
 }
 
@@ -92,7 +96,7 @@ impl<H: Hasher, D: Data, S: Signature> Signable for Alert<H, D, S> {
 }
 
 /// A message concerning alerts.
-#[derive(Debug, Encode, Decode, Clone)]
+#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum AlertMessage<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> {
     /// Alert regarding forks, signed by the person claiming misconduct.
     ForkAlert(UncheckedSigned<Alert<H, D, S>, S>),
@@ -104,6 +108,7 @@ pub(crate) enum AlertMessage<H: Hasher, D: Data, S: Signature, MS: PartialMultis
 
 // Notifications being sent to consensus, so that it can learn about proven forkers and receive
 // legitimized units.
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub(crate) enum ForkingNotification<H: Hasher, D: Data, S: Signature> {
     Forker(ForkProof<H, D, S>),
     Units(Vec<UncheckedSignedUnit<H, D, S>>),

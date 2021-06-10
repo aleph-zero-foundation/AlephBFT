@@ -79,6 +79,7 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> Decode
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Recipient {
     Everyone,
     Node(NodeIndex),
@@ -186,7 +187,7 @@ mod tests {
         nodes::BoolNodeMap,
         testing::mock::{self, Data, Hasher64, PartialMultisignature, Signature},
         units::{ControlHash, FullUnit, PreUnit, UncheckedSignedUnit, UnitCoord},
-        Round, Signable, UncheckedSigned,
+        Round, UncheckedSigned,
     };
 
     fn test_unchecked_unit(
@@ -325,8 +326,8 @@ mod tests {
         assert!(decoded.is_ok(), "Bug in dencode/decode for Units(NewUnit)");
         if let Alert(ForkAlert(unchecked_alert)) = decoded.unwrap().0 {
             assert!(
-                alert.hash() == unchecked_alert.as_signable().hash(),
-                "decoded should equel encodee"
+                &alert == unchecked_alert.as_signable(),
+                "decoded should equal encoded"
             )
         }
     }

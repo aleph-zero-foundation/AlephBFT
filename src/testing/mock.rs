@@ -42,7 +42,7 @@ pub fn init_log() {
 
 // A hasher from the standard library that hashes to u64, should be enough to
 // avoid collisions in testing.
-#[derive(PartialEq, Eq, Clone, Debug)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
 pub struct Hasher64;
 
 impl Hasher for Hasher64 {
@@ -389,10 +389,10 @@ impl Data {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Encode, Decode)]
 pub(crate) struct Signature {}
 
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Encode, Decode)]
 pub(crate) struct PartialMultisignature {
     signed_by: Vec<NodeIndex>,
 }

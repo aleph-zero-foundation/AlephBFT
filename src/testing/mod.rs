@@ -1,4 +1,6 @@
 #[cfg(test)]
+mod alerts;
+#[cfg(test)]
 mod byzantine;
 #[cfg(test)]
 mod consensus;
