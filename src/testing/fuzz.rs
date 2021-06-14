@@ -5,7 +5,6 @@ use crate::{
         configure_network, spawn_honest_member, Data, Hasher64, NetworkHook, PartialMultisignature,
         Signature, Spawner,
     },
-    utils::_after_iter,
     Network, NetworkData as ND, SpawnHandle,
 };
 use codec::{Decode, Encode, IoReader};
@@ -17,6 +16,7 @@ use futures_timer::Delay;
 use log::{error, info};
 use std::{
     io::{BufRead, BufReader, Read, Result as IOResult, Write},
+    iter::once_with,
     time::Duration,
 };
 use tokio::runtime::{Builder, Runtime};
@@ -217,9 +217,14 @@ async fn execute_fuzz(
 ) {
     const NETWORK_DELAY: u64 = 1;
     let (empty_tx, mut empty_rx) = oneshot::channel();
-    let data = _after_iter(data, move || {
-        empty_tx.send(()).expect("empty_rx was already closed");
-    });
+
+    let data = data.chain(
+        once_with(move || {
+            empty_tx.send(()).expect("empty_rx was already closed");
+            None
+        })
+        .flatten(),
+    );
 
     let (net_exit, net_exit_rx) = oneshot::channel();
     let network = RecorderNetwork::new(data, NETWORK_DELAY, net_exit_rx);

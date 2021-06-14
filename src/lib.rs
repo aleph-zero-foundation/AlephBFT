@@ -21,7 +21,6 @@ mod member;
 mod network;
 mod nodes;
 mod signed;
-mod utils;
 pub use signed::*;
 mod config;
 pub mod rmc;
