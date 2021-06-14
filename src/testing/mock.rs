@@ -36,7 +36,8 @@ use crate::{
 
 use crate::member::Member;
 
-pub fn init_log() {
+#[cfg(test)]
+pub(crate) fn init_log() {
     let _ = env_logger::builder()
         .filter_level(log::LevelFilter::max())
         .is_test(true)
@@ -58,6 +59,7 @@ impl Hasher for Hasher64 {
     }
 }
 
+#[cfg(test)]
 pub(crate) type Hash64 = <Hasher64 as Hasher>::Hash;
 
 // This struct allows to create a Hub to interconnect several instances of the Consensus engine, without
@@ -74,6 +76,7 @@ pub(crate) struct HonestHub {
 }
 
 impl HonestHub {
+    #[cfg(test)]
     pub(crate) fn new(n_members: usize) -> Self {
         HonestHub {
             n_members,
@@ -83,6 +86,7 @@ impl HonestHub {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn connect(
         &mut self,
         node_ix: NodeIndex,
@@ -292,7 +296,7 @@ impl UnreliableRouter {
             tx: tx_out_hub,
             rx: rx_in_hub,
         };
-        self.peers.insert(peer.clone(), peer_entry);
+        self.peers.insert(peer, peer_entry);
         Network {
             rx: rx_out_hub,
             tx: tx_in_hub,
@@ -349,6 +353,7 @@ pub(crate) struct AlertHook {
     alerts_sent_by_connection: Arc<Mutex<HashMap<(NodeIndex, NodeIndex), usize>>>,
 }
 
+#[cfg(test)]
 impl AlertHook {
     pub(crate) fn new() -> Self {
         AlertHook {
@@ -388,6 +393,7 @@ pub struct Data {
     variant: u32,
 }
 
+#[cfg(test)]
 impl Data {
     pub(crate) fn new(coord: UnitCoord, variant: u32) -> Self {
         Data { coord, variant }

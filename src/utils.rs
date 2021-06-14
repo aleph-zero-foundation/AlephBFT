@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
-pub(crate) fn after_iter<'a, I>(
+/// Allows to attach an action that will be called after a given iterator returns its last element.
+pub(crate) fn _after_iter<'a, I>(
     iter: impl Iterator<Item = I> + 'a,
     action: impl FnOnce(),
 ) -> impl Iterator<Item = I> {
@@ -16,8 +17,10 @@ pub(crate) fn after_iter<'a, I>(
         type Item = I;
 
         fn next(&mut self) -> Option<Self::Item> {
-            self.action.take().and_then(|a| Some((a)()));
-            None
+            self.action.take().and_then(|a| {
+                (a)();
+                None
+            })
         }
     }
 

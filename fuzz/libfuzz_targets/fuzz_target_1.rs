@@ -42,7 +42,7 @@ where
 
 impl<'a> Arbitrary<'a> for StoredNetworkData {
     fn arbitrary(u: &mut Unstructured<'a>) -> Result<Self> {
-        let decoder = NetworkDataEncoding::new();
+        let decoder = NetworkDataEncoding::default();
         let all_data = u.arbitrary_iter().expect("no data available");
         let all_data = all_data.take_while(|u| u.is_ok()).map(|u| u.unwrap());
         let mut all_data = IteratorToRead::new(all_data);

@@ -14,7 +14,7 @@ impl<R: Read> ReadToNetworkDataIterator<R> {
     fn new(read: R) -> Self {
         ReadToNetworkDataIterator {
             read: BufReader::new(read),
-            decoder: NetworkDataEncoding::new(),
+            decoder: NetworkDataEncoding::default(),
         }
     }
 }

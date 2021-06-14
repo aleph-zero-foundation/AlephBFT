@@ -5,7 +5,7 @@ use crate::{
         configure_network, spawn_honest_member, Data, Hasher64, NetworkHook, PartialMultisignature,
         Signature, Spawner,
     },
-    utils::after_iter,
+    utils::_after_iter,
     Network, NetworkData as ND, SpawnHandle,
 };
 use codec::{Decode, Encode, IoReader};
@@ -37,13 +37,10 @@ impl<F: FnMut(&NetworkData, NodeIndex, NodeIndex) + Send> NetworkHook for Closur
     }
 }
 
+#[derive(Default)]
 pub struct NetworkDataEncoding {}
 
 impl NetworkDataEncoding {
-    pub fn new() -> Self {
-        NetworkDataEncoding {}
-    }
-
     pub fn encode_into<W: Write>(&self, data: &NetworkData, writer: &mut W) -> IOResult<()> {
         writer.write_all(&data.encode()[..])
     }
@@ -53,7 +50,7 @@ impl NetworkDataEncoding {
         reader: &mut R,
     ) -> core::result::Result<NetworkData, codec::Error> {
         let mut reader = IoReader(reader);
-        return <NetworkData>::decode(&mut reader);
+        <NetworkData>::decode(&mut reader)
     }
 }
 
@@ -66,7 +63,7 @@ impl<R: Read> NetworkDataIterator<R> {
     fn new(read: R) -> Self {
         NetworkDataIterator {
             input: read,
-            encoding: NetworkDataEncoding::new(),
+            encoding: NetworkDataEncoding::default(),
         }
     }
 }
@@ -76,12 +73,10 @@ impl<R: Read> Iterator for NetworkDataIterator<R> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.encoding.decode_from(&mut self.input) {
-            Ok(v) => {
-                return Some(v);
-            }
+            Ok(v) => Some(v),
             Err(e) => {
                 error!("Error while decoding NetworkData: {:?}.", e);
-                return None;
+                None
             }
         }
     }
@@ -146,7 +141,7 @@ async fn execute_generate_fuzz<W: Write + Send + 'static>(
     n_batches: usize,
 ) {
     let peer_id = NodeIndex(0);
-    let encoder = NetworkDataEncoding::new();
+    let encoder = NetworkDataEncoding::default();
     let spy = move |data: &NetworkData, _: NodeIndex, recipient: NodeIndex| {
         if recipient == peer_id {
             encoder.encode_into(data, &mut output).unwrap();
@@ -188,7 +183,7 @@ async fn execute_fuzz(
 ) {
     const NETWORK_DELAY: u64 = 1;
     let (empty_tx, mut empty_rx) = oneshot::channel();
-    let data = after_iter(data.into_iter(), move || {
+    let data = _after_iter(data, move || {
         empty_tx.send(()).expect("empty_rx was already closed");
     });
 
@@ -209,7 +204,7 @@ async fn execute_fuzz(
     while batches_count < n_batches {
         futures::select! {
             batch = batch_rx.next() => {
-                if let Some(_) = batch {
+                if batch.is_some() {
                     batches_count += 1;
                 } else {
                     break;
@@ -234,14 +229,12 @@ async fn execute_fuzz(
         );
     }
 
-    net_exit
-        .send(())
-        .unwrap_or(info!("net_exit channel is already closed"));
-
-    exit_tx
-        .send(())
-        .unwrap_or(info!("exit channel is already closed"));
-
+    if net_exit.send(()).is_err() {
+        info!("net_exit channel is already closed");
+    }
+    if exit_tx.send(()).is_err() {
+        info!("exit channel is already closed");
+    }
     spawner.wait().await;
 }
 
