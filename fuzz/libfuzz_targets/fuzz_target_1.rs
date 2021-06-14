@@ -6,19 +6,10 @@ use libfuzzer_sys::{
     fuzz_target,
 };
 use log::error;
-use std::{
-    fmt,
-    io::{Read, Result as IOResult},
-};
+use std::io::{Read, Result as IOResult};
 
-#[derive(Decode)]
+#[derive(Debug, Decode)]
 struct StoredNetworkData(NetworkData);
-
-impl fmt::Debug for StoredNetworkData {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("not yet implemented")
-    }
-}
 
 struct IteratorToRead<I: Iterator<Item = u8>>(I);
 
@@ -43,8 +34,7 @@ where
 impl<'a> Arbitrary<'a> for StoredNetworkData {
     fn arbitrary(u: &mut Unstructured<'a>) -> Result<Self> {
         let decoder = NetworkDataEncoding::default();
-        let all_data = u.arbitrary_iter().expect("no data available");
-        let all_data = all_data.take_while(|u| u.is_ok()).map(|u| u.unwrap());
+        let all_data = u.arbitrary_iter().expect("no data available").flatten();
         let mut all_data = IteratorToRead::new(all_data);
         let data = decoder.decode_from(&mut all_data);
         match data {
