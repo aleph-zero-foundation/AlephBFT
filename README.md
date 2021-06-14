@@ -129,6 +129,46 @@ There are many unit tests and several integration tests that may be run by stand
 `cargo test --lib` or `cargo test --lib --skip medium` if you want to run just small tests.
 Alternatively, you may run the `run_local_pipeline.sh` script.
 
+### Fuzzing
+
+There are fuzzing tests that try to crash the whole application by creating data for the network layer
+and feeding it into the `member` implementation. To run those tests you need to install `afl` and `cargo-fuzz`. 
+`cargo-fuzz` requires you to use a nightly Rust toolchain.
+
+```sh
+cargo install cargo-fuzz
+cargo install afl
+```
+
+#### cargo-fuzz/libfuzzer
+
+```sh
+cd fuzz
+cargo fuzz run fuzz_target_1
+```
+
+#### afl
+
+You will need to generate some `seed` data first in order to run it.
+
+```sh
+cd fuzz
+cargo afl build --features="afl" --bin fuzz_target_1_afl
+
+# create some random input containing network data from a locally executed test
+mkdir afl_in
+cargo build --bin gen_fuzz
+./target/debug/gen_fuzz >./afl_in/seed
+cargo afl fuzz -i afl_in -o afl_out target/debug/fuzz_target_1_afl
+```
+
+The `gen_fuzz` bin is able to both generate and verify data for the afl fuzz from the stdin/stdout stream.
+
+```sh
+cargo build --bin gen_fuzz
+./target/debug/gen_fuzz | ./target/debug/gen_fuzz --check-fuzz
+```
+
 ### Code Coverage
 
 You may generate the code coverage summary using the `gen_cov_data.sh` script and then a detailed
