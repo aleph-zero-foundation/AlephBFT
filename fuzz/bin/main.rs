@@ -1,6 +1,8 @@
 use aleph_bft::testing::fuzz;
-use std::io;
-use std::io::{BufReader, BufWriter};
+use std::{
+    io,
+    io::{BufReader, BufWriter},
+};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]

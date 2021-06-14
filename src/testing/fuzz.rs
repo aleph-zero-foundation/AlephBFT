@@ -1,9 +1,9 @@
 pub use crate::testing::mock::NetworkData;
-use crate::testing::mock::{configure_network, Spawner};
 use crate::{
     nodes::NodeIndex,
     testing::mock::{
-        spawn_honest_member, Data, Hasher64, NetworkHook, PartialMultisignature, Signature,
+        configure_network, spawn_honest_member, Data, Hasher64, NetworkHook, PartialMultisignature,
+        Signature, Spawner,
     },
     utils::after_iter,
     Network, NetworkData as ND, SpawnHandle,

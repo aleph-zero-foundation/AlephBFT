@@ -1,11 +1,15 @@
 #![no_main]
 use aleph_bft::testing::fuzz::{fuzz, NetworkData, NetworkDataEncoding};
 use codec::Decode;
-use libfuzzer_sys::arbitrary::{Arbitrary, Error, Result, Unstructured};
-use libfuzzer_sys::fuzz_target;
+use libfuzzer_sys::{
+    arbitrary::{Arbitrary, Error, Result, Unstructured},
+    fuzz_target,
+};
 use log::error;
-use std::fmt;
-use std::io::{Read, Result as IOResult};
+use std::{
+    fmt,
+    io::{Read, Result as IOResult},
+};
 
 #[derive(Decode)]
 struct StoredNetworkData(NetworkData);

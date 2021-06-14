@@ -131,7 +131,7 @@ Alternatively, you may run the `run_local_pipeline.sh` script.
 
 ### Fuzzing
 
-There are fuzzing tests that try to crash the whole application by creating data for the network layer
+There are fuzzing tests that try to crash the whole application by creating arbitrary data for the network layer
 and feeding it into the `member` implementation. To run those tests you need to install `afl` and `cargo-fuzz`. 
 `cargo-fuzz` requires you to use a nightly Rust toolchain.
 
