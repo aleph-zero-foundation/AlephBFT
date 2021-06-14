@@ -153,16 +153,16 @@ You will need to generate some `seed` data first in order to run it.
 
 ```sh
 cd fuzz
-cargo afl build --features="afl" --bin fuzz_target_1_afl
-
 # create some random input containing network data from a locally executed test
 mkdir afl_in
 cargo build --bin gen_fuzz
 ./target/debug/gen_fuzz >./afl_in/seed
+
+cargo afl build --features="afl" --bin fuzz_target_1_afl
 cargo afl fuzz -i afl_in -o afl_out target/debug/fuzz_target_1_afl
 ```
 
-The `gen_fuzz` bin is able to both generate and verify data for the afl fuzz from the stdin/stdout stream.
+The `gen_fuzz` bin is able to both generate and verify data for the afl tool.
 
 ```sh
 cargo build --bin gen_fuzz
