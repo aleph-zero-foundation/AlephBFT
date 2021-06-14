@@ -16,13 +16,13 @@ use futures::{
 use futures_timer::Delay;
 use log::{error, info};
 use std::{
-    io::{Read, Result as IOResult, Write},
+    io::{BufRead, BufReader, Read, Result as IOResult, Write},
     time::Duration,
 };
-use tokio::runtime::Builder;
+use tokio::runtime::{Builder, Runtime};
 
-struct ClosureHook<CT> {
-    wrapped: CT,
+struct ClosureHook<F> {
+    wrapped: F,
 }
 
 impl<F: FnMut(&NetworkData, NodeIndex, NodeIndex) + Send> ClosureHook<F> {
@@ -135,6 +135,40 @@ impl<I: Iterator<Item = NetworkData> + Send>
     }
 }
 
+pub struct ReadToNetworkDataIterator<R> {
+    read: BufReader<R>,
+    decoder: NetworkDataEncoding,
+}
+
+impl<R: Read> ReadToNetworkDataIterator<R> {
+    pub fn new(read: R) -> Self {
+        ReadToNetworkDataIterator {
+            read: BufReader::new(read),
+            decoder: NetworkDataEncoding::default(),
+        }
+    }
+}
+
+impl<R: Read> Iterator for ReadToNetworkDataIterator<R> {
+    type Item = NetworkData;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Ok(buf) = self.read.fill_buf() {
+            if buf.is_empty() {
+                return None;
+            }
+        }
+        match self.decoder.decode_from(&mut self.read) {
+            Ok(v) => Some(v),
+            // otherwise try to read until you reach END-OF-FILE
+            Err(e) => {
+                error!(target: "fuzz_target_1", "Unable to parse NetworkData: {:?}.", e);
+                self.next()
+            }
+        }
+    }
+}
+
 async fn execute_generate_fuzz<W: Write + Send + 'static>(
     mut output: W,
     n_members: usize,
@@ -238,20 +272,22 @@ async fn execute_fuzz(
     spawner.wait().await;
 }
 
+fn get_runtime() -> Runtime {
+    Builder::new_current_thread().enable_all().build().unwrap()
+}
+
 pub fn generate_fuzz<W: Write + Send + 'static>(output: W, n_members: usize, n_batches: usize) {
-    let runtime = Builder::new_current_thread().enable_all().build().unwrap();
+    let runtime = get_runtime();
     runtime.block_on(execute_generate_fuzz(output, n_members, n_batches));
 }
 
 pub fn check_fuzz(input: impl Read + Send + 'static, n_members: usize, n_batches: Option<usize>) {
     let data_iter = NetworkDataIterator::new(input);
-    let runtime = Builder::new_current_thread().enable_all().build().unwrap();
-    runtime.block_on(async move {
-        execute_fuzz(data_iter, n_members, n_batches).await;
-    });
+    let runtime = get_runtime();
+    runtime.block_on(execute_fuzz(data_iter, n_members, n_batches));
 }
 
 pub fn fuzz(data: Vec<NetworkData>, n_members: usize, n_batches: Option<usize>) {
-    let runtime = Builder::new_current_thread().enable_all().build().unwrap();
+    let runtime = get_runtime();
     runtime.block_on(execute_fuzz(data.into_iter(), n_members, n_batches));
 }
