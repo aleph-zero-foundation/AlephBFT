@@ -28,6 +28,7 @@ async-trait = "0.1"
 codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive", "std"] }
 parking_lot = "0.11"
 
+# dependencies used by the fuzzing binary
 tokio = { version = "1.6.1", features = ["macros", "rt", "rt-multi-thread"], optional = true }
 libp2p = { version = "0.38", features = ["mdns", "tcp-tokio"], optional = true }
 env_logger = { version = "0.8", optional = true }

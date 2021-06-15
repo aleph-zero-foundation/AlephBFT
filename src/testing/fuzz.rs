@@ -218,6 +218,7 @@ async fn execute_fuzz(
     const NETWORK_DELAY: u64 = 1;
     let (empty_tx, mut empty_rx) = oneshot::channel();
 
+    // call `empty_tx.send(())` after returning all data
     let data = data.chain(
         once_with(move || {
             empty_tx.send(()).expect("empty_rx was already closed");

@@ -6,9 +6,12 @@ use std::{
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
-#[structopt(name = "fuzz-helper", about = "generator of fuzz data")]
+#[structopt(
+    name = "fuzz-helper",
+    about = "data generator for the purpose of fuzzing"
+)]
 struct Opt {
-    /// Verify data provided on stdin by calling member::run.
+    /// Verify data provided on stdin by calling member::run on it.
     #[structopt(short, long)]
     check_fuzz: bool,
 
