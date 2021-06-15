@@ -11,12 +11,12 @@ cargo-fuzz = true
 aleph-bft = { path = "..", features = ["fuzz"] }
 libfuzzer-sys = { version = "0.4" }
 afl = { version = "0.8", optional = true }
-codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive"] }
-log = "0.4"
-structopt = "0.3.8"
+structopt = { version = "0.3.8", optional = true }
 
 [features]
 default = []
+afl-fuzz = ["afl"]
+gen = ["structopt"]
 
 [[bin]]
 name = "fuzz_target_1"
@@ -25,8 +25,9 @@ path = "libfuzz_targets/fuzz_target_1.rs"
 [[bin]]
 name = "fuzz_target_1_afl"
 path = "afl_targets/fuzz_target_1.rs"
-required-features = ["afl"]
+required-features = ["afl-fuzz"]
 
 [[bin]]
 name = "gen_fuzz"
 path = "bin/main.rs"
+required-features = ["gen"]
