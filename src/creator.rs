@@ -123,7 +123,7 @@ impl<H: Hasher> Creator<H> {
     pub(crate) async fn create(&mut self, mut exit: oneshot::Receiver<()>) {
         let half_hour = Duration::from_secs(30 * 60);
         let mut round: usize = 0;
-        let mut delay_fut = Delay::new(Duration::from_millis(0)).fuse();
+        let mut delay_fut = Delay::new((self.create_lag)(0)).fuse();
         let mut delay_passed = false;
         loop {
             futures::select! {
@@ -148,7 +148,7 @@ impl<H: Hasher> Creator<H> {
                 if self.create_unit().is_err() {
                     break;
                 };
-                delay_fut = Delay::new((self.create_lag)(round)).fuse();
+                delay_fut = Delay::new((self.create_lag)(round + 1)).fuse();
                 round += 1;
                 delay_passed = false;
             }

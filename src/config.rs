@@ -14,7 +14,7 @@ pub struct DelayConfig {
     pub requests_interval: Duration,
     /// DelaySchedule(k) represents the delay between the kth and (k+1)th broadcast.
     pub unit_broadcast_delay: DelaySchedule,
-    /// DelaySchedule(k) represents the delay between creating the kth and (k+1)th unit.
+    /// DelaySchedule(k) represents the delay between creating the (k-1)th and kth unit.
     pub unit_creation_delay: DelaySchedule,
 }
 
@@ -59,13 +59,20 @@ pub(crate) fn exponential_slowdown(
 
 /// A default configuration of what the creators of this package see as optimal parameters.
 pub fn default_config(n_members: NodeCount, node_ix: NodeIndex, session_id: SessionId) -> Config {
+    let unit_creation_delay = Arc::new(|t| {
+        if t == 0 {
+            Duration::from_millis(5000)
+        } else {
+            exponential_slowdown(t, 500.0, 3000, 1.005)
+        }
+    });
     let delay_config = DelayConfig {
         tick_interval: Duration::from_millis(100),
         requests_interval: Duration::from_millis(3000),
         unit_broadcast_delay: Arc::new(|t| exponential_slowdown(t, 4000.0, 0, 2.0)),
         // 4000, 8000, 16000, 32000, ...
-        unit_creation_delay: Arc::new(|t| exponential_slowdown(t, 500.0, 3000, 1.005)),
-        // 500, 500, 500, ... (till step 3000), 500, 500*1.005, 500*(1.005)^2, 500*(1.005)^3, ..., 10742207 (last step)
+        unit_creation_delay,
+        // 5000, 500, 500, 500, ... (till step 3000), 500, 500*1.005, 500*(1.005)^2, 500*(1.005)^3, ..., 10742207 (last step)
     };
     Config {
         node_ix,
