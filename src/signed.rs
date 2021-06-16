@@ -9,9 +9,9 @@ use std::{fmt::Debug, marker::PhantomData};
 /// The type used as a signature.
 ///
 /// The Signature typically does not contain the index of the node who signed the data.
-pub trait Signature: Debug + Clone + Encode + Decode + Send + Sync + Eq + 'static {}
+pub trait Signature: Debug + Clone + Encode + Decode + Send + Sync + 'static {}
 
-impl<T: Debug + Clone + Encode + Decode + Send + Sync + Eq + 'static> Signature for T {}
+impl<T: Debug + Clone + Encode + Decode + Send + Sync + 'static> Signature for T {}
 
 /// Abstraction of the signing data and verifying signatures.
 ///
@@ -86,8 +86,8 @@ impl<T: AsRef<[u8]> + Clone> Signable for T {
 /// `[PartiallyMultisigned<'a, T, MK>]`.
 #[derive(Clone, Debug, Decode, Encode, PartialEq, Eq, Hash)]
 pub struct UncheckedSigned<T: Signable, S: Signature> {
-    signable: T,
-    signature: S,
+    pub signable: T,
+    pub signature: S,
 }
 
 /// A pair consisting of an instance of the `Signable` trait and an unchecked signature.
@@ -214,7 +214,7 @@ impl<'a, T: Signable + Index, KB: KeyBox> Signed<'a, T, KB> {
         &self.unchecked.signable
     }
 
-    pub(crate) fn into_unchecked(self) -> UncheckedSigned<T, KB::Signature> {
+    pub fn into_unchecked(self) -> UncheckedSigned<T, KB::Signature> {
         self.unchecked
     }
 }
@@ -311,7 +311,7 @@ impl<'a, T: Signable, MK: MultiKeychain> Multisigned<'a, T, MK> {
         &self.unchecked.signable
     }
 
-    pub(crate) fn into_unchecked(self) -> UncheckedSigned<T, MK::PartialMultisignature> {
+    pub fn into_unchecked(self) -> UncheckedSigned<T, MK::PartialMultisignature> {
         self.unchecked
     }
 }
