@@ -106,9 +106,8 @@ rid of this dependency.
 
 ### Examples
 
-There is a basic implementation of an honest committee member that is not
-cryptographically secure and serves only as a working example of what has to be
-implemented and not how it should be implemented.
+Currently we provide two basic examples of running AlephBFT. The first one: `dummy-honest` implements a committee member that is not
+cryptographically secure and serves only as a working example of what traits need to be implemented and how to implement them.
 The example may be run using:
 
     cargo run --example dummy_honest my_id n_members n_finalized
@@ -116,6 +115,13 @@ The example may be run using:
     my_id -- our index, 0-based
     n_members -- size of the committee
     n_finalized -- number of data to be finalized
+
+The second example: `blockchain` is meant for benchmarking AlephBFT in the blockchain setting. It implements a simple round-robin blockchain assuming honest participation. The simplest way to run it is to use the provided script as follows (assuming we start in the root directory)
+
+```
+./examples/blockchain/run_blockchain 4
+```
+where `4` in the above is the number of committee members and can be replaced by any reasonable number. Running this script will result in generating log files `node0.log, node1.log, ...` corresponding to subsequent nodes. The achieved transactions per second should be among the final log messages in these files.
 
 ### Tests
 
