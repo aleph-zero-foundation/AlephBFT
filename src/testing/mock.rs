@@ -40,6 +40,13 @@ use crate::{
 
 use crate::member::Member;
 
+pub fn init_log() {
+    let _ = env_logger::builder()
+        .filter_level(log::LevelFilter::max())
+        .is_test(true)
+        .try_init();
+}
+
 // A hasher from the standard library that hashes to u64, should be enough to
 // avoid collisions in testing.
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
@@ -438,13 +445,6 @@ pub(crate) mod testing_internal {
         units::{Unit, UnitCoord},
         Hasher, NodeIndex,
     };
-
-    pub(crate) fn init_log() {
-        let _ = env_logger::builder()
-            .filter_level(log::LevelFilter::max())
-            .is_test(true)
-            .try_init();
-    }
 
     pub(crate) type Hash64 = <super::Hasher64 as Hasher>::Hash;
 
