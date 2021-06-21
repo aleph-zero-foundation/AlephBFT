@@ -62,7 +62,7 @@ async fn request_missing_coord() {
     let censoring_node = NodeIndex(1);
     let censoring_round = 5;
 
-    let (mut net_hub, networks) = configure_network(n_members, 1.0, (0..n_members).map(NodeIndex));
+    let (mut net_hub, networks) = configure_network(n_members, 1.0);
     net_hub.add_hook(CorruptPacket {
         recipient: censored_node,
         sender: censoring_node,
@@ -82,7 +82,7 @@ async fn request_missing_coord() {
     let mut exits = vec![];
     let mut batch_rxs = Vec::new();
     for network in networks {
-        let ix = network.index.into();
+        let ix = network.index().into();
         let (batch_rx, exit_tx) = spawn_honest_member(spawner.clone(), ix, n_members, network);
         batch_rxs.push(batch_rx);
         exits.push(exit_tx);

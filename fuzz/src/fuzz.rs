@@ -1,51 +1,63 @@
-pub use crate::testing::mock::NetworkData;
-use crate::{
-    nodes::NodeIndex,
+pub use aleph_bft::testing::mock::NetworkData;
+
+use aleph_bft::{
     testing::mock::{
-        configure_network, spawn_honest_member, Data, Hasher64, NetworkHook, PartialMultisignature,
-        Signature, Spawner,
+        configure_network, init_log, spawn_honest_member, Data, Hasher64, NetworkHook,
+        PartialMultisignature, Signature, Spawner,
     },
-    Network, NetworkData as ND, SpawnHandle,
+    Network, NodeIndex, SpawnHandle,
 };
+
 use codec::{Decode, Encode, IoReader};
+
 use futures::{
     channel::oneshot::{self, Receiver},
     StreamExt,
 };
+
 use futures_timer::Delay;
 use log::{error, info};
+
 use std::{
     io::{BufRead, BufReader, Read, Result as IOResult, Write},
-    iter::once_with,
     time::Duration,
 };
+
 use tokio::runtime::{Builder, Runtime};
 
-struct ClosureHook<F> {
-    wrapped: F,
+struct SpyingNetworkHook<W: Write> {
+    node: NodeIndex,
+    encoder: NetworkDataEncoding,
+    output: W,
 }
 
-impl<F: FnMut(&NetworkData, NodeIndex, NodeIndex) + Send> ClosureHook<F> {
-    pub(crate) fn new(wrapped: F) -> Self {
-        ClosureHook { wrapped }
+impl<W: Write> SpyingNetworkHook<W> {
+    fn new(node: NodeIndex, output: W) -> Self {
+        SpyingNetworkHook {
+            node,
+            encoder: NetworkDataEncoding::default(),
+            output,
+        }
     }
 }
 
-impl<F: FnMut(&NetworkData, NodeIndex, NodeIndex) + Send> NetworkHook for ClosureHook<F> {
-    fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, recipient: NodeIndex) {
-        (self.wrapped)(data, sender, recipient);
+impl<W: Write + Send> NetworkHook for SpyingNetworkHook<W> {
+    fn update_state(&mut self, data: &mut NetworkData, _: NodeIndex, recipient: NodeIndex) {
+        if self.node == recipient {
+            self.encoder.encode_into(data, &mut self.output).unwrap();
+        }
     }
 }
 
 #[derive(Default)]
-pub struct NetworkDataEncoding {}
+pub(crate) struct NetworkDataEncoding {}
 
 impl NetworkDataEncoding {
-    pub fn encode_into<W: Write>(&self, data: &NetworkData, writer: &mut W) -> IOResult<()> {
+    pub(crate) fn encode_into<W: Write>(&self, data: &NetworkData, writer: &mut W) -> IOResult<()> {
         writer.write_all(&data.encode()[..])
     }
 
-    pub fn decode_from<R: Read>(
+    pub(crate) fn decode_from<R: Read>(
         &self,
         reader: &mut R,
     ) -> core::result::Result<NetworkData, codec::Error> {
@@ -82,52 +94,50 @@ impl<R: Read> Iterator for NetworkDataIterator<R> {
     }
 }
 
-struct RecorderNetwork<I: Iterator<Item = NetworkData>> {
+struct PlaybackNetwork<I, C> {
     data: I,
     delay: Duration,
     next_delay: Delay,
     exit: Receiver<()>,
+    finished_callback: Option<C>,
 }
 
-impl<I: Iterator<Item = NetworkData> + Send> RecorderNetwork<I> {
-    fn new(data: I, delay_millis: u64, exit: Receiver<()>) -> Self {
-        RecorderNetwork {
+impl<I, C> PlaybackNetwork<I, C> {
+    fn new(data: I, delay_millis: u64, exit: Receiver<()>, finished: C) -> Self {
+        PlaybackNetwork {
             data,
             delay: Duration::from_millis(delay_millis),
             next_delay: Delay::new(Duration::from_millis(delay_millis)),
             exit,
+            finished_callback: Some(finished),
         }
     }
 }
 
 #[async_trait::async_trait]
-impl<I: Iterator<Item = NetworkData> + Send>
-    Network<Hasher64, Data, Signature, PartialMultisignature> for RecorderNetwork<I>
+impl<I: Iterator<Item = NetworkData> + Send, C: FnOnce() + Send>
+    Network<Hasher64, Data, Signature, PartialMultisignature> for PlaybackNetwork<I, C>
 {
     type Error = ();
 
-    fn send(
-        &self,
-        _: ND<Hasher64, Data, Signature, PartialMultisignature>,
-        _: NodeIndex,
-    ) -> std::result::Result<(), Self::Error> {
+    fn send(&self, _: NetworkData, _: NodeIndex) -> std::result::Result<(), Self::Error> {
         Ok(())
     }
 
-    fn broadcast(
-        &self,
-        _: ND<Hasher64, Data, Signature, PartialMultisignature>,
-    ) -> std::result::Result<(), Self::Error> {
+    fn broadcast(&self, _: NetworkData) -> std::result::Result<(), Self::Error> {
         Ok(())
     }
 
-    async fn next_event(&mut self) -> Option<ND<Hasher64, Data, Signature, PartialMultisignature>> {
+    async fn next_event(&mut self) -> Option<NetworkData> {
         (&mut self.next_delay).await;
         self.next_delay.reset(self.delay);
         match self.data.next() {
             Some(v) => Some(v),
             None => {
-                // just for an exit call when no more data is available
+                if let Some(finished_call) = self.finished_callback.take() {
+                    (finished_call)();
+                }
+                // wait for an exit call when no more data is available
                 let _ = (&mut self.exit).await;
                 None
             }
@@ -170,31 +180,25 @@ impl<R: Read> Iterator for ReadToNetworkDataIterator<R> {
 }
 
 async fn execute_generate_fuzz<W: Write + Send + 'static>(
-    mut output: W,
+    output: W,
     n_members: usize,
     n_batches: usize,
 ) {
     let peer_id = NodeIndex(0);
-    let encoder = NetworkDataEncoding::default();
-    let spy = move |data: &NetworkData, _: NodeIndex, recipient: NodeIndex| {
-        if recipient == peer_id {
-            encoder.encode_into(data, &mut output).unwrap();
-        }
-    };
-    let network_hook = ClosureHook::new(spy);
+    let spy = SpyingNetworkHook::new(peer_id, output);
     // spawn only byzantine-threshold of nodes and networks so all enabled nodes are required to finish each round
     let threshold = (n_members * 2) / 3 + 1;
-    let (mut router, networks) = configure_network(n_members, 1.0, (0..threshold).map(NodeIndex));
-    router.add_hook(network_hook);
+    let (mut router, networks) = configure_network(n_members, 1.0);
+    router.add_hook(spy);
 
     let spawner = Spawner::new();
     spawner.spawn("network", async move { router.run().await });
 
     let mut batch_rxs = Vec::new();
     let mut exits = Vec::new();
-    for network in networks {
+    for network in networks.into_iter().take(threshold) {
         let (batch_rx, exit_tx) =
-            spawn_honest_member(spawner.clone(), network.index.into(), n_members, network);
+            spawn_honest_member(spawner.clone(), network.index().into(), n_members, network);
         exits.push(exit_tx);
         batch_rxs.push(batch_rx);
     }
@@ -216,19 +220,15 @@ async fn execute_fuzz(
     n_batches: Option<usize>,
 ) {
     const NETWORK_DELAY: u64 = 1;
-    let (empty_tx, mut empty_rx) = oneshot::channel();
-
-    // call `empty_tx.send(())` after returning all data
-    let data = data.chain(
-        once_with(move || {
-            empty_tx.send(()).expect("empty_rx was already closed");
-            None
-        })
-        .flatten(),
-    );
 
     let (net_exit, net_exit_rx) = oneshot::channel();
-    let network = RecorderNetwork::new(data, NETWORK_DELAY, net_exit_rx);
+    let (playback_finished_tx, mut playback_finished_rx) = oneshot::channel();
+    let finished_callback = move || {
+        playback_finished_tx
+            .send(())
+            .expect("finished_callback channel already closed");
+    };
+    let network = PlaybackNetwork::new(data, NETWORK_DELAY, net_exit_rx, finished_callback);
 
     let spawner = Spawner::new();
     let (mut batch_rx, exit_tx) = spawn_honest_member(spawner.clone(), 0, n_members, network);
@@ -250,7 +250,7 @@ async fn execute_fuzz(
                     break;
                 }
             }
-            _ = empty_rx => {
+            _ = playback_finished_rx => {
                 if !batches_expected {
                     // let it process all received data
                     Delay::new(Duration::from_secs(1)).await;
@@ -288,6 +288,7 @@ pub fn generate_fuzz<W: Write + Send + 'static>(output: W, n_members: usize, n_b
 }
 
 pub fn check_fuzz(input: impl Read + Send + 'static, n_members: usize, n_batches: Option<usize>) {
+    init_log();
     let data_iter = NetworkDataIterator::new(input);
     let runtime = get_runtime();
     runtime.block_on(execute_fuzz(data_iter, n_members, n_batches));

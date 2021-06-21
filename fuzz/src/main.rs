@@ -1,4 +1,4 @@
-use aleph_bft::testing::fuzz;
+use alephbft_fuzz::fuzz;
 use std::{
     io,
     io::{BufReader, BufWriter},

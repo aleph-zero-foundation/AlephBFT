@@ -27,6 +27,7 @@ parking_lot = "0.11"
 
 # dependencies used by the fuzzing binary
 tokio = { version = "1.6.1", default-features = false, optional = true }
+env_logger = { version = "0.8", default-features = false, optional = true }
 
 [dev-dependencies]
 sha3 = "0.9.1"
@@ -38,4 +39,4 @@ env_logger = "0.8"
 chrono = "0.4"
 
 [features]
-fuzz = ["codec/std", "tokio/rt"]
+fuzzing = ["codec/std", "tokio/rt", "env_logger"]

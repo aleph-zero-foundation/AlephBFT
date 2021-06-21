@@ -1,5 +1,5 @@
 #![no_main]
-use aleph_bft::testing::fuzz::{fuzz, NetworkData, ReadToNetworkDataIterator};
+use alephbft_fuzz::fuzz::{fuzz, NetworkData, ReadToNetworkDataIterator};
 use libfuzzer_sys::{
     arbitrary::{Arbitrary, Result, Unstructured},
     fuzz_target,

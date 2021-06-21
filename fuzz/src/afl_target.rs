@@ -1,5 +1,7 @@
 use afl::fuzz;
-use aleph_bft::testing::fuzz::{fuzz as fuzz_helper, NetworkData, ReadToNetworkDataIterator};
+use fuzz::{fuzz as fuzz_helper, NetworkData, ReadToNetworkDataIterator};
+
+mod fuzz;
 
 fn main() {
     fuzz!(|data: &[u8]| {

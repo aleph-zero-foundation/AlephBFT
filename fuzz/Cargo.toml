@@ -1,5 +1,5 @@
 [package]
-name = "rush-fuzz"
+name = "alephbft-fuzz"
 version = "0.0.1"
 publish = false
 edition = "2018"
@@ -7,27 +7,38 @@ edition = "2018"
 [package.metadata]
 cargo-fuzz = true
 
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
 [dependencies]
-aleph-bft = { path = "..", features = ["fuzz"] }
-libfuzzer-sys = { version = "0.4.2" }
+async-trait = "0.1"
+codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive"] }
+futures = "0.3"
+futures-timer = "3.0"
+log = "0.4"
+structopt = "0.3.21"
+tokio = { version = "1.6.1", features = ["macros", "rt", "rt-multi-thread"] }
+
+aleph-bft = { path = "..", features = ["fuzzing"] }
+libfuzzer-sys = { version = "0.4.2", optional = true }
 afl = { version = "0.10.1", optional = true }
-structopt = { version = "0.3.8", optional = true }
 
 [features]
 default = []
 afl-fuzz = ["afl"]
-gen = ["structopt"]
+libfuzz = ["libfuzzer-sys"]
 
 [[bin]]
 name = "fuzz_target_1"
-path = "libfuzz_targets/fuzz_target_1.rs"
+path = "src/libfuzz_target.rs"
+required-features = ["libfuzz"]
 
 [[bin]]
 name = "fuzz_target_1_afl"
-path = "afl_targets/fuzz_target_1.rs"
+path = "src/afl_target.rs"
 required-features = ["afl-fuzz"]
 
 [[bin]]
 name = "gen_fuzz"
-path = "bin/main.rs"
-required-features = ["gen"]
+path = "src/main.rs"
