@@ -30,12 +30,12 @@ afl-fuzz = ["afl"]
 libfuzz = ["libfuzzer-sys"]
 
 [[bin]]
-name = "fuzz_target_1"
+name = "fuzz_target"
 path = "src/libfuzz_target.rs"
 required-features = ["libfuzz"]
 
 [[bin]]
-name = "fuzz_target_1_afl"
+name = "fuzz_target_afl"
 path = "src/afl_target.rs"
 required-features = ["afl-fuzz"]
 
