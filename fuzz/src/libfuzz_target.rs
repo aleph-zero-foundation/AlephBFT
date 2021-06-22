@@ -27,17 +27,17 @@ where
 }
 
 #[derive(Debug)]
-struct VecOfStoredNetworkData(Vec<NetworkData>);
+struct StoredNetworkData(Vec<NetworkData>);
 
-impl<'a> Arbitrary<'a> for VecOfStoredNetworkData {
+impl<'a> Arbitrary<'a> for StoredNetworkData {
     fn arbitrary(u: &mut Unstructured<'a>) -> Result<Self> {
         let all_data = u.arbitrary_iter::<u8>()?;
         let all_data = IteratorToRead::new(all_data.flatten());
         let all_data = ReadToNetworkDataIterator::new(all_data);
-        Ok(VecOfStoredNetworkData(all_data.collect()))
+        Ok(StoredNetworkData(all_data.collect()))
     }
 }
 
-fuzz_target!(|data: VecOfStoredNetworkData| {
+fuzz_target!(|data: StoredNetworkData| {
     fuzz(data.0, 4, None);
 });
