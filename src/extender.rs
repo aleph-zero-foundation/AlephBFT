@@ -106,10 +106,10 @@ impl<H: Hasher> Extender<H> {
             //If the round of u is too low, we don't need to update it.
 
             //Need to extend the vector first to the required length.
-            if self.units_by_round.len() <= round {
+            if self.units_by_round.len() <= round.into() {
                 self.units_by_round.push(vec![]);
             }
-            self.units_by_round[round].push(u.hash);
+            self.units_by_round[round as usize].push(u.hash);
         }
         self.units.insert(u.hash, u);
     }
@@ -118,7 +118,7 @@ impl<H: Hasher> Extender<H> {
         // The clone below is necessary as we take "a snapshot" of the set of units at this round and never
         // go back and never update this list. From math it follows that each unit that is added to the Dag later
         // then the moment of round initialization will be decided as false, hence they can be ignored.
-        self.candidates = self.units_by_round[round].clone();
+        self.candidates = self.units_by_round[round as usize].clone();
         self.candidates.sort();
     }
 
@@ -155,7 +155,7 @@ impl<H: Hasher> Extender<H> {
             .expect("Channel for batches should be open");
 
         debug!(target: "AlephBFT-extender", "{:?} Finalized round {:?} with head {:?}.", self.node_id, round, head);
-        self.units_by_round[round].clear();
+        self.units_by_round[round as usize].clear();
     }
 
     fn vote_and_decision(
@@ -217,7 +217,7 @@ impl<H: Hasher> Extender<H> {
         curr_round: Round,
         voters_round: Round,
     ) -> Option<bool> {
-        for u_hash in self.units_by_round[voters_round].iter() {
+        for u_hash in self.units_by_round[voters_round as usize].iter() {
             let (vote, u_decision) =
                 self.vote_and_decision(&candidate_hash, u_hash, candidate_creator, curr_round);
             // We update the vote.
@@ -319,40 +319,42 @@ mod tests {
     use crate::{nodes::NodeCount, testing::mock::Hasher64};
     use futures::channel::mpsc;
 
-    fn coord_to_number(creator: usize, round: usize, n_members: usize) -> usize {
-        round * n_members + creator
+    fn coord_to_number(creator: NodeIndex, round: Round, n_members: NodeCount) -> u64 {
+        (round as usize * n_members.0 + creator.0) as u64
     }
 
-    fn construct_unit(creator: usize, round: usize, n_members: usize) -> ExtenderUnit<Hasher64> {
-        let mut parents = NodeMap::new_with_len(NodeCount(n_members));
+    fn construct_unit(
+        creator: NodeIndex,
+        round: Round,
+        n_members: NodeCount,
+    ) -> ExtenderUnit<Hasher64> {
+        let mut parents = NodeMap::new_with_len(n_members);
         if round > 0 {
-            for i in 0..n_members {
-                parents[NodeIndex(i)] =
-                    Some((coord_to_number(i, round - 1, n_members) as u64).to_ne_bytes());
+            for i in n_members.into_iterator() {
+                parents[i] = Some(coord_to_number(i, round - 1, n_members).to_ne_bytes());
             }
         }
 
         ExtenderUnit::new(
-            NodeIndex(creator),
+            creator,
             round,
-            (coord_to_number(creator, round, n_members) as u64).to_ne_bytes(),
+            coord_to_number(creator, round, n_members).to_ne_bytes(),
             parents,
         )
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
     async fn finalize_rounds_01() {
-        let n_members = 4;
+        let n_members = NodeCount(4);
         let rounds = 6;
         let (batch_tx, mut batch_rx) = mpsc::unbounded();
         let (electors_tx, electors_rx) = mpsc::unbounded();
-        let mut extender =
-            Extender::<Hasher64>::new(0.into(), NodeCount(n_members), electors_rx, batch_tx);
+        let mut extender = Extender::<Hasher64>::new(0.into(), n_members, electors_rx, batch_tx);
         let (exit_tx, exit_rx) = oneshot::channel();
         let extender_handle = tokio::spawn(async move { extender.extend(exit_rx).await });
 
         for round in 0..rounds {
-            for creator in 0..n_members {
+            for creator in n_members.into_iterator() {
                 let unit = construct_unit(creator, round, n_members);
                 electors_tx
                     .unbounded_send(unit)

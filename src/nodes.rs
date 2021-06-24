@@ -7,7 +7,7 @@ use std::{
 };
 
 /// The index of a node
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash, From)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, PartialOrd, Hash, From)]
 pub struct NodeIndex(pub usize);
 
 impl Encode for NodeIndex {
@@ -27,7 +27,8 @@ impl Decode for NodeIndex {
     }
 }
 
-/// Node count -- if necessary this can be then generalized to weights
+/// Node count. Right now it doubles as node weight in many places in the code, in the future we
+/// might need a new type for that.
 #[derive(
     Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Add, Sub, AddAssign, SubAssign, Sum, From, Into,
 )]
@@ -45,6 +46,19 @@ impl Div<usize> for NodeCount {
     type Output = Self;
     fn div(self, rhs: usize) -> Self::Output {
         NodeCount(self.0 / rhs)
+    }
+}
+
+impl NodeCount {
+    pub fn into_range(self) -> core::ops::Range<NodeIndex> {
+        core::ops::Range {
+            start: 0.into(),
+            end: self.0.into(),
+        }
+    }
+
+    pub fn into_iterator(self) -> impl Iterator<Item = NodeIndex> {
+        (0..self.0).into_iter().map(NodeIndex)
     }
 }
 

@@ -217,7 +217,7 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
             warn!(target: "AlephBFT-alerter", "{:?} Too many units: {} included in alert.", self.index(), units.len());
             return false;
         }
-        let mut rounds: HashSet<usize> = HashSet::new();
+        let mut rounds = HashSet::new();
         for u in units {
             let u = match u.clone().check(self.keychain) {
                 Ok(u) => u,

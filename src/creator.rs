@@ -40,26 +40,23 @@ impl<H: Hasher> Creator<H> {
         parents_rx: Receiver<Unit<H>>,
         new_units_tx: Sender<NotificationOut<H>>,
     ) -> Self {
-        let node_ix = conf.node_ix;
         let n_members = conf.n_members;
-        let create_lag = conf.delay_config.unit_creation_delay;
-        let max_round = conf.max_round;
         Creator {
-            node_ix,
+            node_ix: conf.node_ix,
             parents_rx,
             new_units_tx,
             n_members,
             current_round: 0,
             candidates_by_round: vec![NodeMap::new_with_len(n_members)],
             n_candidates_by_round: vec![NodeCount(0)],
-            create_lag,
-            max_round,
+            create_lag: conf.delay_config.unit_creation_delay,
+            max_round: conf.max_round,
         }
     }
 
     // initializes the vectors corresponding to the given round (and all between if not there)
     fn init_round(&mut self, round: Round) {
-        while self.candidates_by_round.len() <= round {
+        while self.candidates_by_round.len() <= round.into() {
             self.candidates_by_round
                 .push(NodeMap::new_with_len(self.n_members));
             self.n_candidates_by_round.push(NodeCount(0));
@@ -72,7 +69,7 @@ impl<H: Hasher> Creator<H> {
             if round == 0 {
                 NodeMap::new_with_len(self.n_members)
             } else {
-                self.candidates_by_round[round - 1].clone()
+                self.candidates_by_round[(round - 1) as usize].clone()
             }
         };
 
@@ -92,10 +89,10 @@ impl<H: Hasher> Creator<H> {
         // units that are too old are of no interest to us
         if round + 1 >= self.current_round {
             self.init_round(round);
-            if self.candidates_by_round[round][pid].is_none() {
+            if self.candidates_by_round[round as usize][pid].is_none() {
                 // passing the check above means that we do not have any unit for the pair (round, pid) yet
-                self.candidates_by_round[round][pid] = Some(hash);
-                self.n_candidates_by_round[round] += NodeCount(1);
+                self.candidates_by_round[round as usize][pid] = Some(hash);
+                self.n_candidates_by_round[round as usize] += NodeCount(1);
             }
         }
     }
@@ -110,11 +107,11 @@ impl<H: Hasher> Creator<H> {
         }
         // To create a new unit, we need to have at least >floor(2*N/3) parents available in previous round.
         // Additionally, our unit from previous round must be available.
-        let prev_round = self.current_round - 1;
+        let prev_round_index = (self.current_round - 1) as usize;
         let threshold = (self.n_members * 2) / 3;
 
-        self.n_candidates_by_round[prev_round] > threshold
-            && self.candidates_by_round[prev_round][self.node_ix].is_some()
+        self.n_candidates_by_round[prev_round_index] > threshold
+            && self.candidates_by_round[prev_round_index][self.node_ix].is_some()
     }
 
     pub(crate) async fn create(&mut self, mut exit: oneshot::Receiver<()>) {

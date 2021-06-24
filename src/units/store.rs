@@ -10,24 +10,24 @@ pub(crate) struct UnitStore<'a, H: Hasher, D: Data, KB: KeyBox> {
     by_hash: HashMap<H::Hash, SignedUnit<'a, H, D, KB>>,
     parents: HashMap<H::Hash, Vec<H::Hash>>,
     //this is the smallest r, such that round r-1 is saturated, i.e., it has at least threshold (~(2/3)N) units
-    round_in_progress: usize,
+    round_in_progress: Round,
     threshold: NodeCount,
     //the number of unique nodes that we hold units for a given round
     n_units_per_round: Vec<NodeCount>,
     is_forker: NodeMap<bool>,
     legit_buffer: Vec<SignedUnit<'a, H, D, KB>>,
-    max_round: usize,
+    max_round: Round,
 }
 
 impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
-    pub(crate) fn new(n_nodes: NodeCount, threshold: NodeCount, max_round: usize) -> Self {
+    pub(crate) fn new(n_nodes: NodeCount, threshold: NodeCount, max_round: Round) -> Self {
         UnitStore {
             by_coord: HashMap::new(),
             by_hash: HashMap::new(),
             parents: HashMap::new(),
             round_in_progress: 0,
             threshold,
-            n_units_per_round: vec![NodeCount(0); max_round + 1],
+            n_units_per_round: vec![NodeCount(0); (max_round + 1).into()],
             // is_forker is initialized with default values for bool, i.e., false
             is_forker: NodeMap::new_with_len(n_nodes),
             legit_buffer: Vec::new(),
@@ -56,9 +56,9 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
         std::mem::take(&mut self.legit_buffer)
     }
 
-    fn update_round_in_progress(&mut self, candidate_round: usize) {
+    fn update_round_in_progress(&mut self, candidate_round: Round) {
         if candidate_round >= self.round_in_progress
-            && self.n_units_per_round[candidate_round] >= self.threshold
+            && self.n_units_per_round[candidate_round as usize] >= self.threshold
         {
             let old_round = self.round_in_progress;
             self.round_in_progress = candidate_round + 1;
@@ -84,7 +84,7 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
         self.unit_by_coord(fu.coord()).cloned()
     }
 
-    pub(crate) fn get_round_in_progress(&self) -> usize {
+    pub(crate) fn get_round_in_progress(&self) -> Round {
         self.round_in_progress
     }
 
@@ -116,7 +116,7 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
                 let hash = su.as_signable().hash();
                 self.by_hash.remove(&hash);
                 self.parents.remove(&hash);
-                self.n_units_per_round[round] -= NodeCount(1);
+                self.n_units_per_round[round as usize] -= NodeCount(1);
                 // Now we are in a state as if the unit never arrived.
             }
         }
@@ -146,7 +146,7 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
         // fetch all units corresponding to a particular coord.
         if self.by_coord.insert(coord, su.clone()).is_none() {
             // This means that this unit is not a fork (even though the creator might be a forker)
-            self.n_units_per_round[round] += NodeCount(1);
+            self.n_units_per_round[round as usize] += NodeCount(1);
         }
         // NOTE: a minor inefficiency is that we send alerted units of high rounds that are possibly
         // way beyond round_in_progress right away to Consensus. This could be perhaps corrected so that
@@ -177,11 +177,11 @@ mod tests {
         nodes::NodeMap,
         testing::mock::{Data, Hasher64, KeyBox},
         units::{ControlHash, FullUnit, PreUnit, SignedUnit, UnitCoord, UnitStore},
-        NodeCount, NodeIndex, Signed,
+        NodeCount, NodeIndex, Round, Signed,
     };
 
     async fn create_unit<'a>(
-        round: usize,
+        round: Round,
         node_idx: NodeIndex,
         count: NodeCount,
         session_id: u64,
@@ -277,8 +277,9 @@ mod tests {
 
         // Rounds that are not in progress still have forker's units
         for (round, hash) in forker_hashes[0..4].iter().enumerate() {
+            let round = round as Round;
             let coord = UnitCoord::new(round, NodeIndex(0));
-            assert_eq!(NodeCount(5), store.n_units_per_round[round]);
+            assert_eq!(NodeCount(5), store.n_units_per_round[round as usize]);
             assert!(store.by_coord.contains_key(&coord));
             assert!(store.by_hash.contains_key(hash));
         }
@@ -292,9 +293,10 @@ mod tests {
 
         // Rounds after round in progress are "free" of forker's units;
         for (round, hash) in forker_hashes[5..7].iter().enumerate() {
+            let round = round as Round;
             let round = round + 5;
             let coord = UnitCoord::new(round, NodeIndex(0));
-            assert_eq!(NodeCount(0), store.n_units_per_round[round]);
+            assert_eq!(NodeCount(0), store.n_units_per_round[round as usize]);
             assert!(!store.by_coord.contains_key(&coord));
             assert!(!store.by_hash.contains_key(hash));
         }

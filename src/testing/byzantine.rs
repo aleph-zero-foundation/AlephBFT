@@ -13,8 +13,8 @@ use crate::{
         KeyBox, Network, NetworkData, Spawner,
     },
     units::{ControlHash, FullUnit, PreUnit, SignedUnit, UnitCoord},
-    Hasher, Network as NetworkT, NetworkData as NetworkDataT, NodeCount, NodeIndex, SessionId,
-    SpawnHandle,
+    Hasher, Index, Network as NetworkT, NetworkData as NetworkDataT, NodeCount, NodeIndex, Round,
+    SessionId, SpawnHandle,
 };
 
 use crate::member::UnitMessage::NewUnit;
@@ -24,8 +24,8 @@ struct MaliciousMember<'a> {
     n_members: NodeCount,
     threshold: NodeCount,
     session_id: SessionId,
-    forking_round: usize,
-    round_in_progress: usize,
+    forking_round: Round,
+    round_in_progress: Round,
     keybox: &'a KeyBox,
     network: Network,
     unit_store: HashMap<UnitCoord, SignedUnit<'a, Hasher64, Data, KeyBox>>,
@@ -38,7 +38,7 @@ impl<'a> MaliciousMember<'a> {
         node_ix: NodeIndex,
         n_members: NodeCount,
         session_id: SessionId,
-        forking_round: usize,
+        forking_round: Round,
     ) -> Self {
         let threshold = (n_members * 2) / 3 + NodeCount(1);
         MaliciousMember {
@@ -58,7 +58,7 @@ impl<'a> MaliciousMember<'a> {
         NetworkDataT(Units(NewUnit(su.into())))
     }
 
-    fn pick_parents(&self, round: usize) -> Option<NodeMap<Option<Hash64>>> {
+    fn pick_parents(&self, round: Round) -> Option<NodeMap<Option<Hash64>>> {
         // Outputs a parent map if there are enough of them to create a new unit.
         let mut parents = NodeMap::new_with_len(self.n_members);
         if round == 0 {
@@ -182,21 +182,20 @@ impl<'a> MaliciousMember<'a> {
 
 fn spawn_malicious_member(
     spawner: Spawner,
-    ix: usize,
-    n_members: usize,
-    round_to_fork: usize,
+    node_index: NodeIndex,
+    n_members: NodeCount,
+    round_to_fork: Round,
     network: Network,
 ) -> oneshot::Sender<()> {
-    let node_index = NodeIndex(ix);
     let (exit_tx, exit_rx) = oneshot::channel();
     let member_task = async move {
-        let keybox = KeyBox::new(NodeCount(n_members), node_index);
+        let keybox = KeyBox::new(n_members, node_index);
         let session_id = 0u64;
         let lesniak = MaliciousMember::new(
             &keybox,
             network,
             node_index,
-            NodeCount(n_members),
+            n_members,
             session_id,
             round_to_fork,
         );
@@ -207,8 +206,8 @@ fn spawn_malicious_member(
 }
 
 async fn honest_members_agree_on_batches_byzantine(
-    n_members: usize,
-    n_honest: usize,
+    n_members: NodeCount,
+    n_honest: NodeCount,
     n_batches: usize,
     network_reliability: f64,
 ) {
@@ -223,14 +222,14 @@ async fn honest_members_agree_on_batches_byzantine(
 
     spawner.spawn("network-hub", net_hub);
 
-    for (ix, network) in networks.iter_mut().enumerate() {
-        if ix >= n_honest {
-            let exit_tx =
-                spawn_malicious_member(spawner.clone(), ix, n_members, 2, network.take().unwrap());
+    for network in networks.iter_mut() {
+        let network = network.take().unwrap();
+        let ix = network.index();
+        if !n_honest.into_range().contains(&ix) {
+            let exit_tx = spawn_malicious_member(spawner.clone(), ix, n_members, 2, network);
             exits.push(exit_tx);
         } else {
-            let (batch_rx, exit_tx) =
-                spawn_honest_member(spawner.clone(), ix, n_members, network.take().unwrap());
+            let (batch_rx, exit_tx) = spawn_honest_member(spawner.clone(), ix, n_members, network);
             batch_rxs.push(batch_rx);
             exits.push(exit_tx);
         }
@@ -247,14 +246,14 @@ async fn honest_members_agree_on_batches_byzantine(
     }
 
     let expected_forkers = n_members - n_honest;
-    for node_ix in 1..n_honest {
-        debug!(target: "byzantine-test", "batch {} received", node_ix);
-        assert_eq!(batches[0], batches[node_ix]);
-        for recipient_id in 1..n_members {
+    for node_ix in n_honest.into_iterator().skip(1) {
+        debug!(target: "byzantine-test", "batch {:?} received", node_ix);
+        assert_eq!(batches[0], batches[node_ix.0]);
+        for recipient_id in n_honest.into_iterator().skip(1) {
             if node_ix != recipient_id {
-                let alerts_sent = alert_hook.count(NodeIndex(node_ix), NodeIndex(recipient_id));
+                let alerts_sent = alert_hook.count(node_ix, recipient_id);
                 assert!(
-                    alerts_sent >= expected_forkers,
+                    alerts_sent >= expected_forkers.into(),
                     "Node {:?} sent only {:?} alerts to {:?}, expected at least {:?}.",
                     node_ix,
                     alerts_sent,
@@ -268,15 +267,15 @@ async fn honest_members_agree_on_batches_byzantine(
 
 #[tokio::test]
 async fn small_byzantine_one_forker() {
-    honest_members_agree_on_batches_byzantine(4, 3, 5, 1.0).await;
+    honest_members_agree_on_batches_byzantine(4.into(), 3.into(), 5, 1.0).await;
 }
 
 #[tokio::test]
 async fn small_byzantine_two_forkers() {
-    honest_members_agree_on_batches_byzantine(7, 5, 5, 1.0).await;
+    honest_members_agree_on_batches_byzantine(7.into(), 5.into(), 5, 1.0).await;
 }
 
 #[tokio::test]
 async fn medium_byzantine_ten_forkers() {
-    honest_members_agree_on_batches_byzantine(31, 21, 5, 1.0).await;
+    honest_members_agree_on_batches_byzantine(31.into(), 21.into(), 5, 1.0).await;
 }
