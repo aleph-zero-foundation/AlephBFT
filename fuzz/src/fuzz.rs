@@ -192,13 +192,13 @@ async fn execute_generate_fuzz<W: Write + Send + 'static>(
     router.add_hook(spy);
 
     let spawner = Spawner::new();
-    spawner.spawn("network", async move { router.run().await });
+    spawner.spawn("network", router);
 
     let mut batch_rxs = Vec::new();
     let mut exits = Vec::new();
     for network in networks.into_iter().take(threshold) {
         let (batch_rx, exit_tx) =
-            spawn_honest_member(spawner.clone(), network.index().into(), n_members, network);
+            spawn_honest_member(spawner.clone(), network.index(), n_members, network);
         exits.push(exit_tx);
         batch_rxs.push(batch_rx);
     }
@@ -231,7 +231,8 @@ async fn execute_fuzz(
     let network = PlaybackNetwork::new(data, NETWORK_DELAY, net_exit_rx, finished_callback);
 
     let spawner = Spawner::new();
-    let (mut batch_rx, exit_tx) = spawn_honest_member(spawner.clone(), 0, n_members, network);
+    let (mut batch_rx, exit_tx) =
+        spawn_honest_member(spawner.clone(), NodeIndex(0), n_members, network);
 
     let (n_batches, batches_expected) = {
         if let Some(batches) = n_batches {

@@ -77,7 +77,7 @@ async fn request_missing_coord() {
         requested: requested.clone(),
     });
     let spawner = Spawner::new();
-    spawner.spawn("network-hub", async move { net_hub.run().await });
+    spawner.spawn("network-hub", net_hub);
 
     let mut exits = vec![];
     let mut batch_rxs = Vec::new();

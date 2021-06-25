@@ -213,14 +213,14 @@ async fn honest_members_agree_on_batches_byzantine(
 ) {
     init_log();
     let spawner = Spawner::new();
-    let mut batch_rxs = vec![];
-    let mut exits = vec![];
+    let mut batch_rxs = Vec::new();
+    let mut exits = Vec::new();
     let (mut net_hub, networks) = configure_network(n_members, network_reliability);
 
     let alert_hook = AlertHook::new();
     net_hub.add_hook(alert_hook.clone());
 
-    spawner.spawn("network-hub", async move { net_hub.run().await });
+    spawner.spawn("network-hub", net_hub);
 
     for network in networks {
         let ix = network.index();
@@ -234,9 +234,9 @@ async fn honest_members_agree_on_batches_byzantine(
         }
     }
 
-    let mut batches = vec![];
+    let mut batches = Vec::new();
     for mut rx in batch_rxs.drain(..) {
-        let mut batches_per_ix = vec![];
+        let mut batches_per_ix = Vec::new();
         for _ in 0..n_batches {
             let batch = rx.next().await.unwrap();
             batches_per_ix.push(batch);

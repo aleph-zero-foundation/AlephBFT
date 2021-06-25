@@ -11,20 +11,16 @@ use futures::{
         mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
-    // executor::ThreadPool,
-    future::poll_fn,
-    // task::SpawnExt,
-    Future,
-    StreamExt,
+    Future, StreamExt,
 };
 
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::{hash_map::DefaultHasher, HashMap},
     hash::Hasher as StdHasher,
     pin::Pin,
     sync::Arc,
-    task::Poll,
+    task::{Context, Poll},
     time::Duration,
 };
 
@@ -155,24 +151,24 @@ struct Peer {
 }
 
 pub struct UnreliableRouter {
-    peers: HashMap<NodeIndex, Peer>,
+    peers: RefCell<HashMap<NodeIndex, Peer>>,
     peer_list: Vec<NodeIndex>,
-    hook_list: Vec<Box<dyn NetworkHook>>,
+    hook_list: RefCell<Vec<Box<dyn NetworkHook>>>,
     reliability: f64, //a number in the range [0, 1], 1.0 means perfect reliability, 0.0 means no message gets through
 }
 
 impl UnreliableRouter {
     pub(crate) fn new(peer_list: Vec<NodeIndex>, reliability: f64) -> Self {
         UnreliableRouter {
-            peers: HashMap::new(),
+            peers: RefCell::new(HashMap::new()),
             peer_list,
-            hook_list: vec![],
+            hook_list: RefCell::new(Vec::new()),
             reliability,
         }
     }
 
     pub fn add_hook<HK: NetworkHook + 'static>(&mut self, hook: HK) {
-        self.hook_list.push(Box::new(hook));
+        self.hook_list.borrow_mut().push(Box::new(hook));
     }
 
     pub(crate) fn connect_peer(&mut self, peer: NodeIndex) -> Network {
@@ -181,7 +177,7 @@ impl UnreliableRouter {
             "Must connect a peer in the list."
         );
         assert!(
-            !self.peers.contains_key(&peer),
+            !self.peers.borrow().contains_key(&peer),
             "Cannot connect a peer twice."
         );
         let (tx_in_hub, rx_in_hub) = unbounded();
@@ -190,7 +186,7 @@ impl UnreliableRouter {
             tx: tx_out_hub,
             rx: rx_in_hub,
         };
-        self.peers.insert(peer, peer_entry);
+        self.peers.borrow_mut().insert(peer, peer_entry);
         Network {
             rx: rx_out_hub,
             tx: tx_in_hub,
@@ -198,58 +194,56 @@ impl UnreliableRouter {
             index: peer,
         }
     }
-
-    pub async fn run(&mut self) {
-        let mut disconnected_peers = Vec::new();
-        let mut buffer = Vec::new();
-        while !self.peers.is_empty() {
-            for (peer_id, peer) in self.peers.iter_mut() {
-                loop {
-                    match peer.rx.try_next() {
-                        Ok(Some(msg)) => buffer.push((*peer_id, msg)),
-                        Ok(None) => {
-                            disconnected_peers.push(*peer_id);
-                            break;
-                        }
-                        Err(_) => break,
-                    }
-                }
-            }
-            for peer_id in disconnected_peers.drain(..) {
-                self.peers.remove(&peer_id);
-            }
-            for (sender, (mut data, recipient)) in buffer.drain(..) {
-                let rand_sample = rand::random::<f64>();
-                if rand_sample > self.reliability {
-                    debug!("Simulated network fail.");
-                    continue;
-                }
-                if let Some(peer) = self.peers.get_mut(&recipient) {
-                    for hook in self.hook_list.iter_mut() {
-                        hook.update_state(&mut data, sender, recipient);
-                    }
-                    peer.tx
-                        .unbounded_send((data, sender))
-                        .expect("channel should be open");
-                }
-            }
-            yield_now().await;
-        }
-    }
 }
 
-async fn yield_now() {
-    let mut called = false;
-    poll_fn(move |ctx| {
-        if called {
+impl Future for UnreliableRouter {
+    type Output = ();
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = &mut self;
+        let mut disconnected_peers: Vec<NodeIndex> = Vec::new();
+        let mut buffer = Vec::new();
+        for (peer_id, peer) in this.peers.borrow_mut().iter_mut() {
+            loop {
+                // this call is responsible for waking this Future
+                match peer.rx.poll_next_unpin(cx) {
+                    Poll::Ready(Some(msg)) => {
+                        buffer.push((*peer_id, msg));
+                    }
+                    Poll::Ready(None) => {
+                        disconnected_peers.push(*peer_id);
+                        break;
+                    }
+                    Poll::Pending => {
+                        break;
+                    }
+                }
+            }
+        }
+        for peer_id in disconnected_peers {
+            this.peers.borrow_mut().remove(&peer_id);
+        }
+        for (sender, (mut data, recipient)) in buffer {
+            let rand_sample = rand::random::<f64>();
+            if rand_sample > this.reliability {
+                debug!("Simulated network fail.");
+                continue;
+            }
+
+            if let Some(peer) = this.peers.borrow().get(&recipient) {
+                for hook in this.hook_list.borrow_mut().iter_mut() {
+                    hook.update_state(&mut data, sender, recipient);
+                }
+                peer.tx
+                    .unbounded_send((data, sender))
+                    .expect("channel should be open");
+            }
+        }
+        if this.peers.borrow().is_empty() {
             Poll::Ready(())
         } else {
-            called = true;
-            ctx.waker().wake_by_ref();
             Poll::Pending
         }
-    })
-    .await
+    }
 }
 
 pub trait NetworkHook: Send {
@@ -405,7 +399,7 @@ pub fn configure_network(n_members: usize, reliability: f64) -> (UnreliableRoute
 
 pub fn spawn_honest_member(
     spawner: Spawner,
-    ix: usize,
+    node_index: NodeIndex,
     n_members: usize,
     network: impl 'static + NetworkT<Hasher64, Data, Signature, PartialMultisignature>,
 ) -> (UnboundedReceiver<OrderedBatch<Data>>, oneshot::Sender<()>) {
