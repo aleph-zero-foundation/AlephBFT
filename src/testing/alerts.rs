@@ -100,7 +100,7 @@ impl TestCase {
         to_sign: T,
         signer: NodeIndex,
     ) -> UncheckedSigned<Indexed<T>, Signature> {
-        Signed::sign(Indexed::new(to_sign, signer), self.keychain(signer))
+        Signed::sign_with_index(to_sign, self.keychain(signer))
             .await
             .into()
     }

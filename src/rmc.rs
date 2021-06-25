@@ -31,7 +31,7 @@ pub enum Message<H: Signable, S: Signature, M: PartialMultisignature> {
 impl<H: Signable, S: Signature, M: PartialMultisignature> Message<H, S, M> {
     pub fn hash(&self) -> &H {
         match self {
-            Message::SignedHash(unchecked) => unchecked.as_signable().as_signable(),
+            Message::SignedHash(unchecked) => unchecked.as_signable_strip_index(),
             Message::MultisignedHash(unchecked) => unchecked.as_signable(),
         }
     }
@@ -212,8 +212,7 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
 
     /// Initiate a new instance of RMC for `hash`.
     pub async fn start_rmc(&mut self, hash: H) {
-        let indexed_hash = Indexed::new(hash, self.keychain.index());
-        let signed_hash = Signed::sign(indexed_hash, self.keychain).await;
+        let signed_hash = Signed::sign_with_index(hash, self.keychain).await;
         let message = Message::SignedHash(signed_hash.into_unchecked());
         self.handle_message(message.clone());
         self.scheduler.add_task(Task::BroadcastMessage(message))

@@ -235,8 +235,9 @@ async fn bad_signatures_and_multisignatures_are_ignored() {
     let mut data = TestData::new(node_count, &keychains, |_, _| true);
 
     let bad_hash = Hash { byte: 65 };
-    let bad_msg = TestMessage::SignedHash(UncheckedSigned::new(
-        Indexed::new(bad_hash, 0.into()),
+    let bad_msg = TestMessage::SignedHash(UncheckedSigned::new_with_index(
+        bad_hash,
+        0.into(),
         bad_signature(),
     ));
     data.network.broadcast_message(bad_msg);
