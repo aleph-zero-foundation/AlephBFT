@@ -6,7 +6,7 @@ use crate::{
     testing::mock::{
         configure_network, init_log, spawn_honest_member, NetworkData, NetworkHook, Spawner,
     },
-    Index, NodeCount, NodeIndex, Round, SpawnHandle,
+    NodeCount, NodeIndex, Round, SpawnHandle,
 };
 use futures::StreamExt;
 use parking_lot::Mutex;

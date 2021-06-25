@@ -2,7 +2,7 @@ use futures::StreamExt;
 
 use crate::{
     testing::mock::{configure_network, init_log, spawn_honest_member, Spawner},
-    Index, NodeCount, SpawnHandle,
+    NodeCount, SpawnHandle,
 };
 
 async fn honest_members_agree_on_batches(

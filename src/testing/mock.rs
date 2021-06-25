@@ -1,6 +1,3 @@
-#[cfg(test)]
-pub(crate) use self::testing_internal::*;
-
 use async_trait::async_trait;
 use codec::{Decode, Encode};
 use log::{debug, error};
@@ -21,13 +18,12 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Duration,
 };
 
+pub use crate::testing::mock_common::gen_config;
+
 use crate::{
-    config::{exponential_slowdown, Config, DelayConfig},
     member::{NotificationIn, NotificationOut},
-    network,
     units::{Unit, UnitCoord},
     DataIO as DataIOT, Hasher, Index, KeyBox as KeyBoxT, MultiKeychain as MultiKeychainT,
     Network as NetworkT, NodeCount, NodeIndex, OrderedBatch,
@@ -58,6 +54,132 @@ impl Hasher for Hasher64 {
     }
 }
 
+pub(crate) type Hash64 = <Hasher64 as Hasher>::Hash;
+
+// This struct allows to create a Hub to interconnect several instances of the Consensus engine, without
+// requiring the Member wrapper. The Hub notifies all connected instances about newly created units and
+// is able to answer unit requests as well. WrongControlHashes are not supported, which means that this
+// Hub should be used to run simple tests in honest scenarios only.
+// Usage: 1) create an instance using new(n_members), 2) connect all n_members instances, 0, 1, 2, ..., n_members - 1.
+// 3) run the HonestHub instance as a Future.
+pub(crate) struct HonestHub {
+    n_members: usize,
+    ntfct_out_rxs: HashMap<NodeIndex, UnboundedReceiver<NotificationOut<Hasher64>>>,
+    ntfct_in_txs: HashMap<NodeIndex, UnboundedSender<NotificationIn<Hasher64>>>,
+    units_by_coord: HashMap<UnitCoord, Unit<Hasher64>>,
+}
+
+impl HonestHub {
+    pub(crate) fn new(n_members: usize) -> Self {
+        HonestHub {
+            n_members,
+            ntfct_out_rxs: HashMap::new(),
+            ntfct_in_txs: HashMap::new(),
+            units_by_coord: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn connect(
+        &mut self,
+        node_ix: NodeIndex,
+    ) -> (
+        UnboundedSender<NotificationOut<Hasher64>>,
+        UnboundedReceiver<NotificationIn<Hasher64>>,
+    ) {
+        let (tx_in, rx_in) = unbounded();
+        let (tx_out, rx_out) = unbounded();
+        self.ntfct_in_txs.insert(node_ix, tx_in);
+        self.ntfct_out_rxs.insert(node_ix, rx_out);
+        (tx_out, rx_in)
+    }
+
+    fn send_to_all(&mut self, ntfct: NotificationIn<Hasher64>) {
+        assert!(
+            self.ntfct_in_txs.len() == self.n_members,
+            "Must connect to all nodes before running the hub."
+        );
+        for (_ix, tx) in self.ntfct_in_txs.iter() {
+            tx.unbounded_send(ntfct.clone()).ok();
+        }
+    }
+
+    fn send_to_node(&mut self, node_ix: NodeIndex, ntfct: NotificationIn<Hasher64>) {
+        let tx = self
+            .ntfct_in_txs
+            .get(&node_ix)
+            .expect("Must connect to all nodes before running the hub.");
+        tx.unbounded_send(ntfct).expect("Channel should be open");
+    }
+
+    fn on_notification(&mut self, node_ix: NodeIndex, ntfct: NotificationOut<Hasher64>) {
+        match ntfct {
+            NotificationOut::CreatedPreUnit(pu) => {
+                let hash = pu.using_encoded(Hasher64::hash);
+                let u = Unit::new(pu, hash);
+                let coord = UnitCoord::new(u.round(), u.creator());
+                self.units_by_coord.insert(coord, u.clone());
+                self.send_to_all(NotificationIn::NewUnits(vec![u]));
+            }
+            NotificationOut::MissingUnits(coords) => {
+                let mut response_units = Vec::new();
+                for coord in coords {
+                    match self.units_by_coord.get(&coord) {
+                        Some(unit) => {
+                            response_units.push(unit.clone());
+                        }
+                        None => {
+                            panic!("Unit requested that the hub does not know.");
+                        }
+                    }
+                }
+                let ntfct = NotificationIn::NewUnits(response_units);
+                self.send_to_node(node_ix, ntfct);
+            }
+            NotificationOut::WrongControlHash(_u_hash) => {
+                panic!("No support for forks in testing.");
+            }
+            NotificationOut::AddedToDag(_u_hash, _hashes) => {
+                // Safe to ignore in testing.
+                // Normally this is used in Member to answer parents requests.
+            }
+        }
+    }
+}
+
+impl Future for HonestHub {
+    type Output = ();
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut ready_ixs: Vec<NodeIndex> = Vec::new();
+        let mut buffer = Vec::new();
+        for (ix, rx) in self.ntfct_out_rxs.iter_mut() {
+            loop {
+                match rx.poll_next_unpin(cx) {
+                    Poll::Ready(Some(ntfct)) => {
+                        buffer.push((*ix, ntfct));
+                    }
+                    Poll::Ready(None) => {
+                        ready_ixs.push(*ix);
+                        break;
+                    }
+                    Poll::Pending => {
+                        break;
+                    }
+                }
+            }
+        }
+        for (ix, ntfct) in buffer {
+            self.on_notification(ix, ntfct);
+        }
+        for ix in ready_ixs {
+            self.ntfct_out_rxs.remove(&ix);
+        }
+        if self.ntfct_out_rxs.is_empty() {
+            return Poll::Ready(());
+        }
+        Poll::Pending
+    }
+}
+
 #[derive(Clone)]
 pub struct Spawner {
     handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
@@ -65,7 +187,7 @@ pub struct Spawner {
 
 impl SpawnHandle for Spawner {
     fn spawn(&self, _name: &str, task: impl Future<Output = ()> + Send + 'static) {
-        tokio::spawn(task);
+        self.handles.lock().push(tokio::spawn(task))
     }
 
     fn spawn_essential(
@@ -74,12 +196,14 @@ impl SpawnHandle for Spawner {
         task: impl Future<Output = ()> + Send + 'static,
     ) -> TaskHandle {
         let (res_tx, res_rx) = oneshot::channel();
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             task.await;
             res_tx.send(()).expect("We own the rx.");
         });
+        self.handles.lock().push(task);
         Box::pin(async move { res_rx.await.map_err(|_| ()) })
     }
+}
 
 impl Spawner {
     pub async fn wait(&self) {
@@ -113,12 +237,6 @@ pub struct Network {
 
 impl Network {
     pub fn index(&self) -> NodeIndex {
-        self.index
-    }
-}
-
-impl Index for Network {
-    fn index(&self) -> NodeIndex {
         self.index
     }
 }
@@ -250,6 +368,43 @@ pub trait NetworkHook: Send {
     fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, recipient: NodeIndex);
 }
 
+#[derive(Clone)]
+pub(crate) struct AlertHook {
+    alerts_sent_by_connection: Arc<Mutex<HashMap<(NodeIndex, NodeIndex), usize>>>,
+}
+
+impl AlertHook {
+    pub(crate) fn new() -> Self {
+        AlertHook {
+            alerts_sent_by_connection: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub(crate) fn count(&self, sender: NodeIndex, recipient: NodeIndex) -> usize {
+        match self
+            .alerts_sent_by_connection
+            .lock()
+            .get(&(sender, recipient))
+        {
+            Some(count) => *count,
+            None => 0,
+        }
+    }
+}
+
+impl NetworkHook for AlertHook {
+    fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, recipient: NodeIndex) {
+        use crate::{alerts::AlertMessage::*, network::NetworkDataInner::*};
+        if let crate::NetworkData(Alert(ForkAlert(_))) = data {
+            *self
+                .alerts_sent_by_connection
+                .lock()
+                .entry((sender, recipient))
+                .or_insert(0) += 1;
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Hash)]
 pub struct Data {
     coord: UnitCoord,
@@ -300,7 +455,7 @@ impl DataIOT<Data> for DataIO {
     }
     fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), ()> {
         self.tx.unbounded_send(data).map_err(|e| {
-            error!(target: "testing-mock", "Error when sending data from DataIO {:?}.", e);
+            error!(target: "data-io", "Error when sending data from DataIO {:?}.", e);
         })
     }
 }
@@ -363,34 +518,16 @@ impl MultiKeychainT for KeyBox {
     }
 }
 
-pub(crate) fn gen_config(node_ix: NodeIndex, n_members: NodeCount) -> Config {
-    let delay_config = DelayConfig {
-        tick_interval: Duration::from_millis(5),
-        requests_interval: Duration::from_millis(50),
-        unit_broadcast_delay: Arc::new(|t| exponential_slowdown(t, 100.0, 1, 3.0)),
-        //100, 100, 300, 900, 2700, ...
-        unit_creation_delay: Arc::new(|t| exponential_slowdown(t, 50.0, usize::MAX, 1.000)),
-        //50, 50, 50, 50, ...
-    };
-    Config {
-        node_ix,
-        session_id: 0,
-        n_members,
-        delay_config,
-        rounds_margin: 200,
-        max_units_per_alert: 200,
-        max_round: 5000,
-    }
-}
-
 pub(crate) type HonestMember<'a> = Member<'a, Hasher64, Data, DataIO, KeyBox, Spawner>;
 
-pub fn configure_network(n_members: usize, reliability: f64) -> (UnreliableRouter, Vec<Network>) {
-    let peer_list = || (0..n_members).map(NodeIndex);
-
-    let mut router = UnreliableRouter::new(peer_list().collect(), reliability);
+pub fn configure_network(
+    n_members: NodeCount,
+    reliability: f64,
+) -> (UnreliableRouter, Vec<Network>) {
+    let peer_list = n_members.into_iterator().collect();
+    let mut router = UnreliableRouter::new(peer_list, reliability);
     let mut networks = Vec::new();
-    for ix in peer_list() {
+    for ix in n_members.into_iterator() {
         let network = router.connect_peer(ix);
         networks.push(network);
     }
@@ -400,7 +537,7 @@ pub fn configure_network(n_members: usize, reliability: f64) -> (UnreliableRoute
 pub fn spawn_honest_member(
     spawner: Spawner,
     node_index: NodeIndex,
-    n_members: usize,
+    n_members: NodeCount,
     network: impl 'static + NetworkT<Hasher64, Data, Signature, PartialMultisignature>,
 ) -> (UnboundedReceiver<OrderedBatch<Data>>, oneshot::Sender<()>) {
     let (data_io, rx_batch) = DataIO::new(node_index);
@@ -414,197 +551,4 @@ pub fn spawn_honest_member(
     };
     spawner.spawn("member", member_task);
     (rx_batch, exit_tx)
-}
-
-#[cfg(test)]
-pub(crate) mod testing_internal {
-    use super::Hasher64;
-    use codec::Encode;
-
-    use futures::{
-        channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
-        Future, StreamExt,
-    };
-
-    use std::{
-        collections::HashMap,
-        pin::Pin,
-        task::{Context, Poll},
-    };
-
-    use crate::{
-        alerts,
-        member::{NotificationIn, NotificationOut},
-        network,
-        units::{Unit, UnitCoord},
-        Hasher, NodeIndex,
-    };
-
-    pub(crate) type Hash64 = <super::Hasher64 as Hasher>::Hash;
-
-    // This struct allows to create a Hub to interconnect several instances of the Consensus engine, without
-    // requiring the Member wrapper. The Hub notifies all connected instances about newly created units and
-    // is able to answer unit requests as well. WrongControlHashes are not supported, which means that this
-    // Hub should be used to run simple tests in honest scenarios only.
-    // Usage: 1) create an instance using new(n_members), 2) connect all n_members instances, 0, 1, 2, ..., n_members - 1.
-    // 3) run the HonestHub instance as a Future.
-    pub(crate) struct HonestHub {
-        n_members: usize,
-        ntfct_out_rxs: HashMap<NodeIndex, UnboundedReceiver<NotificationOut<Hasher64>>>,
-        ntfct_in_txs: HashMap<NodeIndex, UnboundedSender<NotificationIn<Hasher64>>>,
-        units_by_coord: HashMap<UnitCoord, Unit<Hasher64>>,
-    }
-
-    impl Future for HonestHub {
-        type Output = ();
-        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-            let mut ready_ixs: Vec<NodeIndex> = Vec::new();
-            let mut buffer = Vec::new();
-            for (ix, rx) in self.ntfct_out_rxs.iter_mut() {
-                loop {
-                    match rx.poll_next_unpin(cx) {
-                        Poll::Ready(Some(ntfct)) => {
-                            buffer.push((*ix, ntfct));
-                        }
-                        Poll::Ready(None) => {
-                            ready_ixs.push(*ix);
-                            break;
-                        }
-                        Poll::Pending => {
-                            break;
-                        }
-                    }
-                }
-            }
-            for (ix, ntfct) in buffer {
-                self.on_notification(ix, ntfct);
-            }
-            for ix in ready_ixs {
-                self.ntfct_out_rxs.remove(&ix);
-            }
-            if self.ntfct_out_rxs.is_empty() {
-                return Poll::Ready(());
-            }
-            Poll::Pending
-        }
-    }
-    impl HonestHub {
-        pub(crate) fn new(n_members: usize) -> Self {
-            HonestHub {
-                n_members,
-                ntfct_out_rxs: HashMap::new(),
-                ntfct_in_txs: HashMap::new(),
-                units_by_coord: HashMap::new(),
-            }
-        }
-
-        pub(crate) fn connect(
-            &mut self,
-            node_ix: NodeIndex,
-        ) -> (
-            UnboundedSender<NotificationOut<Hasher64>>,
-            UnboundedReceiver<NotificationIn<Hasher64>>,
-        ) {
-            let (tx_in, rx_in) = unbounded();
-            let (tx_out, rx_out) = unbounded();
-            self.ntfct_in_txs.insert(node_ix, tx_in);
-            self.ntfct_out_rxs.insert(node_ix, rx_out);
-            (tx_out, rx_in)
-        }
-
-        fn send_to_all(&mut self, ntfct: NotificationIn<Hasher64>) {
-            assert!(
-                self.ntfct_in_txs.len() == self.n_members,
-                "Must connect to all nodes before running the hub."
-            );
-            for (_ix, tx) in self.ntfct_in_txs.iter() {
-                tx.unbounded_send(ntfct.clone()).ok();
-            }
-        }
-
-        fn send_to_node(&mut self, node_ix: NodeIndex, ntfct: NotificationIn<Hasher64>) {
-            let tx = self
-                .ntfct_in_txs
-                .get(&node_ix)
-                .expect("Must connect to all nodes before running the hub.");
-            tx.unbounded_send(ntfct).expect("Channel should be open");
-        }
-
-        fn on_notification(&mut self, node_ix: NodeIndex, ntfct: NotificationOut<Hasher64>) {
-            match ntfct {
-                NotificationOut::CreatedPreUnit(pu) => {
-                    let hash = pu.using_encoded(Hasher64::hash);
-                    let u = Unit::new(pu, hash);
-                    let coord = UnitCoord::new(u.round(), u.creator());
-                    self.units_by_coord.insert(coord, u.clone());
-                    self.send_to_all(NotificationIn::NewUnits(vec![u]));
-                }
-                NotificationOut::MissingUnits(coords) => {
-                    let mut response_units = Vec::new();
-                    for coord in coords {
-                        match self.units_by_coord.get(&coord) {
-                            Some(unit) => {
-                                response_units.push(unit.clone());
-                            }
-                            None => {
-                                panic!("Unit requested that the hub does not know.");
-                            }
-                        }
-                    }
-                    let ntfct = NotificationIn::NewUnits(response_units);
-                    self.send_to_node(node_ix, ntfct);
-                }
-                NotificationOut::WrongControlHash(_u_hash) => {
-                    panic!("No support for forks in testing.");
-                }
-                NotificationOut::AddedToDag(_u_hash, _hashes) => {
-                    // Safe to ignore in testing.
-                    // Normally this is used in Member to answer parents requests.
-                }
-            }
-        }
-    }
-
-    #[derive(Clone)]
-    pub(crate) struct AlertHook {
-        alerts_sent_by_connection: super::Arc<super::Mutex<HashMap<(NodeIndex, NodeIndex), usize>>>,
-    }
-
-    impl AlertHook {
-        pub(crate) fn new() -> Self {
-            AlertHook {
-                alerts_sent_by_connection: super::Arc::new(super::Mutex::new(HashMap::new())),
-            }
-        }
-
-        pub(crate) fn count(&self, sender: NodeIndex, recipient: NodeIndex) -> usize {
-            match self
-                .alerts_sent_by_connection
-                .lock()
-                .get(&(sender, recipient))
-            {
-                Some(count) => *count,
-                None => 0,
-            }
-        }
-    }
-
-    impl super::NetworkHook for AlertHook {
-        fn update_state(
-            &mut self,
-            data: &mut super::NetworkData,
-            sender: NodeIndex,
-            recipient: NodeIndex,
-        ) {
-            use alerts::AlertMessage::*;
-            use network::NetworkDataInner::*;
-            if let crate::NetworkData(Alert(ForkAlert(_))) = data {
-                *self
-                    .alerts_sent_by_connection
-                    .lock()
-                    .entry((sender, recipient))
-                    .or_insert(0) += 1;
-            }
-        }
-    }
 }

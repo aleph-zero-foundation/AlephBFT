@@ -25,7 +25,7 @@ pub use signed::*;
 mod config;
 pub mod rmc;
 mod terminal;
-#[cfg(any(test, feature = "fuzzing"))]
+#[cfg(any(test, feature = "mock_common"))]
 pub mod testing;
 mod units;
 

@@ -1,6 +1,7 @@
 [package]
 name = "alephbft-fuzz"
 version = "0.0.1"
+authors = ["Cardinal Cryptography"]
 publish = false
 edition = "2018"
 
@@ -13,14 +14,16 @@ members = ["."]
 
 [dependencies]
 async-trait = "0.1"
-codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive"] }
+codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive", "std"] }
 futures = "0.3"
 futures-timer = "3.0"
 log = "0.4"
 structopt = "0.3.21"
-tokio = { version = "1.6.1", features = ["macros", "rt", "rt-multi-thread"] }
+tokio = { version = "1.6.1", features = ["rt"] }
+parking_lot = "0.11"
 
-aleph-bft = { path = "..", features = ["fuzzing"] }
+aleph-bft = { path = ".." }
+aleph-mock = { path = "../src/testing/mock/" }
 libfuzzer-sys = { version = "0.4.2", optional = true }
 afl = { version = "0.10.1", optional = true }
 

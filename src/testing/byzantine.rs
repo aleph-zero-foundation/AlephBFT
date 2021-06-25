@@ -13,7 +13,7 @@ use crate::{
         KeyBox, Network, NetworkData, Spawner,
     },
     units::{ControlHash, FullUnit, PreUnit, SignedUnit, UnitCoord},
-    Hasher, Index, Network as NetworkT, NetworkData as NetworkDataT, NodeCount, NodeIndex, Round,
+    Hasher, Network as NetworkT, NetworkData as NetworkDataT, NodeCount, NodeIndex, Round,
     SessionId, SpawnHandle,
 };
 
