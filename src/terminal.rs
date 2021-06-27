@@ -357,14 +357,14 @@ impl<H: Hasher> Terminal<H> {
                         Some(NotificationIn::NewUnits(units)) => {
                             for u in units {
                                 if self.add_to_store(u).is_err() || self.handle_events().is_err() {
-                                    break
+                                    return
                                 };
                             }
                         },
                         Some(NotificationIn::UnitParents(u_hash, p_hashes)) => {
                             self.update_on_wrong_hash_response(u_hash, p_hashes);
                             if self.handle_events().is_err() {
-                                break
+                                return
                             }
                         },
                         _ => {}
@@ -372,7 +372,7 @@ impl<H: Hasher> Terminal<H> {
                 }
                 _ = &mut exit => {
                     debug!(target: "AlephBFT-terminal", "{:?} received exit signal.", self.node_id);
-                    break
+                    return
                 }
             }
         }
