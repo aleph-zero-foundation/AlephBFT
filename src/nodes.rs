@@ -1,4 +1,4 @@
-use codec::{Decode, Encode, Error as CodecError, Error, Input, Output};
+use codec::{Decode, Encode, Error, Input, Output};
 use derive_more::{Add, AddAssign, From, Into, Sub, SubAssign, Sum};
 use std::{
     iter::FromIterator,
@@ -19,7 +19,7 @@ impl Encode for NodeIndex {
 }
 
 impl Decode for NodeIndex {
-    fn decode<I: Input>(value: &mut I) -> Result<Self, CodecError> {
+    fn decode<I: Input>(value: &mut I) -> Result<Self, Error> {
         let mut arr = [0u8; 8];
         value.read(&mut arr)?;
         let val: u64 = u64::from_le_bytes(arr);
@@ -135,6 +135,19 @@ impl Decode for BoolNodeMap {
         let capacity = u32::decode(input)? as usize;
         let bytes = Vec::decode(input)?;
         let mut bv = bit_vec::BitVec::from_bytes(&bytes);
+        // Length should be capacity rounded up to the closest multiple of 8
+        if bv.len() != 8 * ((capacity + 7) / 8) {
+            return Err(Error::from(
+                "Length of bitvector inconsistent with encoded capacity.",
+            ));
+        }
+        while bv.len() > capacity {
+            if bv.pop() != Some(false) {
+                return Err(Error::from(
+                    "Non-canonical encoding. Trailing bits should be all 0.",
+                ));
+            }
+        }
         bv.truncate(capacity);
         Ok(BoolNodeMap(bv))
     }
@@ -156,6 +169,7 @@ impl Index<NodeIndex> for BoolNodeMap {
 
 #[cfg(test)]
 mod tests {
+
     use crate::nodes::{BoolNodeMap, NodeIndex};
     use codec::{Decode, Encode};
     #[test]
@@ -166,6 +180,46 @@ mod tests {
             let decoded = NodeIndex::decode(&mut encoded);
             assert_eq!(node_index, decoded.unwrap());
         }
+    }
+
+    #[test]
+    fn bool_node_map_decoding_works() {
+        for len in 0..12 {
+            for mask in 0..(1 << len) {
+                let mut bnm = BoolNodeMap::with_capacity(len.into());
+                for i in 0..len {
+                    if (1 << i) & mask != 0 {
+                        bnm.set(i.into());
+                    }
+                }
+                let encoded: Vec<_> = bnm.encode();
+                let decoded =
+                    BoolNodeMap::decode(&mut encoded.as_slice()).expect("decode should work");
+                assert!(decoded == bnm);
+            }
+        }
+    }
+
+    #[test]
+    fn bool_node_map_decoding_deals_with_trailing_zeros() {
+        let mut encoded = vec![1, 0, 0, 0];
+        encoded.extend(vec![128u8].encode());
+        //128 encodes bit-vec 10000000
+        let decoded = BoolNodeMap::decode(&mut encoded.as_slice()).expect("decode should work");
+        assert_eq!(decoded, BoolNodeMap([true].iter().cloned().collect()));
+
+        let mut encoded = vec![1, 0, 0, 0];
+        encoded.extend(vec![129u8].encode());
+        //129 encodes bit-vec 10000001
+        assert!(BoolNodeMap::decode(&mut encoded.as_slice()).is_err());
+    }
+
+    #[test]
+    fn bool_node_map_decoding_deals_with_too_long_bitvec() {
+        let mut encoded = vec![1, 0, 0, 0];
+        encoded.extend(vec![128u8, 0].encode());
+        //[128, 0] encodes bit-vec 1000000000000000
+        assert!(BoolNodeMap::decode(&mut encoded.as_slice()).is_err());
     }
 
     #[test]
