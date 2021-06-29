@@ -111,7 +111,6 @@ impl<H: Hasher> Extender<H> {
         self.units.insert(u.hash, u);
     }
 
-    //
     fn initialize_round(&mut self, round: Round) {
         // The clone below is necessary as we take "a snapshot" of the set of units at this round and never
         // go back and never update this list. From math it follows that each unit that is added to the Dag later
@@ -203,16 +202,32 @@ impl<H: Hasher> Extender<H> {
             decision = Some(cv);
         }
 
-        let vote = {
-            if n_votes_false == NodeCount(0) {
-                true
-            } else if n_votes_true == NodeCount(0) {
-                false
-            } else {
-                cv
-            }
+        let vote = match (n_votes_false, n_votes_true) {
+            (NodeCount(0), _) => true,
+            (_, NodeCount(0)) => false,
+            _ => cv,
         };
+
         (vote, decision)
+    }
+
+    fn recompute_votes(
+        &mut self,
+        candidate_hash: H::Hash,
+        candidate_creator: NodeIndex,
+        curr_round: Round,
+        voters_round: Round,
+    ) -> Option<bool> {
+        for u_hash in self.units_by_round[voters_round].iter() {
+            let (vote, u_decision) =
+                self.vote_and_decision(&candidate_hash, u_hash, candidate_creator, curr_round);
+            // We update the vote.
+            self.units.get_mut(u_hash).unwrap().vote = vote;
+            if u_decision.is_some() {
+                return u_decision;
+            }
+        }
+        None
     }
 
     // Tries to make progress in extending the partial order after adding a new unit to the Dag.
@@ -237,21 +252,13 @@ impl<H: Hasher> Extender<H> {
 
             if !self.state.votes_up_to_date {
                 // We need to recompute all the votes for the current candidate.
-                for r in curr_round + 1..=self.state.highest_round {
-                    for u_hash in self.units_by_round[r].iter() {
-                        let (vote, u_decision) = self.vote_and_decision(
-                            &candidate_hash,
-                            u_hash,
-                            candidate_creator,
-                            curr_round,
-                        );
-                        // We update the vote.
-                        self.units.get_mut(u_hash).unwrap().vote = vote;
-                        decision = u_decision;
-                        if decision.is_some() {
-                            break;
-                        }
-                    }
+                for voters_round in curr_round + 1..=self.state.highest_round {
+                    decision = self.recompute_votes(
+                        candidate_hash,
+                        candidate_creator,
+                        curr_round,
+                        voters_round,
+                    );
                     if decision.is_some() {
                         break;
                     }
@@ -269,21 +276,24 @@ impl<H: Hasher> Extender<H> {
                 decision = u_decision;
             }
 
-            if decision == Some(true) {
-                self.finalize_round(self.state.current_round, &candidate_hash)?;
-                self.state.current_round += 1;
-                self.state.round_initialized = false;
-                continue;
+            match decision {
+                Some(true) => {
+                    self.finalize_round(self.state.current_round, &candidate_hash)?;
+                    self.state.current_round += 1;
+                    self.state.round_initialized = false;
+                }
+                Some(false) => {
+                    self.state.pending_cand_id += 1;
+                    self.state.votes_up_to_date = false;
+                }
+                None => {
+                    // decision = None, no progress can be done
+                    self.state.votes_up_to_date = true;
+                    break;
+                }
             }
-            if decision == Some(false) {
-                self.state.pending_cand_id += 1;
-                self.state.votes_up_to_date = false;
-                continue;
-            }
-            // decision = None, no progress can be done
-            self.state.votes_up_to_date = true;
-            break;
         }
+
         Ok(())
     }
 

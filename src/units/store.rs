@@ -72,16 +72,11 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
         }
     }
     // Outputs None if this is not a newly-discovered fork or Some(sv) where (su, sv) form a fork
-    pub(crate) fn is_new_fork(
-        &self,
-        su: &SignedUnit<'a, H, D, KB>,
-    ) -> Option<SignedUnit<'a, H, D, KB>> {
-        let hash = su.as_signable().hash();
-        if self.contains_hash(&hash) {
+    pub(crate) fn is_new_fork(&self, fu: &FullUnit<H, D>) -> Option<SignedUnit<'a, H, D, KB>> {
+        if self.contains_hash(&fu.hash()) {
             return None;
         }
-        let coord = su.as_signable().coord();
-        self.unit_by_coord(coord).cloned()
+        self.unit_by_coord(fu.coord()).cloned()
     }
 
     pub(crate) fn get_round_in_progress(&self) -> usize {

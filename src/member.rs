@@ -401,7 +401,7 @@ where
             debug!(target: "AlephBFT-member", "{:?} Ignoring forker's unit {:?}", self.index(), full_unit);
             return;
         }
-        if let Some(sv) = self.store.is_new_fork(&su) {
+        if let Some(sv) = self.store.is_new_fork(full_unit) {
             let creator = full_unit.creator();
             if !self.store.is_forker(creator) {
                 // We need to mark the forker if it is not known yet.
