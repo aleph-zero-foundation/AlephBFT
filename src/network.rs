@@ -32,8 +32,14 @@ use std::fmt::Debug;
 pub trait Network<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature>: Send {
     type Error: Debug;
     /// Send a message to a single node.
+    ///
+    /// Note on the implementation: this function should be implemented in a non-blocking manner.
+    /// Otherwise, the performance might be affected negatively or the execution may end up in a deadlock.
     fn send(&self, data: NetworkData<H, D, S, MS>, node: NodeIndex) -> Result<(), Self::Error>;
     /// Send a message to all nodes.
+    ///
+    /// Note on the implementation: this function should be implemented in a non-blocking manner.
+    /// Otherwise, the performance might be affected negatively or the execution may end up in a deadlock.
     fn broadcast(&self, data: NetworkData<H, D, S, MS>) -> Result<(), Self::Error>;
     /// Receive a message from the network.
     async fn next_event(&mut self) -> Option<NetworkData<H, D, S, MS>>;
