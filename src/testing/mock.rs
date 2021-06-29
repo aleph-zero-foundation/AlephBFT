@@ -28,7 +28,7 @@ use crate::{
     units::{Unit, UnitCoord},
     DataIO as DataIOT, DataState, Hasher, Index, KeyBox as KeyBoxT,
     MultiKeychain as MultiKeychainT, Network as NetworkT, NodeCount, NodeIndex, OrderedBatch,
-    PartialMultisignature as PartialMultisignatureT, SpawnHandle,
+    PartialMultisignature as PartialMultisignatureT, SpawnHandle, TaskHandle,
 };
 
 use crate::member::Member;
@@ -184,6 +184,12 @@ impl Future for HonestHub {
 #[derive(Clone)]
 pub(crate) struct Spawner {}
 
+impl Spawner {
+    pub(crate) fn new() -> Self {
+        Spawner {}
+    }
+}
+
 impl SpawnHandle for Spawner {
     fn spawn(&self, _name: &str, task: impl Future<Output = ()> + Send + 'static) {
         tokio::spawn(task);
@@ -193,7 +199,7 @@ impl SpawnHandle for Spawner {
         &self,
         _: &str,
         task: impl Future<Output = ()> + Send + 'static,
-    ) -> Pin<Box<dyn Future<Output = Result<(), ()>> + Send>> {
+    ) -> TaskHandle {
         let (res_tx, res_rx) = oneshot::channel();
         tokio::spawn(async move {
             task.await;

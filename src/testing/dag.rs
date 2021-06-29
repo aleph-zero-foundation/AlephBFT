@@ -130,7 +130,7 @@ async fn run_consensus_on_dag(
     let conf = gen_config(NodeIndex(0), n_members.into());
     let (_exit_tx, exit_rx) = oneshot::channel();
     let (batch_tx, mut batch_rx) = mpsc::unbounded();
-    let spawner = Spawner {};
+    let spawner = Spawner::new();
     spawner.spawn(
         "consensus",
         consensus::run(conf, rx_in, tx_out, batch_tx, spawner.clone(), exit_rx),

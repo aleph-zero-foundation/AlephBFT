@@ -1,4 +1,4 @@
-use aleph_bft::{DataState, NodeCount, NodeIndex, OrderedBatch};
+use aleph_bft::{DataState, NodeCount, NodeIndex, OrderedBatch, TaskHandle};
 use async_trait::async_trait;
 use codec::{Decode, Encode};
 use futures::{
@@ -14,7 +14,6 @@ use std::{
     collections::{hash_map::DefaultHasher, HashSet},
     error::Error,
     hash::Hasher as StdHasher,
-    pin::Pin,
     sync::Arc,
     time::Duration,
 };
@@ -217,7 +216,7 @@ impl aleph_bft::SpawnHandle for Spawner {
         &self,
         _: &str,
         task: impl Future<Output = ()> + Send + 'static,
-    ) -> Pin<Box<dyn Future<Output = Result<(), ()>> + Send>> {
+    ) -> TaskHandle {
         Box::pin(async move { tokio::spawn(task).await.map_err(|_| ()) })
     }
 }

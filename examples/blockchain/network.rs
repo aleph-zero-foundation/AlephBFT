@@ -1,5 +1,5 @@
 use crate::chain::Block;
-use aleph_bft::NodeIndex;
+use aleph_bft::{NodeIndex, TaskHandle};
 use codec::{Decode, Encode};
 use futures::{
     channel::{
@@ -12,7 +12,7 @@ use futures::{
 
 use log::{debug, info};
 
-use std::{collections::HashMap, error::Error, io, iter, pin::Pin, time::Duration};
+use std::{collections::HashMap, error::Error, io, iter, time::Duration};
 
 use libp2p::{
     core::upgrade,
@@ -44,7 +44,7 @@ impl aleph_bft::SpawnHandle for Spawner {
         &self,
         _: &str,
         task: impl Future<Output = ()> + Send + 'static,
-    ) -> Pin<Box<dyn Future<Output = Result<(), ()>> + Send>> {
+    ) -> TaskHandle {
         Box::pin(async move { tokio::spawn(task).await.map_err(|_| ()) })
     }
 }

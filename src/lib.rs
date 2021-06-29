@@ -98,6 +98,9 @@ pub type Round = usize;
 /// Type for sending a new ordered batch of data items.
 pub type OrderedBatch<Data> = Vec<Data>;
 
+/// A handle for waiting the task's completion.
+pub type TaskHandle = Pin<Box<dyn Future<Output = Result<(), ()>> + Send>>;
+
 /// An abstraction for an execution engine for Rust's asynchronous tasks.
 pub trait SpawnHandle: Clone + Send + 'static {
     /// Run a new task.
@@ -108,7 +111,7 @@ pub trait SpawnHandle: Clone + Send + 'static {
         &self,
         name: &'static str,
         task: impl Future<Output = ()> + Send + 'static,
-    ) -> Pin<Box<dyn Future<Output = Result<(), ()>> + Send>>;
+    ) -> TaskHandle;
 }
 
 pub(crate) type Receiver<T> = mpsc::UnboundedReceiver<T>;

@@ -27,7 +27,7 @@ async fn agree_on_first_batch() {
 
     let mut exits = vec![];
     let mut batch_rxs = vec![];
-    let spawner = Spawner {};
+    let spawner = Spawner::new();
 
     let mut handles = vec![];
 
@@ -70,7 +70,7 @@ async fn agree_on_first_batch() {
 async fn catches_wrong_control_hash() {
     init_log();
     let n_nodes = 4;
-    let spawner = Spawner {};
+    let spawner = Spawner::new();
     let node_ix = 0;
     let (mut tx_in, rx_in) = mpsc::unbounded();
     let (tx_out, mut rx_out) = mpsc::unbounded();

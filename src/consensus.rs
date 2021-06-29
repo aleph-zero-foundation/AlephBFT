@@ -72,9 +72,9 @@ pub(crate) async fn run<H: Hasher + 'static>(
 
     futures::select! {
         _ = exit => {},
-        _ = terminal_handle=> {},
-        _ = creator_handle=> {},
-        _ = extender_handle=> {},
+        _ = terminal_handle => {},
+        _ = creator_handle => {},
+        _ = extender_handle => {},
     }
 
     // we stop no matter if received Ok or Err
