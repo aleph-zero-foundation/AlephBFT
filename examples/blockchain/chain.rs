@@ -1,18 +1,17 @@
-use aleph_bft::{NodeIndex, OrderedBatch};
+use aleph_bft::{DataState, NodeIndex, OrderedBatch};
 use codec::{Decode, Encode};
 use futures::{
     channel::{
         mpsc::{self, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
-    Future, FutureExt, StreamExt,
+    FutureExt, StreamExt,
 };
 use futures_timer::Delay;
 use log::{debug, error, info};
 use parking_lot::Mutex;
 use std::{
     collections::HashSet,
-    pin::Pin,
     sync::Arc,
     time::{self, Duration},
 };
@@ -89,12 +88,9 @@ impl aleph_bft::DataIO<Data> for DataIO {
         self.inner.lock().current_block
     }
 
-    fn check_availability(
-        &self,
-        data: &Data,
-    ) -> Option<Pin<Box<dyn Future<Output = Result<(), Self::Error>> + Send>>> {
+    fn check_availability(&self, data: &Data) -> DataState<Self::Error> {
         if self.inner.lock().available_blocks.contains(data) {
-            return None;
+            return DataState::Available;
         }
         let data_io = self.inner.clone();
         let data = *data;
@@ -106,7 +102,7 @@ impl aleph_bft::DataIO<Data> for DataIO {
                 Delay::new(Duration::from_millis(100)).await;
             }
         };
-        Some(Box::pin(fut))
+        DataState::Missing(Box::pin(fut))
     }
 
     fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), Self::Error> {

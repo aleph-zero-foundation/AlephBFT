@@ -1,4 +1,4 @@
-use aleph_bft::{NodeCount, NodeIndex, OrderedBatch};
+use aleph_bft::{DataState, NodeCount, NodeIndex, OrderedBatch};
 use async_trait::async_trait;
 use codec::{Decode, Encode};
 use futures::{
@@ -121,11 +121,8 @@ impl aleph_bft::DataIO<Data> for DataIO {
 
         *data
     }
-    fn check_availability(
-        &self,
-        _data: &Data,
-    ) -> Option<Pin<Box<dyn Future<Output = Result<(), Self::Error>> + Send>>> {
-        None
+    fn check_availability(&self, _data: &Data) -> DataState<Self::Error> {
+        DataState::Available
     }
     fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), Self::Error> {
         self.finalized_tx.unbounded_send(data).map_err(|_| ())

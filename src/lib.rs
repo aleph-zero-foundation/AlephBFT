@@ -31,6 +31,15 @@ mod units;
 /// The number of a session for which the consensus is run.
 pub type SessionId = u64;
 
+/// Type responsible for fetching missing data.
+pub type Fetch<E> = Pin<Box<dyn Future<Output = Result<(), E>> + Send>>;
+
+/// Enum representing state of the data in a data base.
+pub enum DataState<E> {
+    Available,
+    Missing(Fetch<E>),
+}
+
 /// The source of data items that consensus should order.
 ///
 /// AlephBFT internally calls [`DataIO::get_data`] whenever a new unit is created and data needs to be placed inside.
@@ -50,10 +59,7 @@ pub trait DataIO<Data> {
     /// Returns future that indicates when the data becomes available or None if the data is already available.
     /// For applications where `Data` is actually a real data and not some reprentation of it, this may be trivially
     /// implemented to return always `None`.
-    fn check_availability(
-        &self,
-        data: &Data,
-    ) -> Option<Pin<Box<dyn Future<Output = Result<(), Self::Error>> + Send>>>;
+    fn check_availability(&self, data: &Data) -> DataState<Self::Error>;
     /// Takes a new ordered batch of data item.
     fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), Self::Error>;
 }

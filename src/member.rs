@@ -16,7 +16,7 @@ use crate::{
     units::{
         ControlHash, FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore,
     },
-    Data, DataIO, Hasher, Index, MultiKeychain, Network, NodeCount, NodeIndex, NodeMap,
+    Data, DataIO, DataState, Hasher, Index, MultiKeychain, Network, NodeCount, NodeIndex, NodeMap,
     OrderedBatch, Sender, SpawnHandle,
 };
 
@@ -426,22 +426,25 @@ where
         for su in self.store.yield_buffer_units() {
             let full_unit = su.as_signable();
             let unit = full_unit.unit();
-            if let Some(avail_fut) = self.data_io.check_availability(full_unit.data()) {
-                let tx_consensus = self.tx_consensus.clone();
-                // In the execution below a panic in the expect cannot occure and a simple error trigers
-                // implicitly a retry of availability check, so this task is not essential.
-                self.spawn_handle
-                    .spawn("member/check_availability", async move {
-                        if avail_fut.await.is_ok() {
-                            tx_consensus
-                                .as_ref()
-                                .unwrap()
-                                .unbounded_send(NotificationIn::NewUnits(vec![unit]))
-                                .expect("Channel to consensus should be open");
-                        }
-                    });
-            } else {
-                self.send_consensus_notification(NotificationIn::NewUnits(vec![unit]))
+            match self.data_io.check_availability(full_unit.data()) {
+                DataState::Available => {
+                    self.send_consensus_notification(NotificationIn::NewUnits(vec![unit]))
+                }
+                DataState::Missing(fetch_fut) => {
+                    let tx_consensus = self.tx_consensus.clone();
+                    // In the execution below a panic in the expect cannot occure and a simple error trigers
+                    // implicitly a retry of availability check, so this task is not essential.
+                    self.spawn_handle
+                        .spawn("member/check_availability", async move {
+                            if fetch_fut.await.is_ok() {
+                                tx_consensus
+                                    .as_ref()
+                                    .unwrap()
+                                    .unbounded_send(NotificationIn::NewUnits(vec![unit]))
+                                    .expect("Channel to consensus should be open");
+                            }
+                        });
+                }
             }
         }
     }
