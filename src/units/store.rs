@@ -46,7 +46,7 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
         self.by_coord.contains_key(coord)
     }
 
-    // Outputs new legit units that are supposed to be sent to Consensus and emties the buffer.
+    // Outputs new legit units that are supposed to be sent to Consensus and empties the buffer.
     pub(crate) fn yield_buffer_units(&mut self) -> Vec<SignedUnit<'a, H, D, KB>> {
         std::mem::take(&mut self.legit_buffer)
     }
@@ -111,6 +111,7 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
                 let hash = su.as_signable().hash();
                 self.by_hash.remove(&hash);
                 self.parents.remove(&hash);
+                self.n_units_per_round[round] -= NodeCount(1);
                 // Now we are in a state as if the unit never arrived.
             }
         }
@@ -162,5 +163,135 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
 
     pub(crate) fn limit_per_node(&self) -> Round {
         self.max_round
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        nodes::NodeMap,
+        testing::mock::{Data, Hasher64, KeyBox},
+        units::{ControlHash, FullUnit, PreUnit, SignedUnit, UnitCoord, UnitStore},
+        NodeCount, NodeIndex, Signed,
+    };
+
+    async fn create_unit<'a>(
+        round: usize,
+        node_idx: NodeIndex,
+        count: NodeCount,
+        session_id: u64,
+        keybox: &'_ KeyBox,
+    ) -> SignedUnit<'_, Hasher64, Data, KeyBox> {
+        let preunit = PreUnit::<Hasher64>::new(
+            node_idx,
+            round,
+            ControlHash::new(&NodeMap::new_with_len(count)),
+        );
+        let coord = UnitCoord::new(round, node_idx);
+        let data = Data::new(coord, 0);
+        let full_unit = FullUnit::new(preunit, data, session_id);
+        Signed::sign(full_unit, keybox).await
+    }
+
+    #[tokio::test]
+    async fn add_unit_increment_count_test() {
+        let n_nodes = NodeCount(10);
+        let threshold = NodeCount(4);
+
+        let mut store = UnitStore::<Hasher64, Data, KeyBox>::new(n_nodes, threshold, 100);
+
+        let keybox = KeyBox::new(n_nodes, NodeIndex(0));
+        let unit = create_unit(0, NodeIndex(0), n_nodes, 0, &keybox).await;
+
+        assert_eq!(NodeCount(0), store.n_units_per_round[0]);
+        store.add_unit(unit, false);
+        assert_eq!(NodeCount(1), store.n_units_per_round[0]);
+    }
+
+    #[tokio::test]
+    async fn add_units_increment_round_test() {
+        let n_nodes = NodeCount(10);
+        let threshold = NodeCount(4);
+
+        let mut store = UnitStore::<Hasher64, Data, KeyBox>::new(n_nodes, threshold, 100);
+
+        let keyboxes: Vec<_> = (0..=4)
+            .map(|i| KeyBox::new(n_nodes, NodeIndex(i)))
+            .collect();
+
+        assert_eq!(0, store.round_in_progress);
+        assert_eq!(NodeCount(0), store.n_units_per_round[0]);
+
+        for (i, keybox) in keyboxes.iter().enumerate() {
+            let unit = create_unit(0, NodeIndex(i), n_nodes, 0, keybox).await;
+            store.add_unit(unit, false);
+        }
+
+        assert_eq!(1, store.round_in_progress);
+        assert_eq!(NodeCount(5), store.n_units_per_round[0]);
+    }
+
+    #[tokio::test]
+    async fn mark_forker_restore_state() {
+        let n_nodes = NodeCount(10);
+        let threshold = NodeCount(4);
+
+        let mut store = UnitStore::<Hasher64, Data, KeyBox>::new(n_nodes, threshold, 100);
+
+        let keyboxes: Vec<_> = (0..=4)
+            .map(|i| KeyBox::new(n_nodes, NodeIndex(i)))
+            .collect();
+
+        let mut forker_hashes = Vec::new();
+
+        for round in 0..4 {
+            for (i, keybox) in keyboxes.iter().enumerate() {
+                let unit = create_unit(round, NodeIndex(i), n_nodes, 0, keybox).await;
+                if i == 0 {
+                    forker_hashes.push(unit.as_signable().hash());
+                }
+                store.add_unit(unit, false);
+            }
+        }
+
+        // Forker's units
+        for round in 4..7 {
+            let unit = create_unit(round, NodeIndex(0), n_nodes, 0, &keyboxes[0]).await;
+            forker_hashes.push(unit.as_signable().hash());
+            store.add_unit(unit, false);
+        }
+
+        let forker_units: Vec<_> = store
+            .mark_forker(NodeIndex(0))
+            .iter()
+            .map(|unit| unit.clone().into_unchecked().as_signable().round())
+            .collect();
+
+        assert_eq!(vec![0, 1, 2, 3, 4], forker_units);
+        assert!(store.is_forker[NodeIndex(0)]);
+
+        // Rounds that are not in progress still have forker's units
+        for (round, hash) in forker_hashes[0..4].iter().enumerate() {
+            let coord = UnitCoord::new(round, NodeIndex(0));
+            assert_eq!(NodeCount(5), store.n_units_per_round[round]);
+            assert!(store.by_coord.contains_key(&coord));
+            assert!(store.by_hash.contains_key(hash));
+        }
+
+        // Round in progress still has forker's unit
+        assert_eq!(NodeCount(1), store.n_units_per_round[4]);
+        assert!(store
+            .by_coord
+            .contains_key(&UnitCoord::new(4, NodeIndex(0))));
+        assert!(store.by_hash.contains_key(&forker_hashes[4]));
+
+        // Rounds after round in progress are "free" of forker's units;
+        for (round, hash) in forker_hashes[5..7].iter().enumerate() {
+            let round = round + 5;
+            let coord = UnitCoord::new(round, NodeIndex(0));
+            assert_eq!(NodeCount(0), store.n_units_per_round[round]);
+            assert!(!store.by_coord.contains_key(&coord));
+            assert!(!store.by_hash.contains_key(hash));
+        }
     }
 }
