@@ -1,4 +1,4 @@
-use log::{debug, error};
+use log::{debug, error, trace};
 
 use futures::{channel::oneshot, StreamExt};
 
@@ -149,7 +149,7 @@ impl<'a> MaliciousMember<'a> {
     fn on_network_data(&mut self, data: NetworkData) {
         // We ignore all messages except those carrying new units.
         if let NetworkDataT(Units(NewUnit(unchecked))) = data {
-            debug!(target: "malicious-member", "New unit received {:?}.", &unchecked);
+            trace!(target: "malicious-member", "New unit received {:?}.", &unchecked);
             match unchecked.check(self.keybox) {
                 Ok(su) => self.on_unit_received(su),
                 Err(unchecked) => {
@@ -248,7 +248,7 @@ async fn honest_members_agree_on_batches_byzantine(
 
     let expected_forkers = n_members - n_honest;
     for node_ix in 1..n_honest {
-        debug!("batch {} received", node_ix);
+        debug!(target: "byzantine-test", "batch {} received", node_ix);
         assert_eq!(batches[0], batches[node_ix]);
         for recipient_id in 1..n_members {
             if node_ix != recipient_id {

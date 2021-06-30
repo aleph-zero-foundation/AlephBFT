@@ -1,7 +1,7 @@
 use futures::{channel::oneshot, StreamExt};
 use std::collections::{HashMap, VecDeque};
 
-use log::debug;
+use log::{debug, error, info};
 
 use crate::{
     nodes::{NodeCount, NodeIndex, NodeMap},
@@ -153,7 +153,7 @@ impl<H: Hasher> Extender<H> {
         self.finalizer_tx
             .unbounded_send(batch)
             .map_err(|e| {
-                debug!(target: "AlephBFT-extender", "{:?} channel for batches is closed {:?}, closing", self.node_id, e);
+                error!(target: "AlephBFT-extender", "{:?} channel for batches is closed {:?}, closing", self.node_id, e);
             })?;
 
         debug!(target: "AlephBFT-extender", "{:?} Finalized round {:?} with head {:?}.", self.node_id, round, head);
@@ -313,7 +313,7 @@ impl<H: Hasher> Extender<H> {
                     }
                 }
                 _ = &mut exit => {
-                    debug!(target: "AlephBFT-extender", "{:?} received exit signal.", self.node_id);
+                    info!(target: "AlephBFT-extender", "{:?} received exit signal.", self.node_id);
                     break
                 }
             }

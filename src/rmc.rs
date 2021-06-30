@@ -12,7 +12,7 @@ use futures::{
     FutureExt, StreamExt,
 };
 use futures_timer::Delay;
-use log::debug;
+use log::{debug, warn};
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap},
@@ -138,7 +138,6 @@ impl<T: Send + Sync + Clone> TaskScheduler<T> for DoublingDelayScheduler<T> {
                     let scheduled_task = ScheduledTask::new(task, self.initial_delay);
                     self.scheduled_tasks.push(scheduled_task);
                 } else {
-                    debug!(target: "AlephBFT-rmc", "The tasks ended");
                     return None;
                 }
             }
@@ -249,14 +248,14 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
                     self.on_complete_multisignature(multisigned);
                 }
                 Err(_) => {
-                    debug!(target: "AlephBFT-rmc", "Received a hash with a bad multisignature");
+                    warn!(target: "AlephBFT-rmc", "Received a hash with a bad multisignature");
                 }
             },
             Message::SignedHash(unchecked) => {
                 let signed_hash = match unchecked.check(self.keychain) {
                     Ok(signed_hash) => signed_hash,
                     Err(_) => {
-                        debug!(target: "AlephBFT-rmc", "Received a hash with a bad signature");
+                        warn!(target: "AlephBFT-rmc", "Received a hash with a bad signature");
                         return;
                     }
                 };

@@ -8,7 +8,7 @@ use futures::{
     },
     Future, FutureExt, StreamExt,
 };
-use log::info;
+use log::{debug, info};
 use parking_lot::Mutex;
 use std::{
     collections::{hash_map::DefaultHasher, HashSet},
@@ -58,7 +58,7 @@ async fn main() {
     let n_members = parse_arg(2);
     let n_finalized = parse_arg(3);
 
-    info!("Getting network up.");
+    info!(target: "dummy-honest", "Getting network up.");
     let (network, mut manager) = Network::new().await.unwrap();
     let (close_network, exit) = oneshot::channel();
     tokio::spawn(async move { manager.run(exit).await });
@@ -84,7 +84,7 @@ async fn main() {
                 finalized.insert(data);
             }
         }
-        info!("Got new batch. Finalized = {:?}", finalized.len());
+        debug!(target: "dummy-honest", "Got new batch. Finalized = {:?}", finalized.len());
         if finalized.len() == n_finalized {
             break;
         }
@@ -290,7 +290,7 @@ impl Network {
     async fn new() -> Result<(Self, NetworkManager), Box<dyn Error>> {
         let local_key = identity::Keypair::generate_ed25519();
         let local_peer_id = PeerId::from(local_key.public());
-        info!("Local peer id: {:?}", local_peer_id);
+        info!(target: "dummy-honest", "Local peer id: {:?}", local_peer_id);
 
         let transport = development_transport(local_key).await?;
 

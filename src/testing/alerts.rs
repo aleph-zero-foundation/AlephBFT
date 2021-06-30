@@ -13,7 +13,7 @@ use futures::{
     FutureExt, StreamExt,
 };
 use futures_timer::Delay;
-use log::debug;
+use log::trace;
 use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
@@ -58,7 +58,7 @@ impl Segment {
         }
         match self.expected.get_mut(&output) {
             Some(count) => *count -= 1,
-            None => debug!("Possibly unnecessary {:?} emitted by alerter.", output),
+            None => trace!("Possibly unnecessary {:?} emitted by alerter.", output),
         }
         if self.expected.get(&output) == Some(&0) {
             self.expected.remove(&output);
@@ -257,7 +257,7 @@ impl TestCase {
                         None => panic!("Notification stream unexpectedly closed."),
                     },
                 }
-                debug!("Remaining items in this segment: {:?}.", segment.expected);
+                trace!("Remaining items in this segment: {:?}.", segment.expected);
             }
         }
         exit_alerter

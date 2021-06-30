@@ -10,7 +10,7 @@ use futures::{
     sink::SinkExt,
     stream::StreamExt,
 };
-use log::debug;
+use log::trace;
 
 fn init_log() {
     let _ = env_logger::builder()
@@ -93,7 +93,7 @@ async fn catches_wrong_control_hash() {
     let _ = tx_in.send(NotificationIn::NewUnits(vec![bad_unit])).await;
     loop {
         let notification = rx_out.next().await.unwrap();
-        debug!("notification {:?}", notification);
+        trace!(target: "consensus-test", "notification {:?}", notification);
         if let NotificationOut::WrongControlHash(h) = notification {
             assert_eq!(h, bad_hash, "Expected notification for our bad unit.");
             break;

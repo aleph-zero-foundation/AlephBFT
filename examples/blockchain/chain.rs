@@ -8,7 +8,7 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use futures_timer::Delay;
-use log::{debug, error};
+use log::{debug, error, info};
 use parking_lot::Mutex;
 use std::{
     collections::HashSet,
@@ -27,12 +27,12 @@ pub(crate) struct Block {
 
 impl Block {
     pub(crate) fn new(num: BlockNum, size: usize) -> Self {
-        debug!(target: "Blockchain-chain", "Started block creation {:?}", num);
+        debug!(target: "Blockchain-chain", "Started creating block {:?}", num);
         // Not extremely random, but good enough.
         let data: Vec<u8> = (0..size)
             .map(|i| ((i + i / 999 + (i >> 12)) % 8) as u8)
             .collect();
-        debug!(target: "Blockchain-chain", "Finished block creation {:?}", num);
+        debug!(target: "Blockchain-chain", "Finished creating block {:?}", num);
         Block { num, data }
     }
 }
@@ -182,7 +182,7 @@ pub(crate) async fn run_blockchain(
                 if curr_time >= block_creation_time {
                     let block = Block::new(block_num, config.data_size);
                     if let Err(e) = block_tx.unbounded_send(block) {
-                        error!(target: "Blockchain-chain", "Issue with sending block {:?}. Exiting.", e);
+                        error!(target: "Blockchain-chain", "Error when sending block {:?}. Exiting.", e);
                         return;
                     }
                     data_io.add_block(block_num);
@@ -202,7 +202,7 @@ pub(crate) async fn run_blockchain(
                     //We do nothing, but this takes us out of the select.
                 }
                 _ = &mut exit => {
-                    debug!(target: "Blockchain-chain", "Received exit signal.");
+                    info!(target: "Blockchain-chain", "Received exit signal.");
                     return;
                 },
             }

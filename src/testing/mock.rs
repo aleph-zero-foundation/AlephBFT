@@ -317,7 +317,7 @@ impl Future for UnreliableRouter {
         for (sender, (mut data, recipient)) in buffer {
             let rand_sample = rand::random::<f64>();
             if rand_sample > self.reliability {
-                debug!("Simulated network fail.");
+                debug!(target: "testing-mock", "Simulated network fail.");
                 continue;
             }
             let mut peers = self.peers.lock();
@@ -432,7 +432,7 @@ impl DataIOT<Data> for DataIO {
     }
     fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), ()> {
         self.tx.unbounded_send(data).map_err(|e| {
-            error!(target: "data-io", "Error when sending data from DataIO {:?}.", e);
+            error!(target: "testing-mock", "Error when sending data from DataIO {:?}.", e);
         })
     }
 }

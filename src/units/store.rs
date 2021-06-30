@@ -1,4 +1,5 @@
 use super::*;
+use log::{trace, warn};
 
 /// A component for temporarily storing units before they are declared "legit" and sent
 /// to the Terminal. We refer to the documentation https://cardinal-cryptography.github.io/AlephBFT/internals.html
@@ -95,7 +96,7 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
     // The returned vector is sorted w.r.t. increasing rounds. Units of higher round created by this node are removed from store.
     pub(crate) fn mark_forker(&mut self, forker: NodeIndex) -> Vec<SignedUnit<'a, H, D, KB>> {
         if self.is_forker[forker] {
-            error!(target: "AlephBFT-unit-store", "Trying to mark the node {:?} as forker for the second time.", forker);
+            warn!(target: "AlephBFT-unit-store", "Trying to mark the node {:?} as forker for the second time.", forker);
         }
         self.is_forker[forker] = true;
         let forkers_units = (0..=self.round_in_progress)
@@ -110,7 +111,7 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
                 // units in the store and the only way this forker's unit is sent to Consensus is when
                 // it arrives in an alert for the *first* time.
                 // If we didn't do that, then there would be some awkward issues with duplicates.
-                debug!(target: "AlephBFT-unit-store", "Removing unit from forker {:?}  {:?}.", coord, su.as_signable());
+                trace!(target: "AlephBFT-unit-store", "Removing unit from forker {:?}  {:?}.", coord, su.as_signable());
                 self.by_coord.remove(&coord);
                 let hash = su.as_signable().hash();
                 self.by_hash.remove(&hash);
@@ -128,7 +129,7 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
         let creator = su.as_signable().creator();
 
         if alert {
-            debug!(target: "AlephBFT-unit-store", "Adding unit with alert {:?}.", su.as_signable());
+            trace!(target: "AlephBFT-unit-store", "Adding unit with alert {:?}.", su.as_signable());
             assert!(
                 self.is_forker[creator],
                 "The forker must be marked before adding alerted units."
@@ -136,7 +137,7 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
         }
         if self.contains_hash(&hash) {
             // Ignoring a duplicate.
-            debug!(target: "AlephBFT-unit-store", "A unit ignored as a duplicate {:?}.", su.as_signable());
+            trace!(target: "AlephBFT-unit-store", "A unit ignored as a duplicate {:?}.", su.as_signable());
             return;
         }
         self.by_hash.insert(hash, su.clone());

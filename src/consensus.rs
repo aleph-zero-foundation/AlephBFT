@@ -1,5 +1,5 @@
 use futures::channel::{mpsc, oneshot};
-use log::debug;
+use log::{error, info};
 
 use crate::{
     config::Config,
@@ -18,7 +18,7 @@ pub(crate) async fn run<H: Hasher + 'static>(
     spawn_handle: impl SpawnHandle,
     exit: oneshot::Receiver<()>,
 ) {
-    debug!(target: "AlephBFT", "{:?} Starting all services...", conf.node_ix);
+    info!(target: "AlephBFT", "{:?} Starting all services...", conf.node_ix);
 
     let n_members = conf.n_members;
 
@@ -44,13 +44,13 @@ pub(crate) async fn run<H: Hasher + 'static>(
     // send a new parent candidate to the creator
     terminal.register_post_insert_hook(Box::new(move |u| {
         if let Err(e) = parents_tx.unbounded_send(u.into()) {
-            debug!(target: "AlephBFT", "channel to creator is closed {:?}", e);
+            error!(target: "AlephBFT", "channel to creator is closed {:?}", e);
         }
     }));
     // try to extend the partial order after adding a unit to the dag
     terminal.register_post_insert_hook(Box::new(move |u| {
         if let Err(e) = electors_tx.unbounded_send(u.into()) {
-            debug!(target: "AlephBFT", "channel to extender is closed {:?}", e);
+            error!(target: "AlephBFT", "channel to extender is closed {:?}", e);
         }
     }));
 
@@ -59,7 +59,7 @@ pub(crate) async fn run<H: Hasher + 'static>(
         "consensus/terminal",
         async move { terminal.run(exit_rx).await },
     );
-    debug!(target: "AlephBFT", "{:?} All services started.", conf.node_ix);
+    info!(target: "AlephBFT", "{:?} All services started.", conf.node_ix);
 
     let _ = exit.await;
     // we stop no matter if received Ok or Err
@@ -67,5 +67,5 @@ pub(crate) async fn run<H: Hasher + 'static>(
     let _ = creator_exit.send(());
     let _ = extender_exit.send(());
 
-    debug!(target: "AlephBFT", "{:?} All services stopped.", conf.node_ix);
+    info!(target: "AlephBFT", "{:?} All services stopped.", conf.node_ix);
 }

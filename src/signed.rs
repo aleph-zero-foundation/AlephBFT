@@ -4,7 +4,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use codec::{Decode, Encode, Error, Input, Output};
-use log::debug;
+use log::warn;
 use std::{fmt::Debug, marker::PhantomData};
 /// The type used as a signature.
 ///
@@ -398,7 +398,7 @@ impl<'a, T: Signable, MK: MultiKeychain> PartiallyMultisigned<'a, T, MK> {
     /// Adds a signature and checks if multisignature is complete.
     pub fn add_signature(self, signed: Signed<'a, Indexed<T>, MK>, keychain: &'a MK) -> Self {
         if self.as_signable().hash().as_ref() != signed.as_signable().hash().as_ref() {
-            debug!(target: "AlephBFT-add_signature", "Tried to add a signature of a different object");
+            warn!(target: "AlephBFT-signed", "Tried to add a signature of a different object");
             return self;
         }
         match self {

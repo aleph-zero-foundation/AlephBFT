@@ -12,7 +12,7 @@ use futures::{
     FutureExt,
 };
 use futures_timer::Delay;
-use log::{debug, error};
+use log::{debug, error, trace};
 use rand::{distributions::Open01, prelude::*};
 use std::{cmp, time::Duration};
 
@@ -113,7 +113,7 @@ impl ConsensusDagFeeder {
             match notification {
                 Some(notification) => self.on_consensus_notification(notification),
                 None => {
-                    debug!("Consensus notification stream closed.");
+                    error!(target: "dag-test", "Consensus notification stream closed.");
                     break;
                 }
             }
@@ -274,7 +274,7 @@ async fn ordering_random_dag_consistency_under_permutations() {
         let mut units = generate_random_dag(n_members, height, seed);
         let batch_on_sorted =
             run_consensus_on_dag(units.clone(), n_members, 80 + (n_members as u64) * 5).await;
-        error!(
+        debug!(target: "dag-test",
             "seed {:?} n_members {:?} height {:?} batch_len {:?}",
             seed,
             n_members,
@@ -291,19 +291,19 @@ async fn ordering_random_dag_consistency_under_permutations() {
                     batch = run_consensus_on_dag(units.clone(), n_members, 200).await;
                 }
                 if batch != batch_on_sorted {
-                    error!(
+                    debug!(target: "dag-test",
                         "seed {:?} n_members {:?} height {:?} i {:?}",
                         seed, n_members, height, i
                     );
-                    error!(
+                    debug!(target: "dag-test",
                         "batch lens {:?} \n {:?}",
                         batch_on_sorted.len(),
                         batch.len()
                     );
-                    error!("batches {:?} \n {:?}", batch_on_sorted, batch);
+                    trace!(target: "dag-test", "batches {:?} \n {:?}", batch_on_sorted, batch);
                     assert!(batch == batch_on_sorted);
                 } else {
-                    error!(
+                    debug!(
                         "False alarm at seed {:?} n_members {:?} height {:?}!",
                         seed, n_members, height
                     );

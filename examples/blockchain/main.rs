@@ -1,5 +1,5 @@
 use futures::{channel::oneshot, StreamExt};
-use log::info;
+use log::{debug, info};
 
 use aleph_bft::NodeIndex;
 use chain::{gen_chain_config, run_blockchain, DataIO};
@@ -107,7 +107,7 @@ async fn main() {
                 max_block_finalized = block_num;
             }
         }
-        info!(target: "Blockchain-main",
+        debug!(target: "Blockchain-main",
             "Got new batch. Highest finalized = {:?}",
             max_block_finalized
         );

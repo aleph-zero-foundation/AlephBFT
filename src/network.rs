@@ -227,7 +227,7 @@ mod tests {
         if let Units(NewUnit(decoded_unchecked)) = decoded.unwrap().0 {
             assert!(
                 uu.as_signable() == decoded_unchecked.as_signable(),
-                "decoded should equel encodee"
+                "decoded should equal encoded"
             );
         }
     }
@@ -243,9 +243,9 @@ mod tests {
             RequestCoord(ni, uc),
         ));
         let decoded = mock::NetworkData::decode(&mut &nd.encode()[..]);
-        assert!(decoded.is_ok(), "Bug in dencode/decode for Units(NewUnit)");
+        assert!(decoded.is_ok(), "Bug in encode/decode for Units(NewUnit)");
         if let Units(RequestCoord(dni, duc)) = decoded.unwrap().0 {
-            assert!(ni == dni && uc == duc, "decoded should equel encodee");
+            assert!(ni == dni && uc == duc, "decoded should equal encoded");
         }
     }
 
@@ -259,11 +259,11 @@ mod tests {
             ResponseCoord(uu.clone()),
         ));
         let decoded = mock::NetworkData::decode(&mut &nd.encode()[..]);
-        assert!(decoded.is_ok(), "Bug in dencode/decode for Units(NewUnit)");
+        assert!(decoded.is_ok(), "Bug in encode/decode for Units(NewUnit)");
         if let Units(ResponseCoord(decoded_unchecked)) = decoded.unwrap().0 {
             assert!(
                 uu.as_signable() == decoded_unchecked.as_signable(),
-                "decoded should equel encodee"
+                "decoded should equal encoded"
             );
         }
     }
@@ -279,9 +279,9 @@ mod tests {
             RequestParents(ni, h),
         ));
         let decoded = mock::NetworkData::decode(&mut &nd.encode()[..]);
-        assert!(decoded.is_ok(), "Bug in dencode/decode for Units(NewUnit)");
+        assert!(decoded.is_ok(), "Bug in encode/decode for Units(NewUnit)");
         if let Units(RequestParents(dni, dh)) = decoded.unwrap().0 {
-            assert!(ni == dni && h == dh, "decoded should equel encodee");
+            assert!(ni == dni && h == dh, "decoded should equal encoded");
         }
     }
 
@@ -300,17 +300,17 @@ mod tests {
             ResponseParents(h, parents.clone()),
         ));
         let decoded = mock::NetworkData::decode(&mut &nd.encode()[..]);
-        assert!(decoded.is_ok(), "Bug in dencode/decode for Units(NewUnit)");
+        assert!(decoded.is_ok(), "Bug in encode/decode for Units(NewUnit)");
         if let Units(ResponseParents(dh, dparents)) = decoded.unwrap().0 {
-            assert!(h == dh, "decoded should equel encodee");
+            assert!(h == dh, "decoded should equal encoded");
             assert!(
                 parents.len() == dparents.len(),
-                "decoded should equel encodee"
+                "decoded should equal encoded"
             );
             for (p, dp) in parents.iter().zip(dparents.iter()) {
                 assert!(
                     p.as_signable() == dp.as_signable(),
-                    "decoded should equel encodee"
+                    "decoded should equal encoded"
                 );
             }
         }
@@ -332,7 +332,7 @@ mod tests {
             UncheckedSigned::new(alert.clone(), Signature {}),
         )));
         let decoded = mock::NetworkData::decode(&mut &nd.encode()[..]);
-        assert!(decoded.is_ok(), "Bug in dencode/decode for Units(NewUnit)");
+        assert!(decoded.is_ok(), "Bug in encode/decode for Units(NewUnit)");
         if let Alert(ForkAlert(unchecked_alert)) = decoded.unwrap().0 {
             assert!(
                 &alert == unchecked_alert.as_signable(),

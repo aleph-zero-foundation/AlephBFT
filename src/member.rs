@@ -3,7 +3,7 @@ use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,
 };
-use log::{debug, error};
+use log::{debug, error, info, trace, warn};
 use rand::Rng;
 
 use crate::{
@@ -237,29 +237,29 @@ where
             let message = UnitMessage::<H, D, MK::Signature>::RequestParents(self.index(), u_hash);
             let peer_id = self.random_peer();
             self.send_unit_message(message, peer_id);
-            debug!(target: "AlephBFT-member", "{:?} Fetch parents for {:?} sent.", self.index(), u_hash);
+            trace!(target: "AlephBFT-member", "{:?} Fetch parents for {:?} sent.", self.index(), u_hash);
             let delay = self.config.delay_config.requests_interval;
             self.requests.push(ScheduledTask::new(
                 Task::ParentsRequest(u_hash),
                 curr_time + delay,
             ));
         } else {
-            debug!(target: "AlephBFT-member", "{:?} Request dropped as the parents are in store for {:?}.", self.index(), u_hash);
+            trace!(target: "AlephBFT-member", "{:?} Request dropped as the parents are in store for {:?}.", self.index(), u_hash);
         }
     }
 
     fn schedule_coord_request(&mut self, coord: UnitCoord, curr_time: time::Instant) {
-        debug!(target: "AlephBFT-member", "{:?} Starting request for {:?}", self.index(), coord);
+        trace!(target: "AlephBFT-member", "{:?} Starting request for {:?}", self.index(), coord);
         // If we already have a unit with such a coord in our store then there is no need to request it.
         // It will be sent to consensus soon (or have already been sent).
         if self.store.contains_coord(&coord) {
-            debug!(target: "AlephBFT-member", "{:?} Request dropped as the unit is in store already {:?}", self.index(), coord);
+            trace!(target: "AlephBFT-member", "{:?} Request dropped as the unit is in store already {:?}", self.index(), coord);
             return;
         }
         let message = UnitMessage::<H, D, MK::Signature>::RequestCoord(self.index(), coord);
         let peer_id = self.random_peer();
         self.send_unit_message(message, peer_id);
-        debug!(target: "AlephBFT-member", "{:?} Fetch request for {:?} sent.", self.index(), coord);
+        trace!(target: "AlephBFT-member", "{:?} Fetch request for {:?} sent.", self.index(), coord);
         let delay = self.config.delay_config.requests_interval;
         self.requests.push(ScheduledTask::new(
             Task::CoordRequest(coord),
@@ -279,7 +279,7 @@ where
             .cloned()
             .expect("Our units are in store.");
         let message = UnitMessage::<H, D, MK::Signature>::NewUnit(signed_unit.into());
-        debug!(target: "AlephBFT-member", "{:?} Sending a unit {:?} over network {:?}th time.", self.index(), hash, multicast_number);
+        trace!(target: "AlephBFT-member", "{:?} Sending a unit {:?} over network {:?}th time.", self.index(), hash, multicast_number);
         self.broadcast_units(message);
         let delay = (self.config.delay_config.unit_broadcast_delay)(multicast_number);
         self.requests.push(ScheduledTask::new(
@@ -289,7 +289,7 @@ where
     }
 
     pub(crate) fn on_missing_coords(&mut self, coords: Vec<UnitCoord>) {
-        debug!(target: "AlephBFT-member", "{:?} Dealing with missing coords notification {:?}.", self.index(), coords);
+        trace!(target: "AlephBFT-member", "{:?} Dealing with missing coords notification {:?}.", self.index(), coords);
         let curr_time = time::Instant::now();
         for coord in coords {
             if !self.store.contains_coord(&coord) {
@@ -301,12 +301,12 @@ where
     }
 
     fn on_wrong_control_hash(&mut self, u_hash: H::Hash) {
-        debug!(target: "AlephBFT-member", "{:?} Dealing with wrong control hash notification {:?}.", self.index(), u_hash);
+        trace!(target: "AlephBFT-member", "{:?} Dealing with wrong control hash notification {:?}.", self.index(), u_hash);
         if let Some(p_hashes) = self.store.get_parents(u_hash) {
             // We have the parents by some strange reason (someone sent us parents
             // without us requesting them).
             let p_hashes = p_hashes.clone();
-            debug!(target: "AlephBFT-member", "{:?} We have the parents for {:?} even though we did not request them.", self.index(), u_hash);
+            trace!(target: "AlephBFT-member", "{:?} We have the parents for {:?} even though we did not request them.", self.index(), u_hash);
             self.send_consensus_notification(NotificationIn::UnitParents(u_hash, p_hashes));
         } else {
             let curr_time = time::Instant::now();
@@ -338,23 +338,23 @@ where
         // just a random hash, but we still would not be able to deduce that by looking at the unit only.
         let pre_unit = su.as_signable().as_pre_unit();
         if pre_unit.n_members() != self.config.n_members {
-            debug!(target: "AlephBFT-member", "{:?} Unit with wrong length of parents map.", self.index());
+            warn!(target: "AlephBFT-member", "{:?} Unit with wrong length of parents map.", self.index());
             return false;
         }
         let round = pre_unit.round();
         let n_parents = pre_unit.n_parents();
         if round == 0 && n_parents > NodeCount(0) {
-            debug!(target: "AlephBFT-member", "{:?} Unit of round zero with non-zero number of parents.", self.index());
+            warn!(target: "AlephBFT-member", "{:?} Unit of round zero with non-zero number of parents.", self.index());
             return false;
         }
         let threshold = self.threshold;
         if round > 0 && n_parents < threshold {
-            debug!(target: "AlephBFT-member", "{:?} Unit of non-zero round with only {:?} parents while at least {:?} are required.", self.index(), n_parents, threshold);
+            warn!(target: "AlephBFT-member", "{:?} Unit of non-zero round with only {:?} parents while at least {:?} are required.", self.index(), n_parents, threshold);
             return false;
         }
         let control_hash = &pre_unit.control_hash();
         if round > 0 && !control_hash.parents_mask[pre_unit.creator()] {
-            debug!(target: "AlephBFT-member", "{:?} Unit does not have its creator's previous unit as parent.", self.index());
+            warn!(target: "AlephBFT-member", "{:?} Unit does not have its creator's previous unit as parent.", self.index());
             return false;
         }
         true
@@ -368,7 +368,7 @@ where
         let su = match uu.check(self.keybox) {
             Ok(su) => su,
             Err(uu) => {
-                debug!(target: "AlephBFT-member", "{:?} Wrong signature received {:?}.", self.index(), &uu);
+                warn!(target: "AlephBFT-member", "{:?} Wrong signature received {:?}.", self.index(), &uu);
                 return None;
             }
         };
@@ -376,19 +376,19 @@ where
         if full_unit.session_id() != self.config.session_id {
             // NOTE: this implies malicious behavior as the unit's session_id
             // is incompatible with session_id of the message it arrived in.
-            debug!(target: "AlephBFT-member", "{:?} A unit with incorrect session_id! {:?}", self.index(), full_unit);
+            warn!(target: "AlephBFT-member", "{:?} A unit with incorrect session_id! {:?}", self.index(), full_unit);
             return None;
         }
         if full_unit.round() > self.store.limit_per_node() {
-            debug!(target: "AlephBFT-member", "{:?} A unit with too high round {}! {:?}", self.index(), full_unit.round(), full_unit);
+            warn!(target: "AlephBFT-member", "{:?} A unit with too high round {}! {:?}", self.index(), full_unit.round(), full_unit);
             return None;
         }
         if full_unit.creator().0 >= self.config.n_members.0 {
-            debug!(target: "AlephBFT-member", "{:?} A unit with too high creator index {}! {:?}", self.index(), full_unit.creator().0, full_unit);
+            warn!(target: "AlephBFT-member", "{:?} A unit with too high creator index {}! {:?}", self.index(), full_unit.creator().0, full_unit);
             return None;
         }
         if !self.validate_unit_parents(&su) {
-            debug!(target: "AlephBFT-member", "{:?} A unit did not pass parents validation. {:?}", self.index(), full_unit);
+            warn!(target: "AlephBFT-member", "{:?} A unit did not pass parents validation. {:?}", self.index(), full_unit);
             return None;
         }
         Some(su)
@@ -396,9 +396,9 @@ where
 
     fn add_unit_to_store_unless_fork(&mut self, su: SignedUnit<'a, H, D, MK>) {
         let full_unit = su.as_signable();
-        debug!(target: "AlephBFT-member", "{:?} Adding member unit to store {:?}", self.index(), full_unit);
+        trace!(target: "AlephBFT-member", "{:?} Adding member unit to store {:?}", self.index(), full_unit);
         if self.store.is_forker(full_unit.creator()) {
-            debug!(target: "AlephBFT-member", "{:?} Ignoring forker's unit {:?}", self.index(), full_unit);
+            trace!(target: "AlephBFT-member", "{:?} Ignoring forker's unit {:?}", self.index(), full_unit);
             return;
         }
         if let Some(sv) = self.store.is_new_fork(full_unit) {
@@ -418,7 +418,7 @@ where
         if u_round <= round_in_progress + rounds_margin {
             self.store.add_unit(su, false);
         } else {
-            debug!(target: "AlephBFT-member", "{:?} Unit {:?} ignored because of too high round {} when round in progress is {}.", self.index(), full_unit, u_round, round_in_progress);
+            warn!(target: "AlephBFT-member", "{:?} Unit {:?} ignored because of too high round {} when round in progress is {}.", self.index(), full_unit, u_round, round_in_progress);
         }
     }
 
@@ -460,11 +460,11 @@ where
         let maybe_su = (self.store.unit_by_coord(coord)).cloned();
 
         if let Some(su) = maybe_su {
-            debug!(target: "AlephBFT-member", "{:?} Answering fetch request for coord {:?} from {:?}.", self.index(), coord, peer_id);
+            trace!(target: "AlephBFT-member", "{:?} Answering fetch request for coord {:?} from {:?}.", self.index(), coord, peer_id);
             let message = UnitMessage::ResponseCoord(su.into());
             self.send_unit_message(message, peer_id);
         } else {
-            debug!(target: "AlephBFT-member", "{:?} Not answering fetch request for coord {:?}. Unit not in store.", self.index(), coord);
+            trace!(target: "AlephBFT-member", "{:?} Not answering fetch request for coord {:?}. Unit not in store.", self.index(), coord);
         }
     }
 
@@ -474,7 +474,7 @@ where
 
         if let Some(p_hashes) = maybe_p_hashes {
             let p_hashes = p_hashes.clone();
-            debug!(target: "AlephBFT-member", "{:?} Answering parents request for hash {:?} from {:?}.", self.index(), u_hash, peer_id);
+            trace!(target: "AlephBFT-member", "{:?} Answering parents request for hash {:?} from {:?}.", self.index(), u_hash, peer_id);
             let mut full_units = Vec::new();
             for hash in p_hashes.iter() {
                 if let Some(fu) = self.store.unit_by_hash(hash) {
@@ -492,7 +492,7 @@ where
             let message = UnitMessage::ResponseParents(u_hash, full_units);
             self.send_unit_message(message, peer_id);
         } else {
-            debug!(target: "AlephBFT-member", "{:?} Not answering parents request for hash {:?}. Unit not in DAG yet.", self.index(), u_hash);
+            trace!(target: "AlephBFT-member", "{:?} Not answering parents request for hash {:?}. Unit not in DAG yet.", self.index(), u_hash);
         }
     }
 
@@ -502,7 +502,7 @@ where
         parents: Vec<UncheckedSignedUnit<H, D, MK::Signature>>,
     ) {
         if self.store.get_parents(u_hash).is_some() {
-            debug!(target: "AlephBFT-member", "{:?} We got parents response but already know the parents.", self.index());
+            trace!(target: "AlephBFT-member", "{:?} We got parents response but already know the parents.", self.index());
             return;
         }
         let (u_round, u_control_hash, parent_ids) = match self.store.unit_by_hash(&u_hash) {
@@ -516,13 +516,13 @@ where
                 )
             }
             None => {
-                debug!(target: "AlephBFT-member", "{:?} We got parents but don't even know the unit. Ignoring.", self.index());
+                trace!(target: "AlephBFT-member", "{:?} We got parents but don't even know the unit. Ignoring.", self.index());
                 return;
             }
         };
 
         if parent_ids.len() != parents.len() {
-            debug!(target: "AlephBFT-member", "{:?} In received parent response expected {} parents got {} for unit {:?}.", self.index(), parents.len(), parent_ids.len(), u_hash);
+            warn!(target: "AlephBFT-member", "{:?} In received parent response expected {} parents got {} for unit {:?}.", self.index(), parents.len(), parent_ids.len(), u_hash);
             return;
         }
 
@@ -531,18 +531,18 @@ where
         for (i, uu) in parents.into_iter().enumerate() {
             let su = match self.validate_unit(uu) {
                 None => {
-                    debug!(target: "AlephBFT-member", "{:?} In received parent response received a unit that does not pass validation.", self.index());
+                    warn!(target: "AlephBFT-member", "{:?} In received parent response received a unit that does not pass validation.", self.index());
                     return;
                 }
                 Some(su) => su,
             };
             let full_unit = su.as_signable();
             if full_unit.round() + 1 != u_round {
-                debug!(target: "AlephBFT-member", "{:?} In received parent response received a unit with wrong round.", self.index());
+                warn!(target: "AlephBFT-member", "{:?} In received parent response received a unit with wrong round.", self.index());
                 return;
             }
             if full_unit.creator() != parent_ids[i] {
-                debug!(target: "AlephBFT-member", "{:?} In received parent response received a unit with wrong creator.", self.index());
+                warn!(target: "AlephBFT-member", "{:?} In received parent response received a unit with wrong creator.", self.index());
                 return;
             }
             let p_hash = full_unit.hash();
@@ -554,12 +554,12 @@ where
         }
 
         if ControlHash::<H>::combine_hashes(&p_hashes_node_map) != u_control_hash {
-            debug!(target: "AlephBFT-member", "{:?} In received parent response the control hash is incorrect {:?}.", self.index(), p_hashes_node_map);
+            warn!(target: "AlephBFT-member", "{:?} In received parent response the control hash is incorrect {:?}.", self.index(), p_hashes_node_map);
             return;
         }
         let p_hashes: Vec<H::Hash> = p_hashes_node_map.into_iter().flatten().collect();
         self.store.add_parents(u_hash, p_hashes.clone());
-        debug!(target: "AlephBFT-member", "{:?} Succesful parents reponse for {:?}.", self.index(), u_hash);
+        trace!(target: "AlephBFT-member", "{:?} Succesful parents reponse for {:?}.", self.index(), u_hash);
         self.send_consensus_notification(NotificationIn::UnitParents(u_hash, p_hashes));
     }
 
@@ -613,22 +613,22 @@ where
         use UnitMessage::*;
         match message {
             NewUnit(u) => {
-                debug!(target: "AlephBFT-member", "{:?} New unit received {:?}.", self.index(), &u);
+                trace!(target: "AlephBFT-member", "{:?} New unit received {:?}.", self.index(), &u);
                 self.on_unit_received(u, false);
             }
             RequestCoord(peer_id, coord) => {
                 self.on_request_coord(peer_id, coord);
             }
             ResponseCoord(u) => {
-                debug!(target: "AlephBFT-member", "{:?} Fetch response received {:?}.", self.index(), &u);
+                trace!(target: "AlephBFT-member", "{:?} Fetch response received {:?}.", self.index(), &u);
                 self.on_unit_received(u, false);
             }
             RequestParents(peer_id, u_hash) => {
-                debug!(target: "AlephBFT-member", "{:?} Parents request received {:?}.", self.index(), u_hash);
+                trace!(target: "AlephBFT-member", "{:?} Parents request received {:?}.", self.index(), u_hash);
                 self.on_request_parents(peer_id, u_hash);
             }
             ResponseParents(u_hash, parents) => {
-                debug!(target: "AlephBFT-member", "{:?} Response parents received {:?}.", self.index(), u_hash);
+                trace!(target: "AlephBFT-member", "{:?} Response parents received {:?}.", self.index(), u_hash);
                 self.on_parents_response(u_hash, parents);
             }
         }
@@ -647,7 +647,7 @@ where
             })
             .collect::<OrderedBatch<D>>();
         if let Err(e) = self.data_io.send_ordered_batch(batch) {
-            debug!(target: "AlephBFT-member", "{:?} Error when sending batch {:?}.", self.index(), e);
+            error!(target: "AlephBFT-member", "{:?} Error when sending batch {:?}.", self.index(), e);
         }
     }
 
@@ -666,7 +666,7 @@ where
         let (consensus_exit, exit_stream) = oneshot::channel();
         let config = self.config.clone();
         let sh = self.spawn_handle.clone();
-        debug!(target: "AlephBFT-member", "{:?} Spawning party for a session.", self.index());
+        info!(target: "AlephBFT-member", "{:?} Spawning party for a session.", self.index());
         self.spawn_handle.spawn("member/consensus", async move {
             consensus::run(
                 config,
@@ -721,7 +721,7 @@ where
         let ticker_delay = self.config.delay_config.tick_interval;
         let mut ticker = Delay::new(ticker_delay).fuse();
 
-        debug!(target: "AlephBFT-member", "{:?} Start routing messages from consensus to network", self.index());
+        info!(target: "AlephBFT-member", "{:?} Start routing messages from consensus to network", self.index());
         loop {
             futures::select! {
                 notification = rx_consensus.next() => match notification {
@@ -763,7 +763,7 @@ where
             }
             self.move_units_to_consensus();
         }
-        debug!(target: "AlephBFT-member", "{:?} Ending run.", self.index());
+        info!(target: "AlephBFT-member", "{:?} Ending run.", self.index());
 
         let _ = consensus_exit.send(());
         let _ = alerter_exit.send(());
