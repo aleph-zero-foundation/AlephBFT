@@ -18,7 +18,8 @@ pub struct DelayConfig {
     pub unit_creation_delay: DelaySchedule,
 }
 
-/// Main configuration of the consensus.
+/// Main configuration of the consensus. We refer to the documentation https://cardinal-cryptography.github.io/AlephBFT/aleph_bft_api.html
+/// Section 3.4 for a discussion of some of these parameters and their significance.
 #[derive(Clone)]
 pub struct Config {
     /// Identification number of the Member=0,..,(n_members-1).

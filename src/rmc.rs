@@ -172,6 +172,9 @@ impl<T: Send + Sync + Clone> TaskScheduler<T> for DoublingDelayScheduler<T> {
 /// and a node collects enough signatures to form a complete multisignature under the message,
 /// the multisigned message is yielded by the instance of [`ReliableMulticast`].
 /// The multisigned messages can be polled by calling [`ReliableMulticast::next_multisigned_hash`].
+///
+/// We refer to the documentation https://cardinal-cryptography.github.io/AlephBFT/reliable_broadcast.html
+/// for a high-level description of this protocol and how it is used for fork alerts.
 pub struct ReliableMulticast<'a, H: Signable + Hash, MK: MultiKeychain> {
     hash_states: HashMap<H, PartiallyMultisigned<'a, H, MK>>,
     network_rx: UnboundedReceiver<Message<H, MK::Signature, MK::PartialMultisignature>>,

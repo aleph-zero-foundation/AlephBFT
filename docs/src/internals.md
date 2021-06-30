@@ -36,6 +36,6 @@ The `Terminal` receives legit units, yet there might be two issues with such uni
 
 There is often a situation where the terminal receives a unit `U` and for some reason there is no unit yet for a particular slot in `U`'s parents, i.e., `U`'s parent map says that one of the parents was created by node `i` but terminal has no unit with "coordinates" `(U.round - 1, i)` (`UnitCoord` type in the implementation -- means a pair consising of `(V.round, V.creator)` for some unit `V`). In such a case terminal makes a request to the `Member` to get such a unit, which is then followed by `Member` sending a series of requests to random nodes in order to fetch such a unit.
 
-### 5.3 Extender
+### 5.4 Extender
 
 The `Extender`'s role is to receive Dag units (from `Terminal`) and extend the output stream. Towards this end it maintains the `round` for which the next `Head` must be chosen and the current unit `U` that is being decided for being `Head` or not. There is some caching made in the implementation so as to not recompute all the votes from scratch whenever a fresh unit arrives.

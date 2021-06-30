@@ -19,6 +19,9 @@ use std::time::Duration;
 /// - U has > floor(2*N/3) parents.
 /// The currently implemented strategy creates the unit U at the very first moment when enough
 /// candidates for parents are available for all the above constraints to be satisfied.
+///
+/// We refer to the documentation https://cardinal-cryptography.github.io/AlephBFT/internals.html
+/// Section 5.1 for a discussion of this component.
 pub(crate) struct Creator<H: Hasher> {
     node_ix: NodeIndex,
     parents_rx: Receiver<Unit<H>>,

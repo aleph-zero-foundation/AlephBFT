@@ -60,6 +60,9 @@ impl CacheState {
 /// this process checks whether a new round can be finalized and if so, it computes the batch of
 /// units that should be finalized, unwraps them (leaving only a block hash per unit) and pushes
 /// such a batch to a channel via the finalizer_tx endpoint.
+///
+/// We refer to the documentation https://cardinal-cryptography.github.io/AlephBFT/internals.html
+/// Section 5.4 for a discussion of this component.
 
 pub(crate) struct Extender<H: Hasher> {
     node_id: NodeIndex,

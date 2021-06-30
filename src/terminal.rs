@@ -98,6 +98,9 @@ type SyncClosure<X, Y> = Box<dyn Fn(X) -> Y + Sync + Send + 'static>;
 ///    gets this status, we mark all the parents that are already in the Dag and set appropriate triggers for when
 ///    the remaining parents are added to Dag.
 /// 6) At the moment when all parents have been added to Dag, the unit itself is added to Dag.
+///
+/// We also refer to the documentation https://cardinal-cryptography.github.io/AlephBFT/internals.html
+/// Section 5.3 for a discussion of this component.
 
 pub(crate) struct Terminal<H: Hasher> {
     node_id: NodeIndex,

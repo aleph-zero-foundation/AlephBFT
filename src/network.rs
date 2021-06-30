@@ -28,6 +28,9 @@ use std::fmt::Debug;
 /// AlephBFT might stop making progress, but from what we observe in tests, this happens only when
 /// the reliability is extremely bad, i.e., drops below 50% (which means there is some significant
 /// issue with the network).
+///
+/// We refer to the documentation https://cardinal-cryptography.github.io/AlephBFT/aleph_bft_api.html
+/// Section 3.1.2 for a discussion of the required guarantees of this trait's implementation.
 #[async_trait::async_trait]
 pub trait Network<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature>: Send {
     type Error: Debug;

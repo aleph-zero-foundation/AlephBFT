@@ -40,6 +40,9 @@ pub type SessionId = u64;
 /// but in applications one often wants to use hashes of data (for instance block hashes) in which case it is crucial
 /// for security that there is access to the actual data, cryptographically represented by a hash.
 /// It is assumed that the implementation of DataIO makes best effort of fetch the data in case it is unavailable.
+///
+/// We refer to the documentation https://cardinal-cryptography.github.io/AlephBFT/aleph_bft_api.html for a discussion
+/// and examples of how this trait can be implemented.
 pub trait DataIO<Data> {
     type Error: Debug + 'static;
     /// Outputs a new data item to be ordered

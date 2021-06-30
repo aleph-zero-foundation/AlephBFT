@@ -1,5 +1,9 @@
 use super::*;
 
+/// A component for temporarily storing units before they are declared "legit" and sent
+/// to the Terminal. We refer to the documentation https://cardinal-cryptography.github.io/AlephBFT/internals.html
+/// Section 5.4 for a discussion of this component and the notion of "legit" units.
+
 pub(crate) struct UnitStore<'a, H: Hasher, D: Data, KB: KeyBox> {
     by_coord: HashMap<UnitCoord, SignedUnit<'a, H, D, KB>>,
     by_hash: HashMap<H::Hash, SignedUnit<'a, H, D, KB>>,
