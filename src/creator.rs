@@ -7,7 +7,7 @@ use crate::{
 };
 use futures::{channel::oneshot, FutureExt, StreamExt};
 use futures_timer::Delay;
-use log::{error, info, trace, warn};
+use log::{info, trace, warn};
 use std::time::Duration;
 
 /// A process responsible for creating new units. It receives all the units added locally to the Dag
@@ -66,7 +66,7 @@ impl<H: Hasher> Creator<H> {
         }
     }
 
-    fn create_unit(&mut self) -> Result<(), ()> {
+    fn create_unit(&mut self) {
         let round = self.current_round;
         let parents = {
             if round == 0 {
@@ -80,18 +80,12 @@ impl<H: Hasher> Creator<H> {
 
         let new_preunit = PreUnit::new(self.node_ix, round, control_hash);
         trace!(target: "AlephBFT-creator", "{:?} Created a new unit {:?} at round {:?}.", self.node_ix, new_preunit, self.current_round);
-        self
-            .new_units_tx
+        self.new_units_tx
             .unbounded_send(NotificationOut::CreatedPreUnit(new_preunit))
-            .map_err(|e|
-        {
-            error!(target: "AlephBFT-creator", "{:?} notification channel is closed {:?}, closing", self.node_ix, e);
-        })?;
+            .expect("Notification channel should be open");
 
         self.current_round += 1;
         self.init_round(self.current_round);
-
-        Ok(())
     }
 
     fn add_unit(&mut self, round: Round, pid: NodeIndex, hash: H::Hash) {
@@ -148,9 +142,7 @@ impl<H: Hasher> Creator<H> {
                 },
             };
             if delay_passed && self.check_ready() {
-                if self.create_unit().is_err() {
-                    break;
-                };
+                self.create_unit();
                 delay_fut = Delay::new((self.create_lag)(round + 1)).fuse();
                 round += 1;
                 delay_passed = false;

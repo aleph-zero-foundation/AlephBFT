@@ -167,7 +167,7 @@ where
             .as_ref()
             .unwrap()
             .unbounded_send(notification)
-            .expect("channel to consensus should be open")
+            .expect("Channel to consensus should be open")
     }
 
     async fn on_create(&mut self, u: PreUnit<H>) {
@@ -221,7 +221,7 @@ where
             .as_ref()
             .unwrap()
             .unbounded_send((message, Recipient::Node(peer_id)))
-            .expect("channel to network should be open")
+            .expect("Channel to network should be open")
     }
 
     fn broadcast_units(&mut self, message: UnitMessage<H, D, MK::Signature>) {
@@ -229,7 +229,7 @@ where
             .as_ref()
             .unwrap()
             .unbounded_send((message, Recipient::Everyone))
-            .expect("channel to network should be open")
+            .expect("Channel to network should be open")
     }
 
     fn schedule_parents_request(&mut self, u_hash: H::Hash, curr_time: time::Instant) {
@@ -435,7 +435,7 @@ where
                                 .as_ref()
                                 .unwrap()
                                 .unbounded_send(NotificationIn::NewUnits(vec![unit]))
-                                .expect("channel to consensus should be open");
+                                .expect("Channel to consensus should be open");
                         }
                     });
             } else {
@@ -589,7 +589,7 @@ where
             .as_ref()
             .unwrap()
             .unbounded_send(alert)
-            .expect("channel to alerter should be open")
+            .expect("Channel to alerter should be open")
     }
 
     fn on_alert_notification(&mut self, notification: ForkingNotification<H, D, MK::Signature>) {
