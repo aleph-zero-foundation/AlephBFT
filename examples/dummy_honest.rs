@@ -1,4 +1,4 @@
-use aleph_bft::{NodeCount, NodeIndex, OrderedBatch};
+use aleph_bft::{DataState, NodeCount, NodeIndex, OrderedBatch, TaskHandle};
 use async_trait::async_trait;
 use codec::{Decode, Encode};
 use futures::{
@@ -14,7 +14,6 @@ use std::{
     collections::{hash_map::DefaultHasher, HashSet},
     error::Error,
     hash::Hasher as StdHasher,
-    pin::Pin,
     sync::Arc,
     time::Duration,
 };
@@ -121,11 +120,8 @@ impl aleph_bft::DataIO<Data> for DataIO {
 
         *data
     }
-    fn check_availability(
-        &self,
-        _data: &Data,
-    ) -> Option<Pin<Box<dyn Future<Output = Result<(), Self::Error>> + Send>>> {
-        None
+    fn check_availability(&self, _data: &Data) -> DataState<Self::Error> {
+        DataState::Available
     }
     fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), Self::Error> {
         self.finalized_tx.unbounded_send(data).map_err(|_| ())
@@ -215,6 +211,13 @@ struct Spawner;
 impl aleph_bft::SpawnHandle for Spawner {
     fn spawn(&self, _: &str, task: impl Future<Output = ()> + Send + 'static) {
         tokio::spawn(task);
+    }
+    fn spawn_essential(
+        &self,
+        _: &str,
+        task: impl Future<Output = ()> + Send + 'static,
+    ) -> TaskHandle {
+        Box::pin(async move { tokio::spawn(task).await.map_err(|_| ()) })
     }
 }
 

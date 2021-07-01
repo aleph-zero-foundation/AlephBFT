@@ -26,9 +26,9 @@ use crate::{
     member::{NotificationIn, NotificationOut},
     network,
     units::{Unit, UnitCoord},
-    DataIO as DataIOT, Hasher, Index, KeyBox as KeyBoxT, MultiKeychain as MultiKeychainT,
-    Network as NetworkT, NodeCount, NodeIndex, OrderedBatch,
-    PartialMultisignature as PartialMultisignatureT, SpawnHandle,
+    DataIO as DataIOT, DataState, Hasher, Index, KeyBox as KeyBoxT,
+    MultiKeychain as MultiKeychainT, Network as NetworkT, NodeCount, NodeIndex, OrderedBatch,
+    PartialMultisignature as PartialMultisignatureT, SpawnHandle, TaskHandle,
 };
 
 use crate::member::Member;
@@ -182,26 +182,30 @@ impl Future for HonestHub {
 }
 
 #[derive(Clone)]
-pub(crate) struct Spawner {
-    handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+pub(crate) struct Spawner {}
+
+impl Spawner {
+    pub(crate) fn new() -> Self {
+        Spawner {}
+    }
 }
 
 impl SpawnHandle for Spawner {
     fn spawn(&self, _name: &str, task: impl Future<Output = ()> + Send + 'static) {
-        self.handles.lock().push(tokio::spawn(task))
+        tokio::spawn(task);
     }
-}
 
-impl Spawner {
-    pub(crate) async fn wait(&self) {
-        for h in self.handles.lock().iter_mut() {
-            let _ = h.await;
-        }
-    }
-    pub(crate) fn new() -> Self {
-        Spawner {
-            handles: Arc::new(Mutex::new(Vec::new())),
-        }
+    fn spawn_essential(
+        &self,
+        _: &str,
+        task: impl Future<Output = ()> + Send + 'static,
+    ) -> TaskHandle {
+        let (res_tx, res_rx) = oneshot::channel();
+        tokio::spawn(async move {
+            task.await;
+            res_tx.send(()).expect("We own the rx.");
+        });
+        Box::pin(async move { res_rx.await.map_err(|_| ()) })
     }
 }
 
@@ -424,11 +428,8 @@ impl DataIOT<Data> for DataIO {
         self.round_counter.set(self.round_counter.get() + 1);
         Data { coord, variant: 0 }
     }
-    fn check_availability(
-        &self,
-        _: &Data,
-    ) -> Option<Pin<Box<dyn Future<Output = Result<(), Self::Error>> + Send>>> {
-        None
+    fn check_availability(&self, _: &Data) -> DataState<Self::Error> {
+        DataState::Available
     }
     fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), ()> {
         self.tx.unbounded_send(data).map_err(|e| {

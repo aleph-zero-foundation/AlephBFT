@@ -1,5 +1,5 @@
 use crate::chain::Block;
-use aleph_bft::NodeIndex;
+use aleph_bft::{NodeIndex, TaskHandle};
 use codec::{Decode, Encode};
 use futures::{
     channel::{
@@ -39,6 +39,13 @@ pub(crate) struct Spawner;
 impl aleph_bft::SpawnHandle for Spawner {
     fn spawn(&self, _: &str, task: impl Future<Output = ()> + Send + 'static) {
         tokio::spawn(task);
+    }
+    fn spawn_essential(
+        &self,
+        _: &str,
+        task: impl Future<Output = ()> + Send + 'static,
+    ) -> TaskHandle {
+        Box::pin(async move { tokio::spawn(task).await.map_err(|_| ()) })
     }
 }
 

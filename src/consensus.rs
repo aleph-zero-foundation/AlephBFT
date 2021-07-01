@@ -1,4 +1,7 @@
-use futures::channel::{mpsc, oneshot};
+use futures::{
+    channel::{mpsc, oneshot},
+    FutureExt,
+};
 use log::info;
 
 use crate::{
@@ -16,7 +19,7 @@ pub(crate) async fn run<H: Hasher + 'static>(
     outgoing_notifications: Sender<NotificationOut<H>>,
     ordered_batch_tx: Sender<OrderedBatch<H::Hash>>,
     spawn_handle: impl SpawnHandle,
-    exit: oneshot::Receiver<()>,
+    mut exit: oneshot::Receiver<()>,
 ) {
     info!(target: "AlephBFT", "{:?} Starting all services...", conf.node_ix);
 
@@ -25,19 +28,23 @@ pub(crate) async fn run<H: Hasher + 'static>(
     let (electors_tx, electors_rx) = mpsc::unbounded();
     let mut extender = Extender::<H>::new(conf.node_ix, n_members, electors_rx, ordered_batch_tx);
     let (extender_exit, exit_rx) = oneshot::channel();
-    spawn_handle.spawn("consensus/extender", async move {
-        extender.extend(exit_rx).await
-    });
+    let mut extender_handle = spawn_handle
+        .spawn_essential("consensus/extender", async move {
+            extender.extend(exit_rx).await
+        })
+        .fuse();
 
     let (parents_tx, parents_rx) = mpsc::unbounded();
     let new_units_tx = outgoing_notifications.clone();
     let mut creator = Creator::new(conf.clone(), parents_rx, new_units_tx);
 
     let (creator_exit, exit_rx) = oneshot::channel();
-    spawn_handle.spawn(
-        "consensus/creator",
-        async move { creator.create(exit_rx).await },
-    );
+    let mut creator_handle = spawn_handle
+        .spawn_essential(
+            "consensus/creator",
+            async move { creator.create(exit_rx).await },
+        )
+        .fuse();
 
     let mut terminal = Terminal::new(conf.node_ix, incoming_notifications, outgoing_notifications);
 
@@ -55,13 +62,21 @@ pub(crate) async fn run<H: Hasher + 'static>(
     }));
 
     let (terminal_exit, exit_rx) = oneshot::channel();
-    spawn_handle.spawn(
-        "consensus/terminal",
-        async move { terminal.run(exit_rx).await },
-    );
+    let mut terminal_handle = spawn_handle
+        .spawn_essential(
+            "consensus/terminal",
+            async move { terminal.run(exit_rx).await },
+        )
+        .fuse();
     info!(target: "AlephBFT", "{:?} All services started.", conf.node_ix);
 
-    let _ = exit.await;
+    futures::select! {
+        _ = exit => {},
+        _ = terminal_handle => {},
+        _ = creator_handle => {},
+        _ = extender_handle => {},
+    }
+
     // we stop no matter if received Ok or Err
     let _ = terminal_exit.send(());
     let _ = creator_exit.send(());
