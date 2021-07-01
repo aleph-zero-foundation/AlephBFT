@@ -213,7 +213,7 @@ async fn honest_members_agree_on_batches_byzantine(
     network_reliability: f64,
 ) {
     init_log();
-    let spawner = Spawner::new();
+    let spawner = Spawner {};
     let mut exits = vec![];
     let mut batch_rxs = Vec::new();
     let (net_hub, mut networks) = configure_network(n_members, network_reliability);

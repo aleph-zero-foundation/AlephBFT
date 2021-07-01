@@ -96,6 +96,13 @@ pub type OrderedBatch<Data> = Vec<Data>;
 pub trait SpawnHandle: Clone + Send + 'static {
     /// Run a new task.
     fn spawn(&self, name: &'static str, task: impl Future<Output = ()> + Send + 'static);
+    /// Run a new task and returns a handle to it. If there is some error or panic during
+    /// execution of the task, the handle should return an error.
+    fn spawn_essential(
+        &self,
+        name: &'static str,
+        task: impl Future<Output = ()> + Send + 'static,
+    ) -> Pin<Box<dyn Future<Output = Result<(), ()>> + Send>>;
 }
 
 pub(crate) type Receiver<T> = mpsc::UnboundedReceiver<T>;

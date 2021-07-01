@@ -182,26 +182,24 @@ impl Future for HonestHub {
 }
 
 #[derive(Clone)]
-pub(crate) struct Spawner {
-    handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
-}
+pub(crate) struct Spawner {}
 
 impl SpawnHandle for Spawner {
     fn spawn(&self, _name: &str, task: impl Future<Output = ()> + Send + 'static) {
-        self.handles.lock().push(tokio::spawn(task))
+        tokio::spawn(task);
     }
-}
 
-impl Spawner {
-    pub(crate) async fn wait(&self) {
-        for h in self.handles.lock().iter_mut() {
-            let _ = h.await;
-        }
-    }
-    pub(crate) fn new() -> Self {
-        Spawner {
-            handles: Arc::new(Mutex::new(Vec::new())),
-        }
+    fn spawn_essential(
+        &self,
+        _: &str,
+        task: impl Future<Output = ()> + Send + 'static,
+    ) -> Pin<Box<dyn Future<Output = Result<(), ()>> + Send>> {
+        let (res_tx, res_rx) = oneshot::channel();
+        tokio::spawn(async move {
+            task.await;
+            res_tx.send(()).expect("We own the rx.");
+        });
+        Box::pin(async move { res_rx.await.map_err(|_| ()) })
     }
 }
 

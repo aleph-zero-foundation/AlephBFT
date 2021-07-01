@@ -428,6 +428,8 @@ where
             let unit = full_unit.unit();
             if let Some(avail_fut) = self.data_io.check_availability(full_unit.data()) {
                 let tx_consensus = self.tx_consensus.clone();
+                // In the execution below a panic in the expect cannot occure and a simple error trigers
+                // implicitly a retry of availability check, so this task is not essential.
                 self.spawn_handle
                     .spawn("member/check_availability", async move {
                         if avail_fut.await.is_ok() {
@@ -667,34 +669,40 @@ where
         let config = self.config.clone();
         let sh = self.spawn_handle.clone();
         info!(target: "AlephBFT-member", "{:?} Spawning party for a session.", self.index());
-        self.spawn_handle.spawn("member/consensus", async move {
-            consensus::run(
-                config,
-                consensus_stream,
-                consensus_sink,
-                ordered_batch_tx,
-                sh,
-                exit_stream,
-            )
-            .await
-        });
+        let mut consensus_handle = self
+            .spawn_handle
+            .spawn_essential("member/consensus", async move {
+                consensus::run(
+                    config,
+                    consensus_stream,
+                    consensus_sink,
+                    ordered_batch_tx,
+                    sh,
+                    exit_stream,
+                )
+                .await
+            })
+            .fuse();
         self.tx_consensus = Some(tx_consensus);
         let (alert_messages_for_alerter, alert_messages_from_network) = mpsc::unbounded();
         let (alert_messages_for_network, alert_messages_from_alerter) = mpsc::unbounded();
         let (unit_messages_for_units, mut unit_messages_from_network) = mpsc::unbounded();
         let (unit_messages_for_network, unit_messages_from_units) = mpsc::unbounded();
         let (network_exit, exit_stream) = oneshot::channel();
-        self.spawn_handle.spawn("member/network", async move {
-            NetworkHub::new(
-                network,
-                unit_messages_from_units,
-                unit_messages_for_units,
-                alert_messages_from_alerter,
-                alert_messages_for_alerter,
-            )
-            .run(exit_stream)
-            .await
-        });
+        let mut network_handle = self
+            .spawn_handle
+            .spawn_essential("member/network", async move {
+                NetworkHub::new(
+                    network,
+                    unit_messages_from_units,
+                    unit_messages_for_units,
+                    alert_messages_from_alerter,
+                    alert_messages_for_alerter,
+                )
+                .run(exit_stream)
+                .await
+            })
+            .fuse();
         self.unit_messages_for_network = Some(unit_messages_for_network);
         let (alert_notifications_for_units, mut notifications_from_alerter) = mpsc::unbounded();
         let (alerts_for_alerter, alerts_from_units) = mpsc::unbounded();
@@ -705,18 +713,21 @@ where
             max_units_per_alert: self.config.max_units_per_alert,
             n_members: self.n_members,
         };
-        self.spawn_handle.spawn("member/alerts", async move {
-            alerts::run(
-                keybox_for_alerter,
-                alert_messages_for_network,
-                alert_messages_from_network,
-                alert_notifications_for_units,
-                alerts_from_units,
-                alert_config,
-                exit_stream,
-            )
-            .await
-        });
+        let mut alerts_handle = self
+            .spawn_handle
+            .spawn_essential("member/alerts", async move {
+                alerts::run(
+                    keybox_for_alerter,
+                    alert_messages_for_network,
+                    alert_messages_from_network,
+                    alert_notifications_for_units,
+                    alerts_from_units,
+                    alert_config,
+                    exit_stream,
+                )
+                .await
+            })
+            .fuse();
         self.alerts_for_alerter = Some(alerts_for_alerter);
         let ticker_delay = self.config.delay_config.tick_interval;
         let mut ticker = Delay::new(ticker_delay).fuse();
@@ -759,6 +770,9 @@ where
                     self.trigger_tasks();
                     ticker = Delay::new(ticker_delay).fuse();
                 },
+                _ = &mut consensus_handle => break,
+                _ = &mut network_handle => break,
+                _ = &mut alerts_handle => break,
                 _ = &mut exit => break,
             }
             self.move_units_to_consensus();

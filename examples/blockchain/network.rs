@@ -12,7 +12,7 @@ use futures::{
 
 use log::{debug, info};
 
-use std::{collections::HashMap, error::Error, io, iter, time::Duration};
+use std::{collections::HashMap, error::Error, io, iter, pin::Pin, time::Duration};
 
 use libp2p::{
     core::upgrade,
@@ -39,6 +39,13 @@ pub(crate) struct Spawner;
 impl aleph_bft::SpawnHandle for Spawner {
     fn spawn(&self, _: &str, task: impl Future<Output = ()> + Send + 'static) {
         tokio::spawn(task);
+    }
+    fn spawn_essential(
+        &self,
+        _: &str,
+        task: impl Future<Output = ()> + Send + 'static,
+    ) -> Pin<Box<dyn Future<Output = Result<(), ()>> + Send>> {
+        Box::pin(async move { tokio::spawn(task).await.map_err(|_| ()) })
     }
 }
 

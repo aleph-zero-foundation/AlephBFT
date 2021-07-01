@@ -27,7 +27,9 @@ async fn agree_on_first_batch() {
 
     let mut exits = vec![];
     let mut batch_rxs = vec![];
-    let spawner = Spawner::new();
+    let spawner = Spawner {};
+
+    let mut handles = vec![];
 
     for node_ix in 0..n_members {
         let (tx, rx) = hub.connect(NodeIndex(node_ix));
@@ -36,10 +38,10 @@ async fn agree_on_first_batch() {
         exits.push(exit_tx);
         let (batch_tx, batch_rx) = mpsc::unbounded();
         batch_rxs.push(batch_rx);
-        spawner.spawn(
+        handles.push(spawner.spawn_essential(
             "consensus",
             run(conf, rx, tx, batch_tx, spawner.clone(), exit_rx),
-        );
+        ));
     }
 
     spawner.spawn("hub", hub);
@@ -58,14 +60,17 @@ async fn agree_on_first_batch() {
     exits.into_iter().for_each(|tx| {
         let _ = tx.send(());
     });
-    spawner.wait().await;
+
+    for handle in &mut handles {
+        handle.await.expect("All nodes are honest.");
+    }
 }
 
 #[tokio::test]
 async fn catches_wrong_control_hash() {
     init_log();
     let n_nodes = 4;
-    let spawner = Spawner::new();
+    let spawner = Spawner {};
     let node_ix = 0;
     let (mut tx_in, rx_in) = mpsc::unbounded();
     let (tx_out, mut rx_out) = mpsc::unbounded();
@@ -74,7 +79,7 @@ async fn catches_wrong_control_hash() {
     let (exit_tx, exit_rx) = oneshot::channel();
     let (batch_tx, _batch_rx) = mpsc::unbounded();
 
-    spawner.spawn(
+    let consensus_handle = spawner.spawn_essential(
         "consensus",
         run(conf, rx_in, tx_out, batch_tx, spawner.clone(), exit_rx),
     );
@@ -101,5 +106,6 @@ async fn catches_wrong_control_hash() {
     }
 
     let _ = exit_tx.send(());
-    spawner.wait().await;
+
+    consensus_handle.await.expect("The node is honest.");
 }

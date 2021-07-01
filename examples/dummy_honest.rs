@@ -216,6 +216,13 @@ impl aleph_bft::SpawnHandle for Spawner {
     fn spawn(&self, _: &str, task: impl Future<Output = ()> + Send + 'static) {
         tokio::spawn(task);
     }
+    fn spawn_essential(
+        &self,
+        _: &str,
+        task: impl Future<Output = ()> + Send + 'static,
+    ) -> Pin<Box<dyn Future<Output = Result<(), ()>> + Send>> {
+        Box::pin(async move { tokio::spawn(task).await.map_err(|_| ()) })
+    }
 }
 
 const ALEPH_PROTOCOL_NAME: &str = "aleph";

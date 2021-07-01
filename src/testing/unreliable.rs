@@ -76,7 +76,7 @@ async fn request_missing_coord() {
         round: censoring_round,
         requested: requested.clone(),
     });
-    let spawner = Spawner::new();
+    let spawner = Spawner {};
     spawner.spawn("network-hub", net_hub);
 
     let mut exits = vec![];
