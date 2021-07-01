@@ -15,14 +15,17 @@ use log::{debug, info};
 use std::{collections::HashMap, error::Error, io, iter, time::Duration};
 
 use libp2p::{
-    development_transport, identity,
+    core::upgrade,
+    identity,
     mdns::{Mdns, MdnsConfig, MdnsEvent},
+    mplex, noise,
     request_response::{
         ProtocolSupport, RequestResponse, RequestResponseCodec, RequestResponseConfig,
         RequestResponseEvent, RequestResponseMessage,
     },
     swarm::{NetworkBehaviourEventProcess, SwarmBuilder},
-    NetworkBehaviour, PeerId, Swarm,
+    tcp::TokioTcpConfig,
+    NetworkBehaviour, PeerId, Swarm, Transport,
 };
 
 use crate::{
@@ -277,7 +280,19 @@ impl Network {
         let local_peer_id = PeerId::from(local_key.public());
         info!(target: "Blockchain-network", "Local peer id: {:?}", local_peer_id);
 
-        let transport = development_transport(local_key).await?;
+        // Create a keypair for authenticated encryption of the transport.
+        let noise_keys = noise::Keypair::<noise::X25519Spec>::new()
+            .into_authentic(&local_key)
+            .expect("Signing libp2p-noise static DH keypair failed.");
+
+        // Create a tokio-based TCP transport use noise for authenticated
+        // encryption and Mplex for multiplexing of substreams on a TCP stream.
+        let transport = TokioTcpConfig::new()
+            .nodelay(true)
+            .upgrade(upgrade::Version::V1)
+            .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
+            .multiplex(mplex::MplexConfig::new())
+            .boxed();
 
         let (msg_to_manager_tx, msg_to_manager_rx) = mpsc::unbounded();
         let (msg_from_manager_tx, msg_from_manager_rx) = mpsc::unbounded();

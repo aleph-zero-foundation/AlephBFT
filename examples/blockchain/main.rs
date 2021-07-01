@@ -12,7 +12,7 @@ mod chain;
 mod crypto;
 mod network;
 
-const TXS_PER_BLOCK: usize = 10000;
+const TXS_PER_BLOCK: usize = 50000;
 const TX_SIZE: usize = 300;
 const BLOCK_TIME_MS: u64 = 1000;
 const INITIAL_DELAY_MS: u64 = 5000;
