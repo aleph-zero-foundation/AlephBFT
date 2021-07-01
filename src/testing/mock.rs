@@ -28,7 +28,7 @@ use crate::{
     units::{Unit, UnitCoord},
     DataIO as DataIOT, DataState, Hasher, Index, KeyBox as KeyBoxT,
     MultiKeychain as MultiKeychainT, Network as NetworkT, NodeCount, NodeIndex, OrderedBatch,
-    PartialMultisignature as PartialMultisignatureT, SpawnHandle, TaskHandle,
+    PartialMultisignature as PartialMultisignatureT, Round, SpawnHandle, TaskHandle,
 };
 
 use crate::member::Member;
@@ -218,6 +218,12 @@ pub(crate) struct Network {
     tx: NetworkSender,
     peers: Vec<NodeIndex>,
     index: NodeIndex,
+}
+
+impl Index for Network {
+    fn index(&self) -> NodeIndex {
+        self.index
+    }
 }
 
 #[async_trait::async_trait]
@@ -417,7 +423,7 @@ impl PartialMultisignatureT for PartialMultisignature {
 
 pub(crate) struct DataIO {
     ix: NodeIndex,
-    round_counter: Cell<usize>,
+    round_counter: Cell<Round>,
     tx: UnboundedSender<OrderedBatch<Data>>,
 }
 
@@ -519,15 +525,15 @@ pub(crate) fn gen_config(node_ix: NodeIndex, n_members: NodeCount) -> Config {
 pub(crate) type HonestMember<'a> = Member<'a, Hasher64, Data, DataIO, KeyBox, Spawner>;
 
 pub(crate) fn configure_network(
-    n_members: usize,
+    n_members: NodeCount,
     reliability: f64,
 ) -> (UnreliableRouter, Vec<Option<Network>>) {
-    let peer_list = (0..n_members).map(NodeIndex).collect();
+    let peer_list = n_members.into_iterator().collect();
 
     let router = UnreliableRouter::new(peer_list, reliability);
     let mut networks = Vec::new();
-    for ix in 0..n_members {
-        let network = router.connect_peer(NodeIndex(ix));
+    for ix in n_members.into_iterator() {
+        let network = router.connect_peer(ix);
         networks.push(Some(network));
     }
     (router, networks)
@@ -535,17 +541,16 @@ pub(crate) fn configure_network(
 
 pub(crate) fn spawn_honest_member(
     spawner: Spawner,
-    ix: usize,
-    n_members: usize,
+    node_index: NodeIndex,
+    n_members: NodeCount,
     network: Network,
 ) -> (UnboundedReceiver<OrderedBatch<Data>>, oneshot::Sender<()>) {
-    let node_index = NodeIndex(ix);
     let (data_io, rx_batch) = DataIO::new(node_index);
-    let config = gen_config(node_index, n_members.into());
+    let config = gen_config(node_index, n_members);
     let (exit_tx, exit_rx) = oneshot::channel();
     let spawner_inner = spawner.clone();
     let member_task = async move {
-        let keybox = KeyBox::new(NodeCount(n_members), node_index);
+        let keybox = KeyBox::new(n_members, node_index);
         let member = HonestMember::new(data_io, &keybox, config, spawner_inner.clone());
         member.run_session(network, exit_rx).await;
     };

@@ -6,7 +6,7 @@ use crate::{
     testing::mock::{
         configure_network, init_log, spawn_honest_member, NetworkData, NetworkHook, Spawner,
     },
-    NodeIndex, Round, SpawnHandle,
+    Index, NodeCount, NodeIndex, Round, SpawnHandle,
 };
 use futures::StreamExt;
 use parking_lot::Mutex;
@@ -57,9 +57,9 @@ impl NetworkHook for NoteRequest {
 async fn request_missing_coord() {
     init_log();
 
-    let n_members = 4;
-    let censored_node = 0.into();
-    let censoring_node = 1.into();
+    let n_members = NodeCount(4);
+    let censored_node = NodeIndex(0);
+    let censoring_node = NodeIndex(1);
     let censoring_round = 5;
 
     let (net_hub, mut networks) = configure_network(n_members, 1.0);
@@ -81,9 +81,10 @@ async fn request_missing_coord() {
 
     let mut exits = vec![];
     let mut batch_rxs = Vec::new();
-    for (ix, network) in networks.iter_mut().enumerate() {
-        let (batch_rx, exit_tx) =
-            spawn_honest_member(spawner.clone(), ix, n_members, network.take().unwrap());
+    for network in networks.iter_mut() {
+        let network = network.take().unwrap();
+        let ix = network.index();
+        let (batch_rx, exit_tx) = spawn_honest_member(spawner.clone(), ix, n_members, network);
         batch_rxs.push(batch_rx);
         exits.push(exit_tx);
     }
@@ -98,8 +99,8 @@ async fn request_missing_coord() {
         }
         batches.push(batches_per_ix);
     }
-    for node_ix in 1..n_members {
-        assert_eq!(batches[0], batches[node_ix]);
+    for node_ix in n_members.into_iterator().skip(1) {
+        assert_eq!(batches[0], batches[node_ix.0]);
     }
 
     assert!(*requested.lock())

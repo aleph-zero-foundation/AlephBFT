@@ -93,7 +93,7 @@ pub trait Data: Eq + Clone + Send + Sync + Debug + StdHash + Encode + Decode + '
 impl<T> Data for T where T: Eq + Clone + Send + Sync + Debug + StdHash + Encode + Decode + 'static {}
 
 /// An asynchronous round of the protocol.
-pub type Round = usize;
+pub type Round = u16;
 
 /// Type for sending a new ordered batch of data items.
 pub type OrderedBatch<Data> = Vec<Data>;

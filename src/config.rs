@@ -1,4 +1,4 @@
-use crate::SessionId;
+use crate::{Round, SessionId};
 use std::{sync::Arc, time::Duration};
 
 use crate::nodes::{NodeCount, NodeIndex};
@@ -31,11 +31,11 @@ pub struct Config {
     /// Configuration of several parameters related to delaying various tasks.
     pub delay_config: DelayConfig,
     /// All units (except alerted ones) that are higher by >= rounds_margin then our local round number, are ignored.
-    pub rounds_margin: usize,
+    pub rounds_margin: Round,
     /// Maximum number of units that can be attached to an alert.
     pub max_units_per_alert: usize,
     /// Maximum allowable round of a unit.
-    pub max_round: usize,
+    pub max_round: Round,
 }
 
 pub(crate) fn exponential_slowdown(

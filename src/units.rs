@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Encode, Decode, Hash)]
 pub(crate) struct UnitCoord {
-    pub(crate) round: u16,
+    round: Round,
     creator: NodeIndex,
 }
 
@@ -26,7 +26,7 @@ impl UnitCoord {
     }
 
     pub fn round(&self) -> Round {
-        self.round as Round
+        self.round
     }
 }
 
@@ -173,7 +173,7 @@ impl<H: Hasher, D: Data> FullUnit<H, D> {
     }
     #[cfg(test)]
     pub(crate) fn set_round(&mut self, round: Round) {
-        self.pre_unit.coord.round = round as u16
+        self.pre_unit.coord.round = round
     }
 }
 
