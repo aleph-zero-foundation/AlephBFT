@@ -133,9 +133,9 @@ Alternatively, you may run the `run_local_pipeline.sh` script.
 
 There are fuzzing tests that try to crash the whole application by creating arbitrary data for the network layer
 and feeding it into the `member` implementation. To run those tests you need to install `afl` and `cargo-fuzz`. 
-`cargo-fuzz` requires you to use a nightly Rust toolchain. `afl` requires so called corpus data to operate,
-i.e. some non-empty data set that do not crash the application. Both tools are using LLVM's instrumentation capabilities
-in order guide the fuzzing process basing on code-coverage statistics.
+`cargo-fuzz` requires you to use a nightly Rust toolchain. `afl` differs from `cargo-fuzz` in that it requires
+so called corpus data to operate, i.e. some non-empty data set that do not crash the application.
+Both tools are using LLVM's instrumentation capabilities in order to guide the fuzzing process basing on code-coverage statistics.
 
 ```sh
 cargo install cargo-fuzz
@@ -157,11 +157,11 @@ You will need to generate some `seed` data first in order to run it.
 cd fuzz
 # create some random input containing network data from a locally executed test
 mkdir afl_in
-cargo build --features="gen" --bin gen_fuzz
+cargo build --bin gen_fuzz
 ./target/debug/gen_fuzz >./afl_in/seed
 
-cargo afl build --features="afl-fuzz" --bin fuzz_target_1_afl
-cargo afl fuzz -i afl_in -o afl_out target/debug/fuzz_target_1_afl
+cargo afl build --features="afl-fuzz" --bin fuzz_target_afl
+cargo afl fuzz -i afl_in -o afl_out target/debug/fuzz_target_afl
 ```
 
 The `gen_fuzz` bin is able to both generate and verify data for the afl tool.
