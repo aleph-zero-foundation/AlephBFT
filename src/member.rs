@@ -735,6 +735,9 @@ where
         let ticker_delay = self.config.delay_config.tick_interval;
         let mut ticker = Delay::new(ticker_delay).fuse();
 
+        let mut consensus_exited = false;
+        let mut network_exited = false;
+        let mut alerter_exited = false;
         info!(target: "AlephBFT-member", "{:?} Start routing messages from consensus to network", self.index());
         loop {
             futures::select! {
@@ -773,9 +776,21 @@ where
                     self.trigger_tasks();
                     ticker = Delay::new(ticker_delay).fuse();
                 },
-                _ = &mut consensus_handle => break,
-                _ = &mut network_handle => break,
-                _ = &mut alerts_handle => break,
+                _ = &mut consensus_handle => {
+                    consensus_exited = true;
+                    debug!(target: "AlephBFT-member", "{:?} consensus task terminated early.", self.index());
+                    break;
+                },
+                _ = &mut network_handle => {
+                    network_exited = true;
+                    debug!(target: "AlephBFT-member", "{:?} network task terminated early.", self.index());
+                    break;
+                },
+                _ = &mut alerts_handle => {
+                    alerter_exited = true;
+                    debug!(target: "AlephBFT-member", "{:?} alerts task terminated early.", self.index());
+                    break;
+                },
                 _ = &mut exit => break,
             }
             self.move_units_to_consensus();
@@ -783,7 +798,16 @@ where
         info!(target: "AlephBFT-member", "{:?} Ending run.", self.index());
 
         let _ = consensus_exit.send(());
+        if !consensus_exited {
+            consensus_handle.await.unwrap();
+        }
         let _ = alerter_exit.send(());
+        if !alerter_exited {
+            alerts_handle.await.unwrap();
+        }
         let _ = network_exit.send(());
+        if !network_exited {
+            network_handle.await.unwrap();
+        }
     }
 }
