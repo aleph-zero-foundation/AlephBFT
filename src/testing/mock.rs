@@ -18,15 +18,15 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
+    time::Duration,
 };
 
-pub use crate::testing::mock_common::gen_config;
-
 use crate::{
+    exponential_slowdown,
     member::{NotificationIn, NotificationOut},
     units::{Unit, UnitCoord},
-    DataIO as DataIOT, Hasher, Index, KeyBox as KeyBoxT, MultiKeychain as MultiKeychainT,
-    Network as NetworkT, NodeCount, NodeIndex, OrderedBatch,
+    Config, DataIO as DataIOT, DataState, DelayConfig, Hasher, Index, KeyBox as KeyBoxT,
+    MultiKeychain as MultiKeychainT, Network as NetworkT, NodeCount, NodeIndex, OrderedBatch,
     PartialMultisignature as PartialMultisignatureT, Round, SpawnHandle, TaskHandle,
 };
 
@@ -37,6 +37,26 @@ pub fn init_log() {
         .filter_level(log::LevelFilter::max())
         .is_test(true)
         .try_init();
+}
+
+pub fn gen_config(node_ix: NodeIndex, n_members: NodeCount) -> Config {
+    let delay_config = DelayConfig {
+        tick_interval: Duration::from_millis(5),
+        requests_interval: Duration::from_millis(50),
+        unit_broadcast_delay: Arc::new(|t| exponential_slowdown(t, 100.0, 1, 3.0)),
+        //100, 100, 300, 900, 2700, ...
+        unit_creation_delay: Arc::new(|t| exponential_slowdown(t, 50.0, usize::MAX, 1.000)),
+        //50, 50, 50, 50, ...
+    };
+    Config {
+        node_ix,
+        session_id: 0,
+        n_members,
+        delay_config,
+        rounds_margin: 200,
+        max_units_per_alert: 200,
+        max_round: 5000,
+    }
 }
 
 // A hasher from the standard library that hashes to u64, should be enough to
@@ -181,13 +201,11 @@ impl Future for HonestHub {
 }
 
 #[derive(Clone)]
-pub struct Spawner {
-    handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
-}
+pub struct Spawner {}
 
 impl SpawnHandle for Spawner {
     fn spawn(&self, _name: &str, task: impl Future<Output = ()> + Send + 'static) {
-        self.handles.lock().push(tokio::spawn(task))
+        tokio::spawn(task);
     }
 
     fn spawn_essential(
@@ -196,25 +214,17 @@ impl SpawnHandle for Spawner {
         task: impl Future<Output = ()> + Send + 'static,
     ) -> TaskHandle {
         let (res_tx, res_rx) = oneshot::channel();
-        let task = tokio::spawn(async move {
+        tokio::spawn(async move {
             task.await;
             res_tx.send(()).expect("We own the rx.");
         });
-        self.handles.lock().push(task);
         Box::pin(async move { res_rx.await.map_err(|_| ()) })
     }
 }
 
 impl Spawner {
-    pub async fn wait(&self) {
-        for h in self.handles.lock().iter_mut() {
-            let _ = h.await;
-        }
-    }
     pub fn new() -> Self {
-        Spawner {
-            handles: Arc::new(Mutex::new(Vec::new())),
-        }
+        Spawner {}
     }
 }
 

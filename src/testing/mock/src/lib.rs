@@ -18,14 +18,14 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
+    time::Duration,
 };
 
-use aleph_bft::testing::mock_common::gen_config;
-
 use aleph_bft::{
-    DataIO as DataIOT, DataState, Hasher, Index, KeyBox as KeyBoxT, Member,
-    MultiKeychain as MultiKeychainT, Network as NetworkT, NodeCount, NodeIndex, OrderedBatch,
-    PartialMultisignature as PartialMultisignatureT, SpawnHandle, TaskHandle,
+    exponential_slowdown, Config, DataIO as DataIOT, DataState, DelayConfig, Hasher, Index,
+    KeyBox as KeyBoxT, Member, MultiKeychain as MultiKeychainT, Network as NetworkT, NodeCount,
+    NodeIndex, OrderedBatch, PartialMultisignature as PartialMultisignatureT, SpawnHandle,
+    TaskHandle,
 };
 
 pub fn init_log() {
@@ -33,6 +33,26 @@ pub fn init_log() {
         .filter_level(log::LevelFilter::max())
         .is_test(true)
         .try_init();
+}
+
+pub fn gen_config(node_ix: NodeIndex, n_members: NodeCount) -> Config {
+    let delay_config = DelayConfig {
+        tick_interval: Duration::from_millis(5),
+        requests_interval: Duration::from_millis(50),
+        unit_broadcast_delay: Arc::new(|t| exponential_slowdown(t, 100.0, 1, 3.0)),
+        //100, 100, 300, 900, 2700, ...
+        unit_creation_delay: Arc::new(|t| exponential_slowdown(t, 50.0, usize::MAX, 1.000)),
+        //50, 50, 50, 50, ...
+    };
+    Config {
+        node_ix,
+        session_id: 0,
+        n_members,
+        delay_config,
+        rounds_margin: 200,
+        max_units_per_alert: 200,
+        max_round: 5000,
+    }
 }
 
 // A hasher from the standard library that hashes to u64, should be enough to
