@@ -51,7 +51,8 @@ impl aleph_bft::SpawnHandle for Spawner {
 
 const ALEPH_PROTOCOL_NAME: &str = "/alephbft/test/1";
 
-type NetworkData = aleph_bft::NetworkData<Hasher256, Data, Signature, PartialMultisignature>;
+pub(crate) type NetworkData =
+    aleph_bft::NetworkData<Hasher256, Data, Signature, PartialMultisignature>;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Encode, Decode)]
@@ -267,8 +268,8 @@ impl aleph_bft::Network<Hasher256, Data, Signature, PartialMultisignature> for N
 
 pub(crate) struct NetworkManager {
     swarm: Swarm<Behaviour>,
-    consensus_rx: mpsc::UnboundedReceiver<(NetworkData, MessageRecipient)>,
-    block_rx: mpsc::UnboundedReceiver<Block>,
+    consensus_rx: UnboundedReceiver<(NetworkData, MessageRecipient)>,
+    block_rx: UnboundedReceiver<Block>,
 }
 
 impl Network {
@@ -280,6 +281,8 @@ impl Network {
             NetworkManager,
             UnboundedSender<Block>,
             UnboundedReceiver<Block>,
+            UnboundedSender<NetworkData>,
+            UnboundedReceiver<NetworkData>,
         ),
         Box<dyn Error>,
     > {
@@ -302,7 +305,8 @@ impl Network {
             .boxed();
 
         let (msg_to_manager_tx, msg_to_manager_rx) = mpsc::unbounded();
-        let (msg_from_manager_tx, msg_from_manager_rx) = mpsc::unbounded();
+        let (msg_for_store, msg_from_manager) = mpsc::unbounded();
+        let (msg_for_network, msg_from_store) = mpsc::unbounded();
         let (block_to_data_io_tx, block_to_data_io_rx) = mpsc::unbounded();
         let (block_from_data_io_tx, block_from_data_io_rx) = mpsc::unbounded();
         let mut swarm = {
@@ -326,7 +330,7 @@ impl Network {
                 mdns,
                 peers: vec![],
                 peer_by_index: HashMap::new(),
-                consensus_tx: msg_from_manager_tx,
+                consensus_tx: msg_for_store,
                 block_tx: block_to_data_io_tx,
                 node_ix,
             };
@@ -341,7 +345,7 @@ impl Network {
 
         let network = Network {
             msg_to_manager_tx,
-            msg_from_manager_rx,
+            msg_from_manager_rx: msg_from_store,
         };
 
         let network_manager = NetworkManager {
@@ -355,6 +359,8 @@ impl Network {
             network_manager,
             block_from_data_io_tx,
             block_to_data_io_rx,
+            msg_for_network,
+            msg_from_manager,
         ))
     }
 }

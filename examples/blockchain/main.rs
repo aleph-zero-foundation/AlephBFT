@@ -2,7 +2,7 @@ use futures::{channel::oneshot, StreamExt};
 use log::{debug, info};
 
 use aleph_bft::NodeIndex;
-use chain::{gen_chain_config, run_blockchain, DataIO};
+use chain::{gen_chain_config, run_blockchain, DataIO, DataStore};
 use chrono::Local;
 use crypto::KeyBox;
 use network::{Network, Spawner};
@@ -58,11 +58,18 @@ async fn main() {
     let my_node_ix = NodeIndex(my_id);
     let start_time = time::Instant::now();
     info!(target: "Blockchain-main", "Getting network up.");
-    let (network, mut manager, block_from_data_io_tx, block_from_network_rx) =
-        Network::new(my_node_ix)
-            .await
-            .expect("Libp2p network set-up should succeed.");
-    let (data_io, mut batch_rx) = DataIO::new();
+    let (
+        network,
+        mut manager,
+        block_from_data_io_tx,
+        block_from_network_rx,
+        message_for_network,
+        message_from_network,
+    ) = Network::new(my_node_ix)
+        .await
+        .expect("Libp2p network set-up should succeed.");
+    let (data_io, mut batch_rx, current_block) = DataIO::new();
+    let data_store = DataStore::new(current_block.clone(), message_for_network);
 
     let (close_network, exit) = oneshot::channel();
     tokio::spawn(async move { manager.run(exit).await });
@@ -76,13 +83,14 @@ async fn main() {
         INITIAL_DELAY_MS,
     );
     let (close_chain, exit) = oneshot::channel();
-    let data_io_clone = data_io.clone();
     tokio::spawn(async move {
         run_blockchain(
             chain_config,
-            data_io_clone,
+            data_store,
+            current_block,
             block_from_network_rx,
             block_from_data_io_tx,
+            message_from_network,
             exit,
         )
         .await

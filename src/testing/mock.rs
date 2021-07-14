@@ -26,8 +26,8 @@ use crate::{
     member::{NotificationIn, NotificationOut},
     network,
     units::{Unit, UnitCoord},
-    DataIO as DataIOT, DataState, Hasher, Index, KeyBox as KeyBoxT,
-    MultiKeychain as MultiKeychainT, Network as NetworkT, NodeCount, NodeIndex, OrderedBatch,
+    DataIO as DataIOT, Hasher, Index, KeyBox as KeyBoxT, MultiKeychain as MultiKeychainT,
+    Network as NetworkT, NodeCount, NodeIndex, OrderedBatch,
     PartialMultisignature as PartialMultisignatureT, Round, SpawnHandle, TaskHandle,
 };
 
@@ -433,9 +433,6 @@ impl DataIOT<Data> for DataIO {
         let coord = UnitCoord::new(self.round_counter.get(), self.ix);
         self.round_counter.set(self.round_counter.get() + 1);
         Data { coord, variant: 0 }
-    }
-    fn check_availability(&self, _: &Data) -> DataState<Self::Error> {
-        DataState::Available
     }
     fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), ()> {
         self.tx.unbounded_send(data).map_err(|e| {

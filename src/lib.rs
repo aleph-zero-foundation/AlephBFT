@@ -31,24 +31,11 @@ mod units;
 /// The number of a session for which the consensus is run.
 pub type SessionId = u64;
 
-/// Type responsible for fetching missing data.
-pub type Fetch<E> = Pin<Box<dyn Future<Output = Result<(), E>> + Send>>;
-
-/// Enum representing state of the data in a data base.
-pub enum DataState<E> {
-    Available,
-    Missing(Fetch<E>),
-}
-
 /// The source of data items that consensus should order.
 ///
 /// AlephBFT internally calls [`DataIO::get_data`] whenever a new unit is created and data needs to be placed inside.
 /// The [`DataIO::send_ordered_batch`] method is called whenever a new round has been decided and thus a new batch of units
-/// (or more precisely the data they carry) is available. Finally, [`DataIO::check_availability is used to validate and check availability of data.
-/// The meaning of the latter might be unclear if we think of `Data` as being the actual data that is being ordered,
-/// but in applications one often wants to use hashes of data (for instance block hashes) in which case it is crucial
-/// for security that there is access to the actual data, cryptographically represented by a hash.
-/// It is assumed that the implementation of DataIO makes best effort of fetch the data in case it is unavailable.
+/// (or more precisely the data they carry) is available.
 ///
 /// We refer to the documentation https://cardinal-cryptography.github.io/AlephBFT/aleph_bft_api.html for a discussion
 /// and examples of how this trait can be implemented.
@@ -56,10 +43,6 @@ pub trait DataIO<Data> {
     type Error: Debug + 'static;
     /// Outputs a new data item to be ordered
     fn get_data(&self) -> Data;
-    /// Returns future that indicates when the data becomes available or None if the data is already available.
-    /// For applications where `Data` is actually a real data and not some reprentation of it, this may be trivially
-    /// implemented to return always `None`.
-    fn check_availability(&self, data: &Data) -> DataState<Self::Error>;
     /// Takes a new ordered batch of data item.
     fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), Self::Error>;
 }

@@ -80,6 +80,14 @@ impl<H: Hasher, D: Data, S: Signature> Alert<H, D, S> {
     fn forker(&self) -> NodeIndex {
         self.proof.0.as_signable().creator()
     }
+
+    pub(crate) fn included_data(&self) -> Vec<D> {
+        // Only legit units might end up in the DAG, we can ignore the fork proof.
+        self.legit_units
+            .iter()
+            .map(|uu| uu.as_signable().data().clone())
+            .collect()
+    }
 }
 
 impl<H: Hasher, D: Data, S: Signature> Index for Alert<H, D, S> {
@@ -104,6 +112,16 @@ pub(crate) enum AlertMessage<H: Hasher, D: Data, S: Signature, MS: PartialMultis
     RmcMessage(NodeIndex, rmc::Message<H::Hash, S, MS>),
     /// A request by a node for a fork alert identified by the given hash.
     AlertRequest(NodeIndex, H::Hash),
+}
+
+impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> AlertMessage<H, D, S, MS> {
+    pub(crate) fn included_data(&self) -> Vec<D> {
+        match self {
+            Self::ForkAlert(unchecked_alert) => unchecked_alert.as_signable().included_data(),
+            Self::RmcMessage(_, _) => Vec::new(),
+            Self::AlertRequest(_, _) => Vec::new(),
+        }
+    }
 }
 
 // Notifications being sent to consensus, so that it can learn about proven forkers and receive

@@ -16,7 +16,7 @@ use crate::{
     units::{
         ControlHash, FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore,
     },
-    Data, DataIO, DataState, Hasher, Index, MultiKeychain, Network, NodeCount, NodeIndex, NodeMap,
+    Data, DataIO, Hasher, Index, MultiKeychain, Network, NodeCount, NodeIndex, NodeMap,
     OrderedBatch, Sender, SpawnHandle,
 };
 
@@ -36,6 +36,21 @@ pub(crate) enum UnitMessage<H: Hasher, D: Data, S: Signature> {
     RequestParents(NodeIndex, H::Hash),
     /// Response to a request for a full list of parents.
     ResponseParents(H::Hash, Vec<UncheckedSignedUnit<H, D, S>>),
+}
+
+impl<H: Hasher, D: Data, S: Signature> UnitMessage<H, D, S> {
+    pub(crate) fn included_data(&self) -> Vec<D> {
+        match self {
+            Self::NewUnit(uu) => vec![uu.as_signable().data().clone()],
+            Self::RequestCoord(_, _) => Vec::new(),
+            Self::ResponseCoord(uu) => vec![uu.as_signable().data().clone()],
+            Self::RequestParents(_, _) => Vec::new(),
+            Self::ResponseParents(_, units) => units
+                .iter()
+                .map(|uu| uu.as_signable().data().clone())
+                .collect(),
+        }
+    }
 }
 
 /// Type for incoming notifications: Member to Consensus.
@@ -423,30 +438,13 @@ where
     }
 
     fn move_units_to_consensus(&mut self) {
-        for su in self.store.yield_buffer_units() {
-            let full_unit = su.as_signable();
-            let unit = full_unit.unit();
-            match self.data_io.check_availability(full_unit.data()) {
-                DataState::Available => {
-                    self.send_consensus_notification(NotificationIn::NewUnits(vec![unit]))
-                }
-                DataState::Missing(fetch_fut) => {
-                    let tx_consensus = self.tx_consensus.clone();
-                    // In the execution below a panic in the expect cannot occure and a simple error trigers
-                    // implicitly a retry of availability check, so this task is not essential.
-                    self.spawn_handle
-                        .spawn("member/check_availability", async move {
-                            if fetch_fut.await.is_ok() {
-                                tx_consensus
-                                    .as_ref()
-                                    .unwrap()
-                                    .unbounded_send(NotificationIn::NewUnits(vec![unit]))
-                                    .expect("Channel to consensus should be open");
-                            }
-                        });
-                }
-            }
-        }
+        let units_to_move = self
+            .store
+            .yield_buffer_units()
+            .into_iter()
+            .map(|su| su.as_signable().unit())
+            .collect();
+        self.send_consensus_notification(NotificationIn::NewUnits(units_to_move))
     }
 
     fn on_unit_received(&mut self, uu: UncheckedSignedUnit<H, D, MK::Signature>, alert: bool) {

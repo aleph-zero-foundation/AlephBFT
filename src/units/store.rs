@@ -64,7 +64,7 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
             self.round_in_progress = candidate_round + 1;
             // The loop below will normally just go over a single round, but theoretically the jump between
             // old_round and candidate_round could be >1.
-            for round in (old_round + 1)..(self.round_in_progress + 1) {
+            for round in (old_round + 1)..=self.round_in_progress {
                 for (id, forker) in self.is_forker.enumerate() {
                     if !*forker {
                         let coord = UnitCoord::new(round, id);

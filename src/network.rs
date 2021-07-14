@@ -54,6 +54,15 @@ pub(crate) enum NetworkDataInner<H: Hasher, D: Data, S: Signature, MS: PartialMu
     Alert(AlertMessage<H, D, S, MS>),
 }
 
+impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> NetworkDataInner<H, D, S, MS> {
+    pub(crate) fn included_data(&self) -> Vec<D> {
+        match self {
+            Self::Units(message) => message.included_data(),
+            Self::Alert(message) => message.included_data(),
+        }
+    }
+}
+
 /// NetworkData is the opaque format for all data that a committee member needs to send to other nodes.
 #[derive(Clone)]
 pub struct NetworkData<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature>(
@@ -85,6 +94,16 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> Decode
 {
     fn decode<I: codec::Input>(input: &mut I) -> Result<Self, codec::Error> {
         Ok(Self(NetworkDataInner::decode(input)?))
+    }
+}
+
+impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> NetworkData<H, D, S, MS> {
+    /// Returns all the Data in the network message that might end up in the ordering as a result
+    /// of accepting this message. Useful for ensuring data availability, if Data only represents
+    /// the objects the user wants to order, and facilitates access to the Data before it is
+    /// ordered for optimization purposes.
+    pub fn included_data(&self) -> Vec<D> {
+        self.0.included_data()
     }
 }
 
@@ -219,16 +238,26 @@ mod tests {
         use UnitMessage::NewUnit;
 
         let uu = test_unchecked_unit(5.into(), 43, 1729);
+        let included_data = vec![uu.as_signable().data().clone()];
         let nd = NetworkData::<Hasher64, Data, Signature, PartialMultisignature>(Units(NewUnit(
             uu.clone(),
         )));
         let decoded = mock::NetworkData::decode(&mut &nd.encode()[..]);
-        assert!(decoded.is_ok(), "Bug in encode/decode for Units(NewUnit)");
-        if let Units(NewUnit(decoded_unchecked)) = decoded.unwrap().0 {
-            assert!(
-                uu.as_signable() == decoded_unchecked.as_signable(),
+        assert!(decoded.is_ok(), "Bug in encode/decode for NewUnit");
+        let decoded = decoded.unwrap();
+        assert_eq!(
+            decoded.included_data(),
+            included_data,
+            "data decoded incorrectly"
+        );
+        if let Units(NewUnit(decoded_unchecked)) = decoded.0 {
+            assert_eq!(
+                uu.as_signable(),
+                decoded_unchecked.as_signable(),
                 "decoded should equal encoded"
             );
+        } else {
+            panic!("Decoded NewUnit as something else");
         }
     }
 
@@ -243,9 +272,16 @@ mod tests {
             RequestCoord(ni, uc),
         ));
         let decoded = mock::NetworkData::decode(&mut &nd.encode()[..]);
-        assert!(decoded.is_ok(), "Bug in encode/decode for Units(NewUnit)");
-        if let Units(RequestCoord(dni, duc)) = decoded.unwrap().0 {
+        assert!(decoded.is_ok(), "Bug in encode/decode for RequestCoord");
+        let decoded = decoded.unwrap();
+        assert!(
+            decoded.included_data().is_empty(),
+            "data returned from a coord request"
+        );
+        if let Units(RequestCoord(dni, duc)) = decoded.0 {
             assert!(ni == dni && uc == duc, "decoded should equal encoded");
+        } else {
+            panic!("Decoded RequestCoord as something else");
         }
     }
 
@@ -255,16 +291,26 @@ mod tests {
         use UnitMessage::ResponseCoord;
 
         let uu = test_unchecked_unit(5.into(), 43, 1729);
+        let included_data = vec![uu.as_signable().data().clone()];
         let nd = NetworkData::<Hasher64, Data, Signature, PartialMultisignature>(Units(
             ResponseCoord(uu.clone()),
         ));
         let decoded = mock::NetworkData::decode(&mut &nd.encode()[..]);
-        assert!(decoded.is_ok(), "Bug in encode/decode for Units(NewUnit)");
-        if let Units(ResponseCoord(decoded_unchecked)) = decoded.unwrap().0 {
-            assert!(
-                uu.as_signable() == decoded_unchecked.as_signable(),
+        assert!(decoded.is_ok(), "Bug in encode/decode for ResponseCoord");
+        let decoded = decoded.unwrap();
+        assert_eq!(
+            decoded.included_data(),
+            included_data,
+            "data decoded incorrectly"
+        );
+        if let Units(ResponseCoord(decoded_unchecked)) = decoded.0 {
+            assert_eq!(
+                uu.as_signable(),
+                decoded_unchecked.as_signable(),
                 "decoded should equal encoded"
             );
+        } else {
+            panic!("Decoded ResponseCoord as something else");
         }
     }
 
@@ -279,9 +325,16 @@ mod tests {
             RequestParents(ni, h),
         ));
         let decoded = mock::NetworkData::decode(&mut &nd.encode()[..]);
-        assert!(decoded.is_ok(), "Bug in encode/decode for Units(NewUnit)");
-        if let Units(RequestParents(dni, dh)) = decoded.unwrap().0 {
+        assert!(decoded.is_ok(), "Bug in encode/decode for RequestParents");
+        let decoded = decoded.unwrap();
+        assert!(
+            decoded.included_data().is_empty(),
+            "data returned from a parent request"
+        );
+        if let Units(RequestParents(dni, dh)) = decoded.0 {
             assert!(ni == dni && h == dh, "decoded should equal encoded");
+        } else {
+            panic!("Decoded RequestParents as something else");
         }
     }
 
@@ -294,25 +347,40 @@ mod tests {
         let p1 = test_unchecked_unit(5.into(), 43, 1729);
         let p2 = test_unchecked_unit(13.into(), 43, 1729);
         let p3 = test_unchecked_unit(17.into(), 43, 1729);
+        let included_data = vec![
+            p1.as_signable().data().clone(),
+            p2.as_signable().data().clone(),
+            p3.as_signable().data().clone(),
+        ];
         let parents = vec![p1, p2, p3];
 
         let nd = NetworkData::<Hasher64, Data, Signature, PartialMultisignature>(Units(
             ResponseParents(h, parents.clone()),
         ));
         let decoded = mock::NetworkData::decode(&mut &nd.encode()[..]);
-        assert!(decoded.is_ok(), "Bug in encode/decode for Units(NewUnit)");
-        if let Units(ResponseParents(dh, dparents)) = decoded.unwrap().0 {
-            assert!(h == dh, "decoded should equal encoded");
-            assert!(
-                parents.len() == dparents.len(),
+        assert!(decoded.is_ok(), "Bug in encode/decode for ResponseParents");
+        let decoded = decoded.unwrap();
+        assert_eq!(
+            decoded.included_data(),
+            included_data,
+            "data decoded incorrectly"
+        );
+        if let Units(ResponseParents(dh, dparents)) = decoded.0 {
+            assert_eq!(h, dh, "decoded should equal encoded");
+            assert_eq!(
+                parents.len(),
+                dparents.len(),
                 "decoded should equal encoded"
             );
             for (p, dp) in parents.iter().zip(dparents.iter()) {
-                assert!(
-                    p.as_signable() == dp.as_signable(),
+                assert_eq!(
+                    p.as_signable(),
+                    dp.as_signable(),
                     "decoded should equal encoded"
                 );
             }
+        } else {
+            panic!("Decoded ResponseParents as something else");
         }
     }
 
@@ -326,18 +394,31 @@ mod tests {
         let f2 = test_unchecked_unit(forker, 10, 1);
         let lu1 = test_unchecked_unit(forker, 11, 0);
         let lu2 = test_unchecked_unit(forker, 12, 0);
+        let included_data = vec![
+            lu1.as_signable().data().clone(),
+            lu2.as_signable().data().clone(),
+        ];
         let alert = crate::alerts::Alert::new(7.into(), (f1, f2), vec![lu1, lu2]);
 
         let nd = NetworkData::<Hasher64, Data, Signature, PartialMultisignature>(Alert(ForkAlert(
             UncheckedSigned::new(alert.clone(), Signature {}),
         )));
         let decoded = mock::NetworkData::decode(&mut &nd.encode()[..]);
-        assert!(decoded.is_ok(), "Bug in encode/decode for Units(NewUnit)");
-        if let Alert(ForkAlert(unchecked_alert)) = decoded.unwrap().0 {
-            assert!(
-                &alert == unchecked_alert.as_signable(),
+        assert!(decoded.is_ok(), "Bug in encode/decode for ForkAlert");
+        let decoded = decoded.unwrap();
+        assert_eq!(
+            decoded.included_data(),
+            included_data,
+            "data decoded incorrectly"
+        );
+        if let Alert(ForkAlert(unchecked_alert)) = decoded.0 {
+            assert_eq!(
+                &alert,
+                unchecked_alert.as_signable(),
                 "decoded should equal encoded"
             )
+        } else {
+            panic!("Decoded ForkAlert as something else");
         }
     }
 }

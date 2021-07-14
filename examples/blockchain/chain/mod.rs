@@ -1,20 +1,24 @@
-use aleph_bft::{DataState, NodeIndex, OrderedBatch};
+use crate::network::NetworkData;
+use aleph_bft::NodeIndex;
 use codec::{Decode, Encode};
 use futures::{
     channel::{
-        mpsc::{self, UnboundedReceiver, UnboundedSender},
+        mpsc::{UnboundedReceiver, UnboundedSender},
         oneshot,
     },
     FutureExt, StreamExt,
 };
 use futures_timer::Delay;
-use log::{debug, error, info};
+use log::{debug, info};
 use parking_lot::Mutex;
 use std::{
-    collections::HashSet,
     sync::Arc,
     time::{self, Duration},
 };
+
+pub(crate) use data::{Data, DataIO, DataStore};
+
+mod data;
 
 type BlockNum = u64;
 
@@ -69,87 +73,6 @@ pub(crate) fn gen_chain_config(
     }
 }
 
-pub(crate) type Data = BlockNum;
-
-struct InnerDataIO {
-    current_block: BlockNum,
-    available_blocks: HashSet<BlockNum>,
-    finalized_tx: UnboundedSender<OrderedBatch<Data>>,
-}
-
-#[derive(Clone)]
-pub(crate) struct DataIO {
-    inner: Arc<Mutex<InnerDataIO>>,
-}
-
-impl aleph_bft::DataIO<Data> for DataIO {
-    type Error = ();
-    fn get_data(&self) -> Data {
-        self.inner.lock().current_block
-    }
-
-    fn check_availability(&self, data: &Data) -> DataState<Self::Error> {
-        if self.inner.lock().available_blocks.contains(data) {
-            return DataState::Available;
-        }
-        let data_io = self.inner.clone();
-        let data = *data;
-        let fut = async move {
-            loop {
-                if data_io.lock().available_blocks.contains(&data) {
-                    return Ok(());
-                }
-                Delay::new(Duration::from_millis(100)).await;
-            }
-        };
-        DataState::Missing(Box::pin(fut))
-    }
-
-    fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), Self::Error> {
-        self.inner
-            .lock()
-            .finalized_tx
-            .unbounded_send(data)
-            .map_err(|_| ())
-    }
-}
-
-impl DataIO {
-    pub(crate) fn new() -> (Self, UnboundedReceiver<OrderedBatch<Data>>) {
-        let (finalized_tx, finalized_rx) = mpsc::unbounded();
-        // We initialize with the "Genesis Block" => number 0.
-        let available_blocks: HashSet<_> = [0u64].iter().cloned().collect();
-        let inner = InnerDataIO {
-            current_block: 0,
-            available_blocks,
-            finalized_tx,
-        };
-
-        (
-            DataIO {
-                inner: Arc::new(Mutex::new(inner)),
-            },
-            finalized_rx,
-        )
-    }
-
-    pub(crate) fn contains_block(&self, num: BlockNum) -> bool {
-        self.inner.lock().available_blocks.contains(&num)
-    }
-
-    pub(crate) fn add_block(&self, num: BlockNum) {
-        debug!(target: "Blockchain", "Added block {:?}.", num);
-        let mut data_io = self.inner.lock();
-        data_io.available_blocks.insert(num);
-        while data_io
-            .available_blocks
-            .contains(&(data_io.current_block + 1))
-        {
-            data_io.current_block += 1;
-        }
-    }
-}
-
 // Runs a process that maintains a simple blockchain. The blocks are created every config.blocktime_ms
 // milliseconds and the block authors are determined by config.authorship_plan. The default config
 // uses round robin authorship: node k creates blocks number n if n%n_members = k.
@@ -161,14 +84,16 @@ impl DataIO {
 // block_tx to push created blocks to the network (to send them to all the remaining nodes).
 pub(crate) async fn run_blockchain(
     config: ChainConfig,
-    data_io: DataIO,
-    mut block_rx: UnboundedReceiver<Block>,
-    block_tx: UnboundedSender<Block>,
+    mut data_store: DataStore,
+    current_block: Arc<Mutex<BlockNum>>,
+    mut blocks_from_network: UnboundedReceiver<Block>,
+    blocks_for_network: UnboundedSender<Block>,
+    mut messages_from_network: UnboundedReceiver<NetworkData>,
     mut exit: oneshot::Receiver<()>,
 ) {
     let start_time = time::Instant::now();
     for block_num in 1u64.. {
-        loop {
+        while *current_block.lock() < block_num {
             let curr_author = (config.authorship_plan)(block_num);
             if curr_author == config.node_ix {
                 // We need to create the block, but at the right time
@@ -177,21 +102,25 @@ pub(crate) async fn run_blockchain(
                 let block_creation_time = start_time + Duration::from_millis(block_delay_ms);
                 if curr_time >= block_creation_time {
                     let block = Block::new(block_num, config.data_size);
-                    if let Err(e) = block_tx.unbounded_send(block) {
-                        error!(target: "Blockchain-chain", "Error when sending block {:?}. Exiting.", e);
-                        return;
-                    }
-                    data_io.add_block(block_num);
+                    blocks_for_network
+                        .unbounded_send(block)
+                        .expect("network should accept blocks");
+                    data_store.add_block(block_num);
                 }
             }
             // We tick every 10ms.
             let mut delay_fut = Delay::new(Duration::from_millis(10)).fuse();
 
             futures::select! {
-                maybe_block = block_rx.next() => {
+                maybe_block = blocks_from_network.next() => {
                     if let Some(block) = maybe_block {
-                        data_io.add_block(block.num);
+                        data_store.add_block(block.num);
                         //We drop the block at this point, only keep track of the fact that we received it.
+                    }
+                }
+                maybe_message = messages_from_network.next() => {
+                    if let Some(message) = maybe_message {
+                        data_store.add_message(message);
                     }
                 }
                 _ = &mut delay_fut => {
@@ -201,10 +130,6 @@ pub(crate) async fn run_blockchain(
                     info!(target: "Blockchain-chain", "Received exit signal.");
                     return;
                 },
-            }
-
-            if data_io.contains_block(block_num) {
-                break;
             }
         }
     }
