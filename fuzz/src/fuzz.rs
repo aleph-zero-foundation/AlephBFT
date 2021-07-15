@@ -9,7 +9,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 
-use aleph_bft::{DataState, DelayConfig, NodeCount, NodeIndex, SpawnHandle, TaskHandle};
+use aleph_bft::{DelayConfig, NodeCount, NodeIndex, SpawnHandle, TaskHandle};
 use aleph_mock::{
     configure_network, gen_config, init_log, spawn_honest_member_with_config, NetworkHook,
 };
@@ -76,12 +76,9 @@ pub struct DataIO {
 
 impl DataIOT<self::Data> for DataIO {
     type Error = ();
+
     fn get_data(&self) -> Data {
         Data::new()
-    }
-
-    fn check_availability(&self, _: &Data) -> DataState<Self::Error> {
-        DataState::Available
     }
 
     fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), ()> {
@@ -370,6 +367,7 @@ impl Spawner {
             spawner: Arc::new(aleph_mock::Spawner::new()),
             idle_mx: Arc::new(Mutex::new(())),
             wake_flag: Arc::new(AtomicBool::new(false)),
+            // NOTE this is a magic value used to allow fuzzing tests be able to process enough messages from the PlaybackNetwork
             delay: 2 * delay_config.tick_interval,
         }
     }

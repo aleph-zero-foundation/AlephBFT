@@ -22,10 +22,9 @@ use std::{
 };
 
 use aleph_bft::{
-    exponential_slowdown, Config, DataIO as DataIOT, DataState, DelayConfig, Hasher, Index,
-    KeyBox as KeyBoxT, Member, MultiKeychain as MultiKeychainT, Network as NetworkT, NodeCount,
-    NodeIndex, OrderedBatch, PartialMultisignature as PartialMultisignatureT, SpawnHandle,
-    TaskHandle,
+    exponential_slowdown, Config, DataIO as DataIOT, DelayConfig, Hasher, Index, KeyBox as KeyBoxT,
+    Member, MultiKeychain as MultiKeychainT, Network as NetworkT, NodeCount, NodeIndex,
+    OrderedBatch, PartialMultisignature as PartialMultisignatureT, SpawnHandle, TaskHandle,
 };
 
 pub fn init_log() {
@@ -360,9 +359,7 @@ impl DataIOT<Data> for DataIO {
         self.round_counter.set(self.round_counter.get() + 1);
         Data::new(self.ix, self.round_counter.get())
     }
-    fn check_availability(&self, _: &Data) -> DataState<Self::Error> {
-        DataState::Available
-    }
+
     fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), ()> {
         self.tx.unbounded_send(data).map_err(|e| {
             error!(target: "data-io", "Error when sending data from DataIO {:?}.", e);
