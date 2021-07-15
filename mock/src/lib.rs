@@ -456,8 +456,18 @@ pub fn spawn_honest_member_generic<D: aleph_bft::Data, H: Hasher, K: MultiKeycha
     data_io: impl DataIOT<D> + Send + 'static,
     mk: impl ToOwned<Owned = K>,
 ) -> oneshot::Sender<()> {
-    let (exit_tx, exit_rx) = oneshot::channel();
     let config = gen_config(node_index, n_members.into());
+    spawn_honest_member_with_config(spawner, config, network, data_io, mk)
+}
+
+pub fn spawn_honest_member_with_config<D: aleph_bft::Data, H: Hasher, K: MultiKeychainT>(
+    spawner: impl SpawnHandle,
+    config: Config,
+    network: impl 'static + NetworkT<H, D, K::Signature, K::PartialMultisignature>,
+    data_io: impl DataIOT<D> + Send + 'static,
+    mk: impl ToOwned<Owned = K>,
+) -> oneshot::Sender<()> {
+    let (exit_tx, exit_rx) = oneshot::channel();
     let spawner_inner = spawner.clone();
     let keybox = mk.to_owned();
     let member_task = async move {

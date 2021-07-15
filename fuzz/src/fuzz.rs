@@ -9,8 +9,10 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 
-use aleph_bft::{DataState, NodeCount, NodeIndex, SpawnHandle, TaskHandle};
-use aleph_mock::{configure_network, init_log, spawn_honest_member_generic, NetworkHook};
+use aleph_bft::{DataState, DelayConfig, NodeCount, NodeIndex, SpawnHandle, TaskHandle};
+use aleph_mock::{
+    configure_network, gen_config, init_log, spawn_honest_member_with_config, NetworkHook,
+};
 
 use codec::{Decode, Encode, IoReader};
 
@@ -223,18 +225,14 @@ impl<R: Read> Iterator for NetworkDataIterator<R> {
 
 struct PlaybackNetwork<I, C> {
     data: I,
-    delay: Duration,
-    next_delay: Delay,
     exit: Receiver<()>,
     finished_callback: Option<C>,
 }
 
 impl<I, C> PlaybackNetwork<I, C> {
-    fn new(data: I, delay_millis: u64, exit: Receiver<()>, finished: C) -> Self {
+    fn new(data: I, exit: Receiver<()>, finished: C) -> Self {
         PlaybackNetwork {
             data,
-            delay: Duration::from_millis(delay_millis),
-            next_delay: Delay::new(Duration::from_millis(delay_millis)),
             exit,
             finished_callback: Some(finished),
         }
@@ -257,8 +255,6 @@ impl<I: Iterator<Item = FuzzNetworkData> + Send, C: FnOnce() + Send>
     }
 
     async fn next_event(&mut self) -> Option<FuzzNetworkData> {
-        (&mut self.next_delay).await;
-        self.next_delay.reset(self.delay);
         match self.data.next() {
             Some(v) => Some(v),
             None => {
@@ -312,6 +308,7 @@ struct Spawner {
     spawner: Arc<aleph_mock::Spawner>,
     idle_mx: Arc<Mutex<()>>,
     wake_flag: Arc<AtomicBool>,
+    delay: Duration,
 }
 
 struct SpawnFuture<T> {
@@ -340,9 +337,13 @@ impl<T: Future<Output = ()> + Send + 'static> Future for SpawnFuture<T> {
 }
 
 impl SpawnHandle for Spawner {
-    fn spawn(&self, _name: &'static str, task: impl Future<Output = ()> + Send + 'static) {
-        let wrapped = SpawnFuture::new(task, self.wake_flag.clone());
-        self.spawner.spawn(_name, wrapped)
+    fn spawn(&self, name: &'static str, task: impl Future<Output = ()> + Send + 'static) {
+        if name == "member" {
+            self.spawner.spawn(name, task)
+        } else {
+            let wrapped = self.wrap_task(task);
+            self.spawner.spawn(name, wrapped)
+        }
     }
 
     fn spawn_essential(
@@ -350,8 +351,12 @@ impl SpawnHandle for Spawner {
         name: &'static str,
         task: impl Future<Output = ()> + Send + 'static,
     ) -> TaskHandle {
-        let wrapped = SpawnFuture::new(task, self.wake_flag.clone());
-        self.spawner.spawn_essential(name, wrapped)
+        if name == "member" {
+            self.spawner.spawn_essential(name, task)
+        } else {
+            let wrapped = self.wrap_task(task);
+            self.spawner.spawn_essential(name, wrapped)
+        }
     }
 }
 
@@ -360,11 +365,12 @@ impl Spawner {
         self.spawner.wait().await
     }
 
-    pub fn new() -> Self {
+    pub fn new(delay_config: &DelayConfig) -> Self {
         Spawner {
             spawner: Arc::new(aleph_mock::Spawner::new()),
             idle_mx: Arc::new(Mutex::new(())),
             wake_flag: Arc::new(AtomicBool::new(false)),
+            delay: 2 * delay_config.tick_interval,
         }
     }
 
@@ -377,6 +383,7 @@ impl Spawner {
 
         loop {
             yield_now().await;
+            Delay::new(self.delay).await;
             if self
                 .wake_flag
                 .swap(true, std::sync::atomic::Ordering::Relaxed)
@@ -385,11 +392,12 @@ impl Spawner {
             }
         }
     }
-}
 
-impl Default for Spawner {
-    fn default() -> Self {
-        Spawner::new()
+    fn wrap_task(
+        &self,
+        task: impl Future<Output = ()> + Send + 'static,
+    ) -> impl Future<Output = ()> + Send + 'static {
+        SpawnFuture::new(task, self.wake_flag.clone())
     }
 }
 
@@ -405,7 +413,8 @@ async fn execute_generate_fuzz<'a, W: Write + Send + 'static>(
     let (mut router, networks) = configure_network(n_members, 1.0);
     router.add_hook(spy);
 
-    let spawner = Spawner::new();
+    let delay_config = gen_config(0.into(), n_members.into()).delay_config;
+    let spawner = Spawner::new(&delay_config);
     spawner.spawn("network", router);
 
     let mut batch_rxs = Vec::new();
@@ -413,14 +422,9 @@ async fn execute_generate_fuzz<'a, W: Write + Send + 'static>(
     for network in networks.into_iter().take(threshold) {
         let (data_io, batch_rx) = DataIO::new();
         let keybox = KeyBox::new(NodeCount(n_members), network.index());
-        let exit_tx = spawn_honest_member_generic(
-            spawner.clone(),
-            network.index(),
-            n_members,
-            network,
-            data_io,
-            keybox,
-        );
+        let config = gen_config(network.index(), n_members.into());
+        let exit_tx =
+            spawn_honest_member_with_config(spawner.clone(), config, network, data_io, keybox);
         exits.push(exit_tx);
         batch_rxs.push(batch_rx);
     }
@@ -441,8 +445,7 @@ async fn execute_fuzz(
     n_members: usize,
     n_batches: Option<usize>,
 ) {
-    const NETWORK_DELAY: u64 = 1;
-
+    let config = gen_config(0.into(), n_members.into());
     let (net_exit, net_exit_rx) = oneshot::channel();
     let (playback_finished_tx, mut playback_finished_rx) = oneshot::channel();
     let finished_callback = move || {
@@ -450,20 +453,14 @@ async fn execute_fuzz(
             .send(())
             .expect("finished_callback channel already closed");
     };
-    let network = PlaybackNetwork::new(data, NETWORK_DELAY, net_exit_rx, finished_callback);
+    let network = PlaybackNetwork::new(data, net_exit_rx, finished_callback);
 
-    let spawner = Spawner::new();
+    let spawner = Spawner::new(&config.delay_config);
     let node_index = NodeIndex(0);
     let (data_io, mut batch_rx) = DataIO::new();
     let keybox = KeyBox::new(NodeCount(n_members), node_index);
-    let exit_tx = spawn_honest_member_generic(
-        spawner.clone(),
-        NodeIndex(0),
-        n_members,
-        network,
-        data_io,
-        keybox,
-    );
+    let exit_tx =
+        spawn_honest_member_with_config(spawner.clone(), config, network, data_io, keybox);
 
     let (n_batches, batches_expected) = {
         if let Some(batches) = n_batches {
