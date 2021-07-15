@@ -32,7 +32,7 @@ impl Signable for Hash {
 type TestMessage = Message<Hash, TestSignature, TestPartialMultisignature>;
 
 struct TestNetwork {
-    outgoing_rx: Pin<Box<dyn Stream<Item = (NodeIndex, TestMessage)>>>,
+    outgoing_rx: Pin<Box<dyn Stream<Item = TestMessage>>>,
     incoming_txs: Vec<UnboundedSender<TestMessage>>,
     message_filter: Box<dyn FnMut(NodeIndex, TestMessage) -> bool>,
 }
@@ -43,10 +43,7 @@ impl TestNetwork {
         message_filter: impl FnMut(NodeIndex, TestMessage) -> bool + 'static,
     ) -> (
         Self,
-        Vec<(
-            UnboundedReceiver<TestMessage>,
-            UnboundedSender<(NodeIndex, TestMessage)>,
-        )>,
+        Vec<(UnboundedReceiver<TestMessage>, UnboundedSender<TestMessage>)>,
     ) {
         let all_nodes: Vec<_> = (0..node_count.0).map(NodeIndex).collect();
         let (incomng_txs, incoming_rxs): (Vec<_>, Vec<_>) =
@@ -55,7 +52,7 @@ impl TestNetwork {
             all_nodes
                 .iter()
                 .map(|_| {
-                    let (tx, rx) = unbounded::<(NodeIndex, TestMessage)>();
+                    let (tx, rx) = unbounded::<TestMessage>();
                     (tx, rx)
                 })
                 .unzip()
@@ -80,11 +77,12 @@ impl TestNetwork {
 
 impl TestNetwork {
     async fn run(&mut self) {
-        while let Some((recipient, message)) = self.outgoing_rx.next().await {
-            if (self.message_filter)(recipient, message.clone()) {
-                self.incoming_txs[recipient.0]
-                    .unbounded_send(message)
-                    .expect("Channel should be open");
+        while let Some(message) = self.outgoing_rx.next().await {
+            for (i, tx) in self.incoming_txs.iter().enumerate() {
+                if (self.message_filter)(NodeIndex(i), message.clone()) {
+                    tx.unbounded_send(message.clone())
+                        .expect("Channel should be open");
+                }
             }
         }
     }

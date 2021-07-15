@@ -7,7 +7,7 @@ use crate::{
 };
 use codec::{Decode, Encode};
 use futures::{channel::oneshot, FutureExt, StreamExt};
-use log::error;
+use log::{error, warn};
 use std::fmt::Debug;
 
 /// Network represents an interface for sending and receiving NetworkData.
@@ -48,7 +48,7 @@ pub trait Network<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature>: 
     async fn next_event(&mut self) -> Option<NetworkData<H, D, S, MS>>;
 }
 
-#[derive(Encode, Decode, Clone)]
+#[derive(Encode, Decode, Clone, Debug)]
 pub(crate) enum NetworkDataInner<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> {
     Units(UnitMessage<H, D, S>),
     Alert(AlertMessage<H, D, S, MS>),
@@ -64,7 +64,7 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> NetworkDataInn
 }
 
 /// NetworkData is the opaque format for all data that a committee member needs to send to other nodes.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NetworkData<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature>(
     pub(crate) NetworkDataInner<H, D, S, MS>,
 );
@@ -166,14 +166,17 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature, N: Network<H, 
         let NetworkData(network_data) = network_data;
         use NetworkDataInner::*;
         match network_data {
-            Units(unit_message) => self
-                .units_received
-                .unbounded_send(unit_message)
-                .expect("Channel should be open"),
-            Alert(alert_message) => self
-                .alerts_received
-                .unbounded_send(alert_message)
-                .expect("Channel should be open"),
+            Units(unit_message) => {
+                if let Err(e) = self.units_received.unbounded_send(unit_message) {
+                    warn!(target: "AlephBFT-network-hub", "Error when sending units to consensus {:?}", e);
+                }
+            }
+
+            Alert(alert_message) => {
+                if let Err(e) = self.alerts_received.unbounded_send(alert_message) {
+                    warn!(target: "AlephBFT-network-hub", "Error when sending alerts to consensus {:?}", e);
+                }
+            }
         }
     }
 

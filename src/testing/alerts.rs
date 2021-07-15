@@ -255,7 +255,7 @@ impl TestCase {
                     notification = notifications_from_alerter.next() => match notification {
                         Some(notification) => segment.check_output(Output::Notification(notification)),
                         None => panic!("Notification stream unexpectedly closed."),
-                    },
+                    }
                 }
                 trace!("Remaining items in this segment: {:?}.", segment.expected);
             }
@@ -309,12 +309,10 @@ async fn reacts_to_correctly_incoming_alert() {
     test_case
         .incoming_message(AlertMessage::ForkAlert(signed_alert))
         .outgoing_notification(ForkingNotification::Forker(fork_proof));
-    for i in 1..n_members.0 {
-        test_case.outgoing_message(
-            AlertMessage::RmcMessage(own_index, RmcMessage::SignedHash(signed_alert_hash.clone())),
-            Recipient::Node(NodeIndex(i)),
-        );
-    }
+    test_case.outgoing_message(
+        AlertMessage::RmcMessage(own_index, RmcMessage::SignedHash(signed_alert_hash.clone())),
+        Recipient::Everyone,
+    );
     test_case.run(own_index).await;
 }
 
@@ -435,7 +433,7 @@ async fn responds_to_alert_queries() {
         )
         .outgoing_message(
             AlertMessage::RmcMessage(own_index, RmcMessage::SignedHash(signed_alert_hash.clone())),
-            Recipient::Node(querier),
+            Recipient::Everyone,
         )
         .wait()
         .incoming_message(AlertMessage::AlertRequest(querier, alert_hash))

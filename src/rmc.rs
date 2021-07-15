@@ -1,6 +1,6 @@
 //! Reliable MultiCast - a primitive for Reliable Broadcast protocol.
 use crate::{
-    nodes::{NodeCount, NodeIndex},
+    nodes::NodeCount,
     signed::{PartiallyMultisigned, Signable, Signed, UncheckedSigned},
     Indexed, MultiKeychain, Multisigned, PartialMultisignature, Signature,
 };
@@ -177,12 +177,8 @@ impl<T: Send + Sync + Clone> TaskScheduler<T> for DoublingDelayScheduler<T> {
 pub struct ReliableMulticast<'a, H: Signable + Hash, MK: MultiKeychain> {
     hash_states: HashMap<H, PartiallyMultisigned<'a, H, MK>>,
     network_rx: UnboundedReceiver<Message<H, MK::Signature, MK::PartialMultisignature>>,
-    network_tx: UnboundedSender<(
-        NodeIndex,
-        Message<H, MK::Signature, MK::PartialMultisignature>,
-    )>,
+    network_tx: UnboundedSender<Message<H, MK::Signature, MK::PartialMultisignature>>,
     keychain: &'a MK,
-    node_count: NodeCount,
     scheduler: Box<dyn TaskScheduler<Task<H, MK>>>,
     multisigned_hashes_tx: UnboundedSender<Multisigned<'a, H, MK>>,
     multisigned_hashes_rx: UnboundedReceiver<Multisigned<'a, H, MK>>,
@@ -191,12 +187,10 @@ pub struct ReliableMulticast<'a, H: Signable + Hash, MK: MultiKeychain> {
 impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMulticast<'a, H, MK> {
     pub fn new(
         network_rx: UnboundedReceiver<Message<H, MK::Signature, MK::PartialMultisignature>>,
-        network_tx: UnboundedSender<(
-            NodeIndex,
-            Message<H, MK::Signature, MK::PartialMultisignature>,
-        )>,
+        network_tx: UnboundedSender<Message<H, MK::Signature, MK::PartialMultisignature>>,
         keychain: &'a MK,
-        node_count: NodeCount,
+        //kept for compatibility
+        _node_count: NodeCount,
         scheduler: impl TaskScheduler<Task<H, MK>> + 'static,
     ) -> Self {
         let (multisigned_hashes_tx, multisigned_hashes_rx) = unbounded();
@@ -205,7 +199,6 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
             network_rx,
             network_tx,
             keychain,
-            node_count,
             scheduler: Box::new(scheduler),
             multisigned_hashes_tx,
             multisigned_hashes_rx,
@@ -214,10 +207,14 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
 
     /// Initiate a new instance of RMC for `hash`.
     pub async fn start_rmc(&mut self, hash: H) {
+        debug!(target: "AlephBFT-rmc", "starting rmc for {:?}", hash);
         let signed_hash = Signed::sign_with_index(hash, self.keychain).await;
+
         let message = Message::SignedHash(signed_hash.into_unchecked());
         self.handle_message(message.clone());
-        self.scheduler.add_task(Task::BroadcastMessage(message))
+        let task = Task::BroadcastMessage(message);
+        self.do_task(task.clone());
+        self.scheduler.add_task(task);
     }
 
     fn on_complete_multisignature(&mut self, multisigned: Multisigned<'a, H, MK>) {
@@ -231,10 +228,10 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
         self.multisigned_hashes_tx
             .unbounded_send(multisigned.clone())
             .expect("We own the the rx, so this can't fail");
-        self.scheduler
-            .add_task(Task::BroadcastMessage(Message::MultisignedHash(
-                multisigned.into_unchecked(),
-            )));
+
+        let task = Task::BroadcastMessage(Message::MultisignedHash(multisigned.into_unchecked()));
+        self.do_task(task.clone());
+        self.scheduler.add_task(task);
     }
 
     fn handle_message(&mut self, message: Message<H, MK::Signature, MK::PartialMultisignature>) {
@@ -278,12 +275,9 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
 
     fn do_task(&self, task: Task<H, MK>) {
         let Task::BroadcastMessage(message) = task;
-        for recipient in 0..self.node_count.0 {
-            let recipient = NodeIndex(recipient);
-            self.network_tx
-                .unbounded_send((recipient, message.clone()))
-                .expect("Sending message should succeed");
-        }
+        self.network_tx
+            .unbounded_send(message)
+            .expect("Sending message should succeed");
     }
 
     /// Fetches final multisignature.

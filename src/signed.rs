@@ -90,8 +90,12 @@ pub struct UncheckedSigned<T: Signable, S: Signature> {
 }
 
 impl<T: Signable, S: Signature> UncheckedSigned<T, S> {
-    pub(crate) fn as_signable(&self) -> &T {
+    pub fn as_signable(&self) -> &T {
         &self.signable
+    }
+
+    pub fn signature(&self) -> S {
+        self.signature.clone()
     }
 }
 
@@ -321,7 +325,7 @@ impl<'a, T: Signable, MK: MultiKeychain> Multisigned<'a, T, MK> {
         &self.unchecked.signable
     }
 
-    pub(crate) fn into_unchecked(self) -> UncheckedSigned<T, MK::PartialMultisignature> {
+    pub fn into_unchecked(self) -> UncheckedSigned<T, MK::PartialMultisignature> {
         self.unchecked
     }
 }
