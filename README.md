@@ -146,7 +146,7 @@ cargo install afl
 
 ```sh
 cd fuzz
-cargo fuzz run --features="libfuzz" fuzz_target_1
+cargo fuzz run --features="libfuzz" fuzz_target
 ```
 
 #### afl
