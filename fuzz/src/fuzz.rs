@@ -327,14 +327,14 @@ impl<T: Future<Output = ()> + Send + 'static> Future for SpawnFuture<T> {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.wake_flag
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        let result = Future::poll(self.task.as_mut(), cx);
-        result
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        Future::poll(self.task.as_mut(), cx)
     }
 }
 
 impl SpawnHandle for Spawner {
     fn spawn(&self, name: &'static str, task: impl Future<Output = ()> + Send + 'static) {
+        // NOTE this is magic - member creates too much background noise
         if name == "member" {
             self.spawner.spawn(name, task)
         } else {
@@ -348,6 +348,7 @@ impl SpawnHandle for Spawner {
         name: &'static str,
         task: impl Future<Output = ()> + Send + 'static,
     ) -> TaskHandle {
+        // NOTE this is magic - member creates too much background noise
         if name == "member" {
             self.spawner.spawn_essential(name, task)
         } else {
@@ -368,27 +369,29 @@ impl Spawner {
             idle_mx: Arc::new(Mutex::new(())),
             wake_flag: Arc::new(AtomicBool::new(false)),
             // NOTE this is a magic value used to allow fuzzing tests be able to process enough messages from the PlaybackNetwork
-            delay: 2 * delay_config.tick_interval,
+            delay: 10 * delay_config.tick_interval,
         }
     }
 
     pub async fn wait_idle(&self) {
         let _ = self.idle_mx.lock();
-        // try to verify if any other task was attempting to wake up
-        // it assumes that we are using a single-threaded runtime for scheduling our Futures
-        self.wake_flag
-            .store(true, std::sync::atomic::Ordering::Relaxed);
 
+        self.wake_flag
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         loop {
-            yield_now().await;
             Delay::new(self.delay).await;
+            yield_now().await;
+            // try to verify if any other task was attempting to wake up
+            // it assumes that we are using a single-threaded runtime for scheduling our Futures
             if self
                 .wake_flag
-                .swap(true, std::sync::atomic::Ordering::Relaxed)
+                .swap(true, std::sync::atomic::Ordering::SeqCst)
             {
                 break;
             }
         }
+        self.wake_flag
+            .store(false, std::sync::atomic::Ordering::SeqCst)
     }
 
     fn wrap_task(
@@ -505,7 +508,7 @@ async fn execute_fuzz(
 }
 
 fn get_runtime() -> Runtime {
-    Builder::new_current_thread().enable_all().build().unwrap()
+    Builder::new_current_thread().build().unwrap()
 }
 
 pub fn generate_fuzz<W: Write + Send + 'static>(output: W, n_members: usize, n_batches: usize) {
