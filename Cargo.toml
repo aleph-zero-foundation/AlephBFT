@@ -16,7 +16,7 @@ derive_more = "0.99.7"
 serde = { version = "1.0.110", features = ["derive"] }
 futures-timer = "3.0.2"
 log = "0.4.14"
-env_logger = "0.8.3"
+env_logger = "0.9.0"
 codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive"] }
 rand = "0.8.3"
 async-trait = "0"
