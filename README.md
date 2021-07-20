@@ -62,18 +62,12 @@ please refer to the [detailed version][reference-link].
   aleph-bft = "0.3.1"
   ```
 - AlephBFT requires user to provide it with an implementation of the following traits:
-  - The [DataIO][dataio-link] trait is an abstraction for a component that provides data items,
-    checks availability of data items and allows to input ordered data items. `DataIO` is
-    parametrized with a `Data` generic type representing the type of items we would like to order.
+  - The [DataIO][dataio-link] trait is an abstraction for a component that provides data items and allows to input ordered data items. `DataIO` is parametrized with a `Data` generic type representing the type of items we would like to order. 
     ```rust
     pub trait DataIO<Data> {
-      type Error: Debug + 'static;
+        type Error: Debug;
         fn get_data(&self) -> Data;
-        fn check_availability(
-          &self,
-          data: &Data,
-        ) -> Option<Pin<Box<dyn Future<Output = Result<(), Self::Error>> + Send>>>;
-        fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), Self::Error>;
+        fn send_ordered_batch(&mut self, batch: Vec<Data>) -> Result<(), Self::Error>;
     }
     ```
   - The [KeyBox][keybox-link] trait is an abstraction for digitally signing arbitrary data and
@@ -149,6 +143,9 @@ AlephBFT is licensed under the terms of the the Apache License 2.0.
 The implementation in this repository is founded by [Aleph Zero Foundation][webpage-link].
 
 [//]: ### "badges"
+[dataio-link]: https://cardinal-cryptography.github.io/AlephBFT/aleph_bft_api.html#311-dataio
+[network-link]: https://cardinal-cryptography.github.io/AlephBFT/aleph_bft_api.html#312-network
+[keybox-link]: https://cardinal-cryptography.github.io/AlephBFT/aleph_bft_api.html#313-keybox
 [crate-image]: https://img.shields.io/crates/v/aleph-bft.svg
 [crate-link]: https://crates.io/crates/aleph-bft
 [docs-image]: https://docs.rs/aleph-bft/badge.svg
