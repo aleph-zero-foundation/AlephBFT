@@ -38,7 +38,7 @@ pub struct Config {
     pub max_round: Round,
 }
 
-pub(crate) fn exponential_slowdown(
+pub fn exponential_slowdown(
     t: usize,
     base_delay: f64,
     start_exp_delay: usize,

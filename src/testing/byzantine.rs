@@ -13,7 +13,7 @@ use crate::{
         KeyBox, Network, NetworkData, Spawner,
     },
     units::{ControlHash, FullUnit, PreUnit, SignedUnit, UnitCoord},
-    Hasher, Index, Network as NetworkT, NetworkData as NetworkDataT, NodeCount, NodeIndex, Round,
+    Hasher, Network as NetworkT, NetworkData as NetworkDataT, NodeCount, NodeIndex, Round,
     SessionId, SpawnHandle,
 };
 
@@ -213,17 +213,16 @@ async fn honest_members_agree_on_batches_byzantine(
 ) {
     init_log();
     let spawner = Spawner::new();
-    let mut exits = vec![];
     let mut batch_rxs = Vec::new();
-    let (net_hub, mut networks) = configure_network(n_members, network_reliability);
+    let mut exits = Vec::new();
+    let (mut net_hub, networks) = configure_network(n_members, network_reliability);
 
     let alert_hook = AlertHook::new();
     net_hub.add_hook(alert_hook.clone());
 
     spawner.spawn("network-hub", net_hub);
 
-    for network in networks.iter_mut() {
-        let network = network.take().unwrap();
+    for network in networks {
         let ix = network.index();
         if !n_honest.into_range().contains(&ix) {
             let exit_tx = spawn_malicious_member(spawner.clone(), ix, n_members, 2, network);
@@ -235,9 +234,9 @@ async fn honest_members_agree_on_batches_byzantine(
         }
     }
 
-    let mut batches = vec![];
+    let mut batches = Vec::new();
     for mut rx in batch_rxs.drain(..) {
-        let mut batches_per_ix = vec![];
+        let mut batches_per_ix = Vec::new();
         for _ in 0..n_batches {
             let batch = rx.next().await.unwrap();
             batches_per_ix.push(batch);

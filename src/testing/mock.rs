@@ -1,5 +1,8 @@
 use async_trait::async_trait;
 use codec::{Decode, Encode};
+use log::{debug, error};
+use parking_lot::Mutex;
+
 use futures::{
     channel::{
         mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
@@ -7,11 +10,9 @@ use futures::{
     },
     Future, StreamExt,
 };
-use log::{debug, error};
-use parking_lot::Mutex;
 
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::{hash_map::DefaultHasher, HashMap},
     hash::Hasher as StdHasher,
     pin::Pin,
@@ -21,13 +22,11 @@ use std::{
 };
 
 use crate::{
-    alerts,
-    config::{exponential_slowdown, Config, DelayConfig},
+    exponential_slowdown,
     member::{NotificationIn, NotificationOut},
-    network,
     units::{Unit, UnitCoord},
-    DataIO as DataIOT, Hasher, Index, KeyBox as KeyBoxT, MultiKeychain as MultiKeychainT,
-    Network as NetworkT, NodeCount, NodeIndex, OrderedBatch,
+    Config, DataIO as DataIOT, DelayConfig, Hasher, Index, KeyBox as KeyBoxT,
+    MultiKeychain as MultiKeychainT, Network as NetworkT, NodeCount, NodeIndex, OrderedBatch,
     PartialMultisignature as PartialMultisignatureT, Round, SpawnHandle, TaskHandle,
 };
 
@@ -38,6 +37,26 @@ pub fn init_log() {
         .filter_level(log::LevelFilter::max())
         .is_test(true)
         .try_init();
+}
+
+pub fn gen_config(node_ix: NodeIndex, n_members: NodeCount) -> Config {
+    let delay_config = DelayConfig {
+        tick_interval: Duration::from_millis(5),
+        requests_interval: Duration::from_millis(50),
+        unit_broadcast_delay: Arc::new(|t| exponential_slowdown(t, 100.0, 1, 3.0)),
+        //100, 100, 300, 900, 2700, ...
+        unit_creation_delay: Arc::new(|t| exponential_slowdown(t, 50.0, usize::MAX, 1.000)),
+        //50, 50, 50, 50, ...
+    };
+    Config {
+        node_ix,
+        session_id: 0,
+        n_members,
+        delay_config,
+        rounds_margin: 200,
+        max_units_per_alert: 200,
+        max_round: 5000,
+    }
 }
 
 // A hasher from the standard library that hashes to u64, should be enough to
@@ -182,13 +201,7 @@ impl Future for HonestHub {
 }
 
 #[derive(Clone)]
-pub(crate) struct Spawner {}
-
-impl Spawner {
-    pub(crate) fn new() -> Self {
-        Spawner {}
-    }
-}
+pub struct Spawner {}
 
 impl SpawnHandle for Spawner {
     fn spawn(&self, _name: &str, task: impl Future<Output = ()> + Send + 'static) {
@@ -209,19 +222,31 @@ impl SpawnHandle for Spawner {
     }
 }
 
-pub(crate) type NetworkData = crate::NetworkData<Hasher64, Data, Signature, PartialMultisignature>;
+impl Spawner {
+    pub fn new() -> Self {
+        Spawner {}
+    }
+}
+
+impl Default for Spawner {
+    fn default() -> Self {
+        Spawner::new()
+    }
+}
+
+pub type NetworkData = crate::NetworkData<Hasher64, Data, Signature, PartialMultisignature>;
 type NetworkReceiver = UnboundedReceiver<(NetworkData, NodeIndex)>;
 type NetworkSender = UnboundedSender<(NetworkData, NodeIndex)>;
 
-pub(crate) struct Network {
+pub struct Network {
     rx: NetworkReceiver,
     tx: NetworkSender,
     peers: Vec<NodeIndex>,
     index: NodeIndex,
 }
 
-impl Index for Network {
-    fn index(&self) -> NodeIndex {
+impl Network {
+    pub fn index(&self) -> NodeIndex {
         self.index
     }
 }
@@ -253,35 +278,34 @@ struct Peer {
     rx: NetworkReceiver,
 }
 
-#[derive(Clone)]
-pub(crate) struct UnreliableRouter {
-    peers: Arc<Mutex<HashMap<NodeIndex, Peer>>>,
-    peer_list: Arc<Mutex<Vec<NodeIndex>>>,
-    hook_list: Arc<Mutex<Vec<Box<dyn NetworkHook + Send>>>>,
+pub struct UnreliableRouter {
+    peers: RefCell<HashMap<NodeIndex, Peer>>,
+    peer_list: Vec<NodeIndex>,
+    hook_list: RefCell<Vec<Box<dyn NetworkHook>>>,
     reliability: f64, //a number in the range [0, 1], 1.0 means perfect reliability, 0.0 means no message gets through
 }
 
 impl UnreliableRouter {
     pub(crate) fn new(peer_list: Vec<NodeIndex>, reliability: f64) -> Self {
         UnreliableRouter {
-            peers: Arc::new(Mutex::new(HashMap::new())),
-            peer_list: Arc::new(Mutex::new(peer_list)),
-            hook_list: Arc::new(Mutex::new(Vec::new())),
+            peers: RefCell::new(HashMap::new()),
+            peer_list,
+            hook_list: RefCell::new(Vec::new()),
             reliability,
         }
     }
 
-    pub(crate) fn add_hook<HK: NetworkHook + 'static>(&self, hook: HK) {
-        self.hook_list.lock().push(Box::new(hook));
+    pub fn add_hook<HK: NetworkHook + 'static>(&mut self, hook: HK) {
+        self.hook_list.borrow_mut().push(Box::new(hook));
     }
 
-    pub(crate) fn connect_peer(&self, peer: NodeIndex) -> Network {
+    pub(crate) fn connect_peer(&mut self, peer: NodeIndex) -> Network {
         assert!(
-            self.peer_list.lock().iter().any(|p| *p == peer),
+            self.peer_list.iter().any(|p| *p == peer),
             "Must connect a peer in the list."
         );
         assert!(
-            !self.peers.lock().contains_key(&peer),
+            !self.peers.borrow().contains_key(&peer),
             "Cannot connect a peer twice."
         );
         let (tx_in_hub, rx_in_hub) = unbounded();
@@ -290,11 +314,11 @@ impl UnreliableRouter {
             tx: tx_out_hub,
             rx: rx_in_hub,
         };
-        self.peers.lock().insert(peer, peer_entry);
+        self.peers.borrow_mut().insert(peer, peer_entry);
         Network {
             rx: rx_out_hub,
             tx: tx_in_hub,
-            peers: self.peer_list.lock().clone(),
+            peers: self.peer_list.clone(),
             index: peer,
         }
     }
@@ -302,11 +326,13 @@ impl UnreliableRouter {
 
 impl Future for UnreliableRouter {
     type Output = ();
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = &mut self;
         let mut disconnected_peers: Vec<NodeIndex> = Vec::new();
         let mut buffer = Vec::new();
-        for (peer_id, peer) in self.peers.lock().iter_mut() {
+        for (peer_id, peer) in this.peers.borrow_mut().iter_mut() {
             loop {
+                // this call is responsible for waking this Future
                 match peer.rx.poll_next_unpin(cx) {
                     Poll::Ready(Some(msg)) => {
                         buffer.push((*peer_id, msg));
@@ -322,17 +348,17 @@ impl Future for UnreliableRouter {
             }
         }
         for peer_id in disconnected_peers {
-            self.peers.lock().remove(&peer_id);
+            this.peers.borrow_mut().remove(&peer_id);
         }
         for (sender, (mut data, recipient)) in buffer {
             let rand_sample = rand::random::<f64>();
-            if rand_sample > self.reliability {
-                debug!(target: "testing-mock", "Simulated network fail.");
+            if rand_sample > this.reliability {
+                debug!("Simulated network fail.");
                 continue;
             }
-            let mut peers = self.peers.lock();
-            if let Some(peer) = peers.get_mut(&recipient) {
-                for hook in self.hook_list.lock().iter_mut() {
+
+            if let Some(peer) = this.peers.borrow().get(&recipient) {
+                for hook in this.hook_list.borrow_mut().iter_mut() {
                     hook.update_state(&mut data, sender, recipient);
                 }
                 peer.tx
@@ -340,13 +366,16 @@ impl Future for UnreliableRouter {
                     .expect("channel should be open");
             }
         }
-
-        Poll::Pending
+        if this.peers.borrow().is_empty() {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
     }
 }
 
-pub(crate) trait NetworkHook: Send {
-    fn update_state(&self, data: &mut NetworkData, sender: NodeIndex, recipient: NodeIndex);
+pub trait NetworkHook: Send {
+    fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, recipient: NodeIndex);
 }
 
 #[derive(Clone)]
@@ -374,9 +403,8 @@ impl AlertHook {
 }
 
 impl NetworkHook for AlertHook {
-    fn update_state(&self, data: &mut NetworkData, sender: NodeIndex, recipient: NodeIndex) {
-        use alerts::AlertMessage::*;
-        use network::NetworkDataInner::*;
+    fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, recipient: NodeIndex) {
+        use crate::{alerts::AlertMessage::*, network::NetworkDataInner::*};
         if let crate::NetworkData(Alert(ForkAlert(_))) = data {
             *self
                 .alerts_sent_by_connection
@@ -388,22 +416,23 @@ impl NetworkHook for AlertHook {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Hash)]
-pub(crate) struct Data {
+pub struct Data {
     coord: UnitCoord,
     variant: u32,
 }
 
 impl Data {
+    #[cfg(test)]
     pub(crate) fn new(coord: UnitCoord, variant: u32) -> Self {
         Data { coord, variant }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Encode, Decode)]
-pub(crate) struct Signature {}
+pub struct Signature {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Encode, Decode)]
-pub(crate) struct PartialMultisignature {
+pub struct PartialMultisignature {
     signed_by: Vec<NodeIndex>,
 }
 
@@ -436,7 +465,7 @@ impl DataIOT<Data> for DataIO {
     }
     fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), ()> {
         self.tx.unbounded_send(data).map_err(|e| {
-            error!(target: "testing-mock", "Error when sending data from DataIO {:?}.", e);
+            error!(target: "data-io", "Error when sending data from DataIO {:?}.", e);
         })
     }
 }
@@ -499,48 +528,27 @@ impl MultiKeychainT for KeyBox {
     }
 }
 
-pub(crate) fn gen_config(node_ix: NodeIndex, n_members: NodeCount) -> Config {
-    let delay_config = DelayConfig {
-        tick_interval: Duration::from_millis(5),
-        requests_interval: Duration::from_millis(50),
-        unit_broadcast_delay: Arc::new(|t| exponential_slowdown(t, 100.0, 1, 3.0)),
-        //100, 100, 300, 900, 2700, ...
-        unit_creation_delay: Arc::new(|t| exponential_slowdown(t, 50.0, usize::MAX, 1.000)),
-        //50, 50, 50, 50, ...
-    };
-    Config {
-        node_ix,
-        session_id: 0,
-        n_members,
-        delay_config,
-        rounds_margin: 200,
-        max_units_per_alert: 200,
-        max_round: 5000,
-    }
-}
-
 pub(crate) type HonestMember<'a> = Member<'a, Hasher64, Data, DataIO, KeyBox, Spawner>;
 
-pub(crate) fn configure_network(
+pub fn configure_network(
     n_members: NodeCount,
     reliability: f64,
-) -> (UnreliableRouter, Vec<Option<Network>>) {
+) -> (UnreliableRouter, Vec<Network>) {
     let peer_list = n_members.into_iterator().collect();
-
-    let router = UnreliableRouter::new(peer_list, reliability);
+    let mut router = UnreliableRouter::new(peer_list, reliability);
     let mut networks = Vec::new();
     for ix in n_members.into_iterator() {
         let network = router.connect_peer(ix);
-        networks.push(Some(network));
+        networks.push(network);
     }
     (router, networks)
 }
 
-pub(crate) fn spawn_honest_member(
+pub fn spawn_honest_member(
     spawner: Spawner,
     node_index: NodeIndex,
     n_members: NodeCount,
-    network: Network,
+    network: impl 'static + NetworkT<Hasher64, Data, Signature, PartialMultisignature>,
 ) -> (UnboundedReceiver<OrderedBatch<Data>>, oneshot::Sender<()>) {
     let (data_io, rx_batch) = DataIO::new(node_index);
     let config = gen_config(node_index, n_members);
