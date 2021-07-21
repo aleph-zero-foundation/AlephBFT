@@ -31,5 +31,5 @@ unsigned-varint = { version = "0.7.0", features = ["futures", "asynchronous_code
 tokio = { version = "1.6.1", features = ["macros", "rt", "rt-multi-thread"] }
 libp2p = { version ="0.39", features = ["mdns", "tcp-tokio"]}
 parking_lot = "0.11"
-env_logger = "0.8"
+env_logger = "0.9"
 chrono = "0.4"
