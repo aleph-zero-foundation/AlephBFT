@@ -59,10 +59,10 @@ please refer to the [detailed version][reference-link].
 - Import AlephBFT in your crate
   ```toml
   [dependencies]
-  aleph-bft = "0.3.1"
+  aleph-bft = "^0.5"
   ```
 - AlephBFT requires user to provide it with an implementation of the following traits:
-  - The [DataIO][dataio-link] trait is an abstraction for a component that provides data items and allows to input ordered data items. `DataIO` is parametrized with a `Data` generic type representing the type of items we would like to order. 
+  - The [DataIO][dataio-link] trait is an abstraction for a component that provides data items and allows to input ordered data items. `DataIO` is parametrized with a `Data` generic type representing the type of items we would like to order.
     ```rust
     pub trait DataIO<Data> {
         type Error: Debug;
@@ -126,7 +126,7 @@ Alternatively, you may run the `run_local_pipeline.sh` script.
 ### Fuzzing
 
 There are fuzzing tests that try to crash the whole application by creating arbitrary data for the network layer
-and feeding it into the `member` implementation. To run those tests you need to install `afl` and `cargo-fuzz`. 
+and feeding it into the `member` implementation. To run those tests you need to install `afl` and `cargo-fuzz`.
 `cargo-fuzz` requires you to use a nightly Rust toolchain. `afl` differs from `cargo-fuzz` in that it requires
 so called corpus data to operate, i.e. some non-empty data set that do not crash the application.
 Both tools are using LLVM's instrumentation capabilities in order to guide the fuzzing process basing on code-coverage statistics.

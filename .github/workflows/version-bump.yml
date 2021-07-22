@@ -15,22 +15,27 @@ jobs:
           fetch-depth: 2
       - name: bump
         run: |
-          if [ -e `git diff HEAD~ -- src/` ]; then
-           echo 'No changes in code.'
-           exit 0
-          fi
-          if git diff HEAD~ -- Cargo.toml | grep -q '^+version ='; then
-           echo 'Version has been bumped manually.'
-           exit 0
-          fi
           version=`grep -e '^version =' Cargo.toml | sed 's/version = //' | sed 's/"//g'`
           major_version=`echo $version|grep -o -e '^[0-9]*'`
           minor_version=`echo $version|grep -o -e '^[0-9]*.[0-9]*'|grep -o -e '[0-9]*$'`
           patch_version=`echo $version|grep -o -e '[0-9]*$'`
+          git config user.email "<>"
+          git config user.name "Version autobump"
+          if git diff HEAD~ -- Cargo.toml | grep -q '^+version ='; then
+           echo 'Version has been bumped manually, bumping readme version.'
+            new_version=$major_version.$minor_version
+            sed -i "s/aleph-bft = \"\^[0-9]*.[0-9]*\"$/aleph-bft = \"^$new_version\"/"  README.md
+            git add README.md
+            git commit --amend --no-edit
+            git push -f origin main
+           exit 0
+          fi
+          if [ -e `git diff HEAD~ -- src/` ]; then
+           echo 'No changes in code.'
+           exit 0
+          fi
           new_version=$major_version.$minor_version.$((patch_version + 1))
           sed -i "s/^version = \"$version\"$/version = \"$new_version\"/" Cargo.toml
           git add Cargo.toml
-          git config user.email "<>"
-          git config user.name "Version autobump"
           git commit --amend --no-edit
           git push -f origin main
