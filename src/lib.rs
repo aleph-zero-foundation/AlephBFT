@@ -10,7 +10,7 @@ use crate::nodes::NodeMap;
 
 pub use config::{default_config, exponential_slowdown, Config, DelayConfig};
 pub use member::Member;
-pub use network::{Network, NetworkData};
+pub use network::{Network, NetworkData, Recipient};
 pub use nodes::{NodeCount, NodeIndex};
 
 mod alerts;

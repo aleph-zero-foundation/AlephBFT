@@ -10,6 +10,13 @@ use futures::{channel::oneshot, FutureExt, StreamExt};
 use log::{error, warn};
 use std::fmt::Debug;
 
+/// A recipient of a message, either a specific node or everyone.
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub enum Recipient {
+    Everyone,
+    Node(NodeIndex),
+}
+
 /// Network represents an interface for sending and receiving NetworkData.
 ///
 /// Note on Rate Control: it is assumed that Network implements a rate control mechanism guaranteeing
@@ -33,17 +40,12 @@ use std::fmt::Debug;
 /// Section 3.1.2 for a discussion of the required guarantees of this trait's implementation.
 #[async_trait::async_trait]
 pub trait Network<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature>: Send {
-    type Error: Debug;
-    /// Send a message to a single node.
+    /// Send a message to a single node or everyone, depending on the value of the recipient
+    /// argument.
     ///
     /// Note on the implementation: this function should be implemented in a non-blocking manner.
     /// Otherwise, the performance might be affected negatively or the execution may end up in a deadlock.
-    fn send(&self, data: NetworkData<H, D, S, MS>, node: NodeIndex) -> Result<(), Self::Error>;
-    /// Send a message to all nodes.
-    ///
-    /// Note on the implementation: this function should be implemented in a non-blocking manner.
-    /// Otherwise, the performance might be affected negatively or the execution may end up in a deadlock.
-    fn broadcast(&self, data: NetworkData<H, D, S, MS>) -> Result<(), Self::Error>;
+    fn send(&self, data: NetworkData<H, D, S, MS>, recipient: Recipient);
     /// Receive a message from the network.
     async fn next_event(&mut self) -> Option<NetworkData<H, D, S, MS>>;
 }
@@ -107,12 +109,6 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> NetworkData<H,
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Recipient {
-    Everyone,
-    Node(NodeIndex),
-}
-
 pub(crate) struct NetworkHub<
     H: Hasher,
     D: Data,
@@ -147,19 +143,7 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature, N: Network<H, 
     }
 
     fn send(&self, data: NetworkData<H, D, S, MS>, recipient: Recipient) {
-        use Recipient::*;
-        match recipient {
-            Everyone => {
-                if let Err(error) = self.network.broadcast(data) {
-                    error!(target: "AlephBFT-network-hub", "Broadcast error: {:?}", error);
-                }
-            }
-            Node(node_id) => {
-                if let Err(error) = self.network.send(data, node_id) {
-                    error!(target: "AlephBFT-network-hub", "Send to {:?} error: {:?}", node_id, error);
-                }
-            }
-        }
+        self.network.send(data, recipient);
     }
 
     fn handle_incoming(&self, network_data: NetworkData<H, D, S, MS>) {

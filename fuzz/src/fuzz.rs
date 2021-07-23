@@ -1,6 +1,6 @@
 use aleph_bft::{
     DataIO as DataIOT, Index, KeyBox as KeyBoxT, MultiKeychain as MultiKeychainT, NetworkData,
-    OrderedBatch, PartialMultisignature as PartialMultisignatureT,
+    OrderedBatch, PartialMultisignature as PartialMultisignatureT, Recipient,
 };
 use futures::task::Poll;
 use parking_lot::Mutex;
@@ -241,15 +241,7 @@ impl<I: Iterator<Item = FuzzNetworkData> + Send, C: FnOnce() + Send>
     aleph_bft::Network<aleph_mock::Hasher64, Data, Signature, PartialMultisignature>
     for PlaybackNetwork<I, C>
 {
-    type Error = ();
-
-    fn send(&self, _: FuzzNetworkData, _: NodeIndex) -> std::result::Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn broadcast(&self, _: FuzzNetworkData) -> std::result::Result<(), Self::Error> {
-        Ok(())
-    }
+    fn send(&self, _: FuzzNetworkData, _: Recipient) {}
 
     async fn next_event(&mut self) -> Option<FuzzNetworkData> {
         match self.data.next() {

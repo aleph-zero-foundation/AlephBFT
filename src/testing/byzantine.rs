@@ -13,8 +13,8 @@ use crate::{
         KeyBox, Network, NetworkData, Spawner,
     },
     units::{ControlHash, FullUnit, PreUnit, SignedUnit, UnitCoord},
-    Hasher, Network as NetworkT, NetworkData as NetworkDataT, NodeCount, NodeIndex, Round,
-    SessionId, SpawnHandle,
+    Hasher, Network as NetworkT, NetworkData as NetworkDataT, NodeCount, NodeIndex, Recipient,
+    Round, SessionId, SpawnHandle,
 };
 
 use crate::member::UnitMessage::NewUnit;
@@ -87,7 +87,7 @@ impl<'a> MaliciousMember<'a> {
 
     fn send_legit_unit(&mut self, su: SignedUnit<'a, Hasher64, Data, KeyBox>) {
         let message = Self::unit_to_data(su);
-        let _ = self.network.broadcast(message);
+        self.network.send(message, Recipient::Everyone);
     }
 
     fn send_two_variants(
@@ -102,9 +102,11 @@ impl<'a> MaliciousMember<'a> {
         for ix in 0..self.n_members.0 {
             let node_ix = NodeIndex(ix);
             let _ = if ix % 2 == 0 {
-                self.network.send(message0.clone(), node_ix)
+                self.network
+                    .send(message0.clone(), Recipient::Node(node_ix))
             } else {
-                self.network.send(message1.clone(), node_ix)
+                self.network
+                    .send(message1.clone(), Recipient::Node(node_ix))
             };
         }
     }

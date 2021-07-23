@@ -22,18 +22,23 @@ The Network trait defines the functionality we expect the network layer to satis
 
 ```rust
 pub trait Network<H: Hasher, D: Data, S: Encode + Decode>: Send {
-    type Error: Debug;
-    fn send(&self, data: NetworkData<H, D, S>, node: NodeIndex) -> Result<(), Self::Error>;
-    fn broadcast(&self, data: NetworkData<H, D, S>) -> Result<(), Self::Error>;
+    fn send(&self, data: NetworkData<H, D, S>, recipient: Recipient);
     async fn next_event(&mut self) -> Option<NetworkData<H, D, S>>;
 }
 ```
 
-Here `NetworkData` is a type representing possible network messages for the AlephBFT protocol. For the purpose of implementing the Network trait what matters the most is that they implement the `Encode` and `Decode` traits, i.e., allow for serialization/deserialization thus can be treated as byte arrays if that is more convenient. The `NodeIndex` type represents node indices, i.e., a number between `0` and `N-1`.
+Here `NetworkData` is a type representing possible network messages for the AlephBFT protocol. For the purpose of implementing the Network trait what matters the most is that they implement the `Encode` and `Decode` traits, i.e., allow for serialization/deserialization thus can be treated as byte arrays if that is more convenient. The `Recipient` represents who should receive the message, either everyone or a node with a specific index:
+
+```rust
+pub enum Recipient {
+    Everyone,
+    Node(NodeIndex),
+}
+```
 
 Additionally `NetworkData` implements a `included_data` method which returns all the `Data` that might end up ordered as a result of this message being passed to AlephBFT. The implementation of `Network` should ensure that the user system is ready to have that `Data` be ordered. In the case of `Data` only representing actual data being ordered (e.g. hashes of blocks of transactions), this means ensuring data availability before passing the messages on.
 
-The `send` and `broadcast` methods have straightforward semantics: sending a message to a single or to all the nodes. `next_event` is an asynchronous method for receiving messages from other nodes.
+The `send` method has straightforward semantics: sending a message to a single or to all the nodes. `next_event` is an asynchronous method for receiving messages from other nodes.
 
 **Note on Rate Control**: it is assumed that Network **implements a rate control mechanism** guaranteeing that no node is allowed to spam messages without limits. We do not specify details yet, but in future releases we plan to publish recommended upper bounds for the amounts of bandwidth and number of messages allowed per node per a unit of time. These bounds must be carefully crafted based upon the number of nodes `N` and the configured delays between subsequent Dag rounds, so that at the same time spammers are cut off but honest nodes are able function correctly within these bounds.
 

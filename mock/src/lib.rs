@@ -151,23 +151,21 @@ impl<
         MS: aleph_bft::PartialMultisignature,
     > NetworkT<H, D, S, MS> for Network<H, D, S, MS>
 {
-    type Error = ();
-
-    fn broadcast(&self, data: aleph_bft::NetworkData<H, D, S, MS>) -> Result<(), Self::Error> {
-        for peer in self.peers.iter() {
-            if *peer != self.index {
-                self.send(data.clone(), *peer)?;
+    fn send(&self, data: aleph_bft::NetworkData<H, D, S, MS>, recipient: aleph_bft::Recipient) {
+        use aleph_bft::Recipient::*;
+        match recipient {
+            Node(node) => self
+                .tx
+                .unbounded_send((data, node))
+                .expect("send on channel should work"),
+            Everyone => {
+                for peer in self.peers.iter() {
+                    if *peer != self.index {
+                        self.send(data.clone(), Node(*peer));
+                    }
+                }
             }
         }
-        Ok(())
-    }
-
-    fn send(
-        &self,
-        data: aleph_bft::NetworkData<H, D, S, MS>,
-        node: NodeIndex,
-    ) -> Result<(), Self::Error> {
-        self.tx.unbounded_send((data, node)).map_err(|_| ())
     }
 
     async fn next_event(&mut self) -> Option<aleph_bft::NetworkData<H, D, S, MS>> {

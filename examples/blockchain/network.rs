@@ -1,5 +1,5 @@
 use crate::chain::Block;
-use aleph_bft::{NodeIndex, TaskHandle};
+use aleph_bft::{NodeIndex, Recipient, TaskHandle};
 use codec::{Decode, Encode};
 use futures::{
     channel::{
@@ -10,7 +10,7 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 
-use log::{debug, info};
+use log::{debug, info, warn};
 
 use std::{collections::HashMap, error::Error, io, iter, time::Duration};
 
@@ -60,11 +60,6 @@ enum Message {
     Auth(NodeIndex),
     Consensus(NetworkData),
     Block(Block),
-}
-
-enum MessageRecipient {
-    AllNodes,
-    Node(NodeIndex),
 }
 
 /// Implements the libp2p [`RequestResponseCodec`] trait.
@@ -159,17 +154,18 @@ struct Behaviour {
 }
 
 impl Behaviour {
-    fn send_consensus_message(&mut self, message: NetworkData, recipient: MessageRecipient) {
+    fn send_consensus_message(&mut self, message: NetworkData, recipient: Recipient) {
         let message = Message::Consensus(message).encode();
+        use Recipient::*;
         match recipient {
-            MessageRecipient::Node(node_ix) => {
+            Node(node_ix) => {
                 if let Some(peer_id) = self.peer_by_index.get(&node_ix) {
                     self.rq_rp.send_request(peer_id, message);
                 } else {
                     debug!(target: "Blockchain-network", "No peer_id known for node {:?}.", node_ix);
                 }
             }
-            MessageRecipient::AllNodes => {
+            Everyone => {
                 for peer_id in self.peers.iter() {
                     self.rq_rp.send_request(peer_id, message.clone());
                 }
@@ -244,22 +240,16 @@ impl NetworkBehaviourEventProcess<RequestResponseEvent<Request, Response>> for B
 }
 
 pub(crate) struct Network {
-    msg_to_manager_tx: mpsc::UnboundedSender<(NetworkData, MessageRecipient)>,
+    msg_to_manager_tx: mpsc::UnboundedSender<(NetworkData, Recipient)>,
     msg_from_manager_rx: mpsc::UnboundedReceiver<NetworkData>,
 }
 
 #[async_trait::async_trait]
 impl aleph_bft::Network<Hasher256, Data, Signature, PartialMultisignature> for Network {
-    type Error = ();
-    fn send(&self, data: NetworkData, node: NodeIndex) -> Result<(), Self::Error> {
-        self.msg_to_manager_tx
-            .unbounded_send((data, MessageRecipient::Node(node)))
-            .map_err(|_| ())
-    }
-    fn broadcast(&self, data: NetworkData) -> Result<(), Self::Error> {
-        self.msg_to_manager_tx
-            .unbounded_send((data, MessageRecipient::AllNodes))
-            .map_err(|_| ())
+    fn send(&self, data: NetworkData, recipient: Recipient) {
+        if let Err(e) = self.msg_to_manager_tx.unbounded_send((data, recipient)) {
+            warn!(target: "Blockchain-network", "Failed network send: {:?}", e);
+        }
     }
     async fn next_event(&mut self) -> Option<NetworkData> {
         self.msg_from_manager_rx.next().await
@@ -268,7 +258,7 @@ impl aleph_bft::Network<Hasher256, Data, Signature, PartialMultisignature> for N
 
 pub(crate) struct NetworkManager {
     swarm: Swarm<Behaviour>,
-    consensus_rx: UnboundedReceiver<(NetworkData, MessageRecipient)>,
+    consensus_rx: UnboundedReceiver<(NetworkData, Recipient)>,
     block_rx: UnboundedReceiver<Block>,
 }
 

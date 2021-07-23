@@ -27,7 +27,7 @@ use crate::{
     units::{Unit, UnitCoord},
     Config, DataIO as DataIOT, DelayConfig, Hasher, Index, KeyBox as KeyBoxT,
     MultiKeychain as MultiKeychainT, Network as NetworkT, NodeCount, NodeIndex, OrderedBatch,
-    PartialMultisignature as PartialMultisignatureT, Round, SpawnHandle, TaskHandle,
+    PartialMultisignature as PartialMultisignatureT, Recipient, Round, SpawnHandle, TaskHandle,
 };
 
 use crate::member::Member;
@@ -253,19 +253,21 @@ impl Network {
 
 #[async_trait::async_trait]
 impl NetworkT<Hasher64, Data, Signature, PartialMultisignature> for Network {
-    type Error = ();
-
-    fn broadcast(&self, data: NetworkData) -> Result<(), Self::Error> {
-        for peer in self.peers.iter() {
-            if *peer != self.index {
-                self.send(data.clone(), *peer)?;
+    fn send(&self, data: NetworkData, recipient: Recipient) {
+        use Recipient::*;
+        match recipient {
+            Node(node) => self
+                .tx
+                .unbounded_send((data, node))
+                .expect("send on channel should work"),
+            Everyone => {
+                for peer in self.peers.iter() {
+                    if *peer != self.index {
+                        self.send(data.clone(), Node(*peer));
+                    }
+                }
             }
         }
-        Ok(())
-    }
-
-    fn send(&self, data: NetworkData, node: NodeIndex) -> Result<(), Self::Error> {
-        self.tx.unbounded_send((data, node)).map_err(|_| ())
     }
 
     async fn next_event(&mut self) -> Option<NetworkData> {

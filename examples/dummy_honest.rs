@@ -1,4 +1,4 @@
-use aleph_bft::{NodeCount, NodeIndex, OrderedBatch, TaskHandle};
+use aleph_bft::{NodeCount, NodeIndex, OrderedBatch, Recipient, TaskHandle};
 use async_trait::async_trait;
 use codec::{Decode, Encode};
 use futures::{
@@ -8,7 +8,7 @@ use futures::{
     },
     Future, FutureExt, StreamExt,
 };
-use log::{debug, info};
+use log::{debug, info, warn};
 use parking_lot::Mutex;
 use std::{
     collections::{hash_map::DefaultHasher, HashSet},
@@ -263,16 +263,10 @@ struct Network {
 
 #[async_trait::async_trait]
 impl aleph_bft::Network<Hasher64, Data, Signature, PartialMultisignature> for Network {
-    type Error = ();
-    fn send(&self, data: NetworkData, _node: NodeIndex) -> Result<(), Self::Error> {
-        self.outgoing_tx
-            .unbounded_send(data.encode())
-            .map_err(|_| ())
-    }
-    fn broadcast(&self, data: NetworkData) -> Result<(), Self::Error> {
-        self.outgoing_tx
-            .unbounded_send(data.encode())
-            .map_err(|_| ())
+    fn send(&self, data: NetworkData, _recipient: Recipient) {
+        if let Err(e) = self.outgoing_tx.unbounded_send(data.encode()) {
+            warn!(target: "dummy-honest", "Failed network send: {:?}", e)
+        }
     }
     async fn next_event(&mut self) -> Option<NetworkData> {
         self.msg_rx.next().await.map(|msg| {

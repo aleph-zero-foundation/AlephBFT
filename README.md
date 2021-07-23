@@ -82,9 +82,7 @@ please refer to the [detailed version][reference-link].
   - The [Network][network-link] trait defines the functionality we expect from the network layer:
     ```rust
     pub trait Network<H: Hasher, D: Data, S: Encode + Decode>: Send {
-        type Error: Debug;
-        fn send(&self, data: NetworkData<H, D, S>, node: NodeIndex) -> Result<(), Self::Error>;
-        fn broadcast(&self, data: NetworkData<H, D, S>) -> Result<(), Self::Error>;
+        fn send(&self, data: NetworkData<H, D, S>, recipient: Recipient);
         async fn next_event(&mut self) -> Option<NetworkData<H, D, S>>;
     }
     ```
