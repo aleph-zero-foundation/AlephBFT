@@ -133,7 +133,7 @@ impl HonestHub {
 
     fn on_notification(&mut self, node_ix: NodeIndex, ntfct: NotificationOut<Hasher64>) {
         match ntfct {
-            NotificationOut::CreatedPreUnit(pu) => {
+            NotificationOut::CreatedPreUnit(pu, _parent_hashes) => {
                 let hash = pu.using_encoded(Hasher64::hash);
                 let u = Unit::new(pu, hash);
                 let coord = UnitCoord::new(u.round(), u.creator());

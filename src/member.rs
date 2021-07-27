@@ -68,7 +68,7 @@ pub(crate) enum NotificationIn<H: Hasher> {
 pub(crate) enum NotificationOut<H: Hasher> {
     /// Notification about a preunit created by this Consensus Node. Member is meant to
     /// disseminate this preunit among other nodes.
-    CreatedPreUnit(PreUnit<H>),
+    CreatedPreUnit(PreUnit<H>, Vec<H::Hash>),
     /// Notification that some units are needed but missing. The role of the Member
     /// is to fetch these unit (somehow).
     MissingUnits(Vec<UnitCoord>),
@@ -185,13 +185,17 @@ where
             .expect("Channel to consensus should be open")
     }
 
-    async fn on_create(&mut self, u: PreUnit<H>) {
+    async fn on_create(&mut self, u: PreUnit<H>, parent_hashes: Vec<H::Hash>) {
         debug!(target: "AlephBFT-member", "{:?} On create notification.", self.index());
         let data = self.data_io.get_data();
         let full_unit = FullUnit::new(u, data, self.config.session_id);
         let hash = full_unit.hash();
         let signed_unit = Signed::sign(full_unit, self.keybox).await;
         self.store.add_unit(signed_unit, false);
+        // We add the parents to store here to make sure that our node will be able to answer parents queries for this unit.
+        // In extremely rare cases it can happen that this node, after adding this unit to the Terminal will trigger a
+        // WrongControlHash notification. This is still fine as the member will answer it without sending a request outside.
+        self.store.add_parents(hash, parent_hashes);
         let curr_time = time::Instant::now();
         let task = ScheduledTask::new(Task::UnitMulticast(hash, 0), curr_time);
         self.requests.push(task);
@@ -318,8 +322,7 @@ where
     fn on_wrong_control_hash(&mut self, u_hash: H::Hash) {
         trace!(target: "AlephBFT-member", "{:?} Dealing with wrong control hash notification {:?}.", self.index(), u_hash);
         if let Some(p_hashes) = self.store.get_parents(u_hash) {
-            // We have the parents by some strange reason (someone sent us parents
-            // without us requesting them).
+            // We have the parents -- most likely this is a unit created by us.
             let p_hashes = p_hashes.clone();
             trace!(target: "AlephBFT-member", "{:?} We have the parents for {:?} even though we did not request them.", self.index(), u_hash);
             self.send_consensus_notification(NotificationIn::UnitParents(u_hash, p_hashes));
@@ -333,8 +336,8 @@ where
 
     async fn on_consensus_notification(&mut self, notification: NotificationOut<H>) {
         match notification {
-            NotificationOut::CreatedPreUnit(pu) => {
-                self.on_create(pu).await;
+            NotificationOut::CreatedPreUnit(pu, p_hashes) => {
+                self.on_create(pu, p_hashes).await;
             }
             NotificationOut::MissingUnits(coords) => {
                 self.on_missing_coords(coords);

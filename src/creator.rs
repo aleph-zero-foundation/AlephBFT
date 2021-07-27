@@ -74,11 +74,12 @@ impl<H: Hasher> Creator<H> {
         };
 
         let control_hash = ControlHash::new(&parents);
+        let parent_hashes: Vec<H::Hash> = parents.into_iter().flatten().collect();
 
         let new_preunit = PreUnit::new(self.node_ix, round, control_hash);
         trace!(target: "AlephBFT-creator", "{:?} Created a new unit {:?} at round {:?}.", self.node_ix, new_preunit, self.current_round);
         self.new_units_tx
-            .unbounded_send(NotificationOut::CreatedPreUnit(new_preunit))
+            .unbounded_send(NotificationOut::CreatedPreUnit(new_preunit, parent_hashes))
             .expect("Notification channel should be open");
 
         self.current_round += 1;

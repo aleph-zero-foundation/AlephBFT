@@ -8,7 +8,7 @@ use crate::{
     units::{ControlHash, Unit, UnitCoord},
     Hasher, Receiver, Round, Sender,
 };
-use log::{info, trace, warn};
+use log::{debug, info, trace, warn};
 
 /// An enum describing the status of a Unit in the Terminal pipeline.
 #[derive(Clone, PartialEq)]
@@ -194,9 +194,14 @@ impl<H: Hasher> Terminal<H> {
     fn update_on_store_add(&mut self, u: Unit<H>) {
         let u_hash = u.hash();
         let (u_round, pid) = (u.round(), u.creator());
-        // If u is a fork, then the below line will overwrite the previous unit at this coord, but this is intended
-        // and does not break correctness.
-        self.unit_by_coord.insert((u_round, pid), u_hash);
+        // We place the unit in the coord map only if this is the first variant ever received.
+        // This is not crucial for correctness, but helps in clarity.
+        if let Entry::Vacant(entry) = self.unit_by_coord.entry((u_round, pid)) {
+            entry.insert(u_hash);
+        } else {
+            debug!(target: "AlephBFT-terminal", "Received a fork at round {:?} creator {:?}", u_round, pid);
+        }
+
         if let Some(children) = self.children_coord.remove(&(u_round, pid)) {
             // We reconstruct the parent for each unit that waits for this coord.
             for v_hash in children {

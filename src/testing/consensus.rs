@@ -56,14 +56,6 @@ async fn agree_on_first_batch() {
     for node_ix in 1..n_members {
         assert_eq!(batches[0], batches[node_ix]);
     }
-
-    exits.into_iter().for_each(|tx| {
-        let _ = tx.send(());
-    });
-
-    for handle in &mut handles {
-        handle.await.expect("All nodes are honest.");
-    }
 }
 
 #[tokio::test]
