@@ -225,7 +225,6 @@ impl TestCase {
             notifications_for_units,
             alerts_from_units,
             AlertConfig {
-                max_units_per_alert: 43,
                 n_members,
                 session_id: 0,
             },

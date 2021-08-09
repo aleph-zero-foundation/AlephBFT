@@ -178,7 +178,7 @@ where
             tx_consensus: None,
             data_io,
             keybox,
-            store: UnitStore::new(n_members, threshold, max_round),
+            store: UnitStore::new(n_members, max_round),
             task_queue: BinaryHeap::new(),
             requested_coords: HashSet::new(),
             threshold,
@@ -442,14 +442,8 @@ where
             // There is no point in keeping this unit in any kind of buffer.
             return;
         }
-        let u_round = full_unit.round();
-        let round_in_progress = self.store.get_round_in_progress();
-        let rounds_margin = self.config.rounds_margin;
-        if u_round <= round_in_progress + rounds_margin {
-            self.store.add_unit(su, false);
-        } else {
-            warn!(target: "AlephBFT-member", "{:?} Unit {:?} ignored because of too high round {} when round in progress is {}.", self.index(), full_unit, u_round, round_in_progress);
-        }
+
+        self.store.add_unit(su, false);
     }
 
     fn move_units_to_consensus(&mut self) {
@@ -596,14 +590,7 @@ where
     }
 
     fn on_new_forker_detected(&mut self, forker: NodeIndex, proof: ForkProof<H, D, MK::Signature>) {
-        let max_units_alert = self.config.max_units_per_alert;
-        let mut alerted_units = self.store.mark_forker(forker);
-        if alerted_units.len() > max_units_alert {
-            // The ordering is increasing w.r.t. rounds.
-            alerted_units.reverse();
-            alerted_units.truncate(max_units_alert);
-            alerted_units.reverse();
-        }
+        let alerted_units = self.store.mark_forker(forker);
         let alert = self.form_alert(proof, alerted_units);
         self.alerts_for_alerter
             .as_ref()
@@ -728,7 +715,6 @@ where
         let keybox_for_alerter = self.keybox.clone();
         let alert_config = AlertConfig {
             session_id: self.config.session_id,
-            max_units_per_alert: self.config.max_units_per_alert,
             n_members: self.n_members,
         };
         let mut alerts_handle = self

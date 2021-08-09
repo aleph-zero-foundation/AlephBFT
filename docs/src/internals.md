@@ -20,9 +20,7 @@ Since the creator does not have access to the `DataIO` object and to the `KeyBox
 
 ### 5.2 Unit Store in Member
 
-As mentioned, the idea is that this stores only legit units and passes them to the `Terminal` at an "appropriate" moment. In more detail it means that it internally keeps a `round_in_progress` which is the highest round for which the previous one has at least `floor(2N/3)+1` units from different creators. Units that are beyond `round_in_progress` are not moved to the `Terminal` yet for efficiency (either we are falling behind, or there is something off with these units, better to move slowly).
-
-A slight detail here is that units from beyond `round_in_progress` are not consider **legit** yet. And thus after a fork is detected by a node `i`, all `i`'s units beyond `round_in_progress` are removed from the store and forgotten. In particular only units in the store of round `<=round_in_progress` are attached to the alert.
+As mentioned, the idea is that this stores only legit units and passes them to the `Terminal`. In case a fork is detected by a node `i`, all `i`'s units are attached to the appropriate alert.
 
 ### 5.3 Terminal
 

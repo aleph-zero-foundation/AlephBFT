@@ -48,8 +48,6 @@ pub fn gen_config(node_ix: NodeIndex, n_members: NodeCount) -> Config {
         session_id: 0,
         n_members,
         delay_config,
-        rounds_margin: 200,
-        max_units_per_alert: 200,
         max_round: 5000,
     }
 }

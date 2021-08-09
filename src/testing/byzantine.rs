@@ -25,7 +25,6 @@ struct MaliciousMember<'a> {
     threshold: NodeCount,
     session_id: SessionId,
     forking_round: Round,
-    round_in_progress: Round,
     keybox: &'a KeyBox,
     network: Network,
     unit_store: HashMap<UnitCoord, SignedUnit<'a, Hasher64, Data, KeyBox>>,
@@ -47,7 +46,6 @@ impl<'a> MaliciousMember<'a> {
             threshold,
             session_id,
             forking_round,
-            round_in_progress: 0,
             keybox,
             network,
             unit_store: HashMap::new(),
@@ -111,10 +109,9 @@ impl<'a> MaliciousMember<'a> {
         }
     }
 
-    async fn create_if_possible(&mut self) {
-        if let Some(parents) = self.pick_parents(self.round_in_progress) {
-            debug!(target: "malicious-member", "Creating a legit unit for round {}.", self.round_in_progress);
-            let round = self.round_in_progress;
+    async fn create_if_possible(&mut self, round: Round) -> bool {
+        if let Some(parents) = self.pick_parents(round) {
+            debug!(target: "malicious-member", "Creating a legit unit for round {}.", round);
             let control_hash = ControlHash::<Hasher64>::new(&parents);
             let new_preunit = PreUnit::<Hasher64>::new(self.node_ix, round, control_hash);
             let coord = UnitCoord::new(round, self.node_ix);
@@ -126,7 +123,7 @@ impl<'a> MaliciousMember<'a> {
                 self.send_legit_unit(signed_unit);
             } else {
                 // FORKING HAPPENS HERE!
-                debug!(target: "malicious-member", "Creating forks for round {}.", self.round_in_progress);
+                debug!(target: "malicious-member", "Creating forks for round {}.", round);
                 let mut variants = Vec::new();
                 for var in 0u32..2u32 {
                     let data = Data::new(coord, var);
@@ -136,8 +133,9 @@ impl<'a> MaliciousMember<'a> {
                 }
                 self.send_two_variants(variants[0].clone(), variants[1].clone());
             }
-            self.round_in_progress += 1;
+            return true;
         }
+        false
     }
 
     fn on_unit_received(&mut self, su: SignedUnit<'a, Hasher64, Data, KeyBox>) {
@@ -163,8 +161,11 @@ impl<'a> MaliciousMember<'a> {
     }
 
     pub async fn run_session(mut self, mut exit: oneshot::Receiver<()>) {
-        self.create_if_possible().await;
+        let mut round: Round = 0;
         loop {
+            if self.create_if_possible(round).await {
+                round += 1;
+            }
             tokio::select! {
                 event = self.network.next_event() => match event {
                     Some(data) => {
@@ -177,7 +178,6 @@ impl<'a> MaliciousMember<'a> {
                 },
                 _ = &mut exit => break,
             }
-            self.create_if_possible().await;
         }
     }
 }

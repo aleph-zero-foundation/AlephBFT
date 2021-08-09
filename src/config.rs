@@ -30,10 +30,6 @@ pub struct Config {
     pub n_members: NodeCount,
     /// Configuration of several parameters related to delaying various tasks.
     pub delay_config: DelayConfig,
-    /// All units (except alerted ones) that are higher by >= rounds_margin then our local round number, are ignored.
-    pub rounds_margin: Round,
-    /// Maximum number of units that can be attached to an alert.
-    pub max_units_per_alert: usize,
     /// Maximum allowable round of a unit.
     pub max_round: Round,
 }
@@ -80,8 +76,6 @@ pub fn default_config(n_members: NodeCount, node_ix: NodeIndex, session_id: Sess
         session_id,
         n_members,
         delay_config,
-        rounds_margin: 200,
-        max_units_per_alert: 200,
         max_round: 5000,
     }
 }

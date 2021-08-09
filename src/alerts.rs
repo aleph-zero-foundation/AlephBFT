@@ -146,7 +146,6 @@ struct Alerter<'a, H: Hasher, D: Data, MK: MultiKeychain> {
     messages_from_network: Receiver<AlertMessage<H, D, MK::Signature, MK::PartialMultisignature>>,
     notifications_for_units: Sender<ForkingNotification<H, D, MK::Signature>>,
     alerts_from_units: Receiver<Alert<H, D, MK::Signature>>,
-    max_units_per_alert: usize,
     known_forkers: HashMap<NodeIndex, ForkProof<H, D, MK::Signature>>,
     known_alerts: HashMap<H::Hash, Signed<'a, Alert<H, D, MK::Signature>, MK>>,
     known_rmcs: HashMap<(NodeIndex, NodeIndex), H::Hash>,
@@ -156,7 +155,6 @@ struct Alerter<'a, H: Hasher, D: Data, MK: MultiKeychain> {
 }
 
 pub(crate) struct AlertConfig {
-    pub max_units_per_alert: usize,
     pub n_members: NodeCount,
     pub session_id: SessionId,
 }
@@ -184,7 +182,6 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
             messages_from_network,
             notifications_for_units,
             alerts_from_units,
-            max_units_per_alert: config.max_units_per_alert,
             known_forkers: HashMap::new(),
             known_alerts: HashMap::new(),
             known_rmcs: HashMap::new(),
@@ -228,10 +225,6 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
         forker: NodeIndex,
         units: &[UncheckedSignedUnit<H, D, MK::Signature>],
     ) -> bool {
-        if units.len() > self.max_units_per_alert {
-            warn!(target: "AlephBFT-alerter", "{:?} Too many units: {} included in alert.", self.index(), units.len());
-            return false;
-        }
         let mut rounds = HashSet::new();
         for u in units {
             let u = match u.clone().check(self.keychain) {
