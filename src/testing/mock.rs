@@ -549,7 +549,11 @@ pub fn spawn_honest_member(
     node_index: NodeIndex,
     n_members: NodeCount,
     network: impl 'static + NetworkT<Hasher64, Data, Signature, PartialMultisignature>,
-) -> (UnboundedReceiver<OrderedBatch<Data>>, oneshot::Sender<()>) {
+) -> (
+    UnboundedReceiver<OrderedBatch<Data>>,
+    oneshot::Sender<()>,
+    TaskHandle,
+) {
     let (data_io, rx_batch) = DataIO::new(node_index);
     let config = gen_config(node_index, n_members);
     let (exit_tx, exit_rx) = oneshot::channel();
@@ -559,6 +563,6 @@ pub fn spawn_honest_member(
         let member = HonestMember::new(data_io, &keybox, config, spawner_inner.clone());
         member.run_session(network, exit_rx).await;
     };
-    spawner.spawn("member", member_task);
-    (rx_batch, exit_tx)
+    let handle = spawner.spawn_essential("member", member_task);
+    (rx_batch, exit_tx, handle)
 }

@@ -79,13 +79,16 @@ async fn request_missing_coord() {
     let spawner = Spawner::new();
     spawner.spawn("network-hub", net_hub);
 
-    let mut exits = vec![];
+    let mut exits = Vec::new();
+    let mut handles = Vec::new();
     let mut batch_rxs = Vec::new();
     for network in networks {
         let ix = network.index();
-        let (batch_rx, exit_tx) = spawn_honest_member(spawner.clone(), ix, n_members, network);
+        let (batch_rx, exit_tx, handle) =
+            spawn_honest_member(spawner.clone(), ix, n_members, network);
         batch_rxs.push(batch_rx);
         exits.push(exit_tx);
+        handles.push(handle);
     }
 
     let n_batches = 10;
@@ -100,6 +103,12 @@ async fn request_missing_coord() {
     }
     for node_ix in n_members.into_iterator().skip(1) {
         assert_eq!(batches[0], batches[node_ix.0]);
+    }
+    for exit in exits {
+        let _ = exit.send(());
+    }
+    for handle in handles {
+        let _ = handle.await;
     }
 
     assert!(*requested.lock())

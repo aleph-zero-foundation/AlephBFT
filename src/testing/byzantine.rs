@@ -14,7 +14,7 @@ use crate::{
     },
     units::{ControlHash, FullUnit, PreUnit, SignedUnit, UnitCoord},
     Hasher, Network as NetworkT, NetworkData as NetworkDataT, NodeCount, NodeIndex, Recipient,
-    Round, SessionId, SpawnHandle,
+    Round, SessionId, SpawnHandle, TaskHandle,
 };
 
 use crate::member::UnitMessage::NewUnit;
@@ -188,7 +188,7 @@ fn spawn_malicious_member(
     n_members: NodeCount,
     round_to_fork: Round,
     network: Network,
-) -> oneshot::Sender<()> {
+) -> (oneshot::Sender<()>, TaskHandle) {
     let (exit_tx, exit_rx) = oneshot::channel();
     let member_task = async move {
         let keybox = KeyBox::new(n_members, node_index);
@@ -203,8 +203,8 @@ fn spawn_malicious_member(
         );
         lesniak.run_session(exit_rx).await;
     };
-    spawner.spawn("malicious-member", member_task);
-    exit_tx
+    let task_handle = spawner.spawn_essential("malicious-member", member_task);
+    (exit_tx, task_handle)
 }
 
 async fn honest_members_agree_on_batches_byzantine(
@@ -217,6 +217,7 @@ async fn honest_members_agree_on_batches_byzantine(
     let spawner = Spawner::new();
     let mut batch_rxs = Vec::new();
     let mut exits = Vec::new();
+    let mut handles = Vec::new();
     let (mut net_hub, networks) = configure_network(n_members, network_reliability);
 
     let alert_hook = AlertHook::new();
@@ -226,14 +227,16 @@ async fn honest_members_agree_on_batches_byzantine(
 
     for network in networks {
         let ix = network.index();
-        if !n_honest.into_range().contains(&ix) {
-            let exit_tx = spawn_malicious_member(spawner.clone(), ix, n_members, 2, network);
-            exits.push(exit_tx);
+        let (exit_tx, handle) = if !n_honest.into_range().contains(&ix) {
+            spawn_malicious_member(spawner.clone(), ix, n_members, 2, network)
         } else {
-            let (batch_rx, exit_tx) = spawn_honest_member(spawner.clone(), ix, n_members, network);
+            let (batch_rx, exit_tx, handle) =
+                spawn_honest_member(spawner.clone(), ix, n_members, network);
             batch_rxs.push(batch_rx);
-            exits.push(exit_tx);
-        }
+            (exit_tx, handle)
+        };
+        exits.push(exit_tx);
+        handles.push(handle);
     }
 
     let mut batches = Vec::new();
@@ -263,6 +266,12 @@ async fn honest_members_agree_on_batches_byzantine(
                 );
             }
         }
+    }
+    for exit in exits {
+        let _ = exit.send(());
+    }
+    for handle in handles {
+        let _ = handle.await;
     }
 }
 
