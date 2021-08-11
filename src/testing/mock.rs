@@ -528,7 +528,7 @@ impl MultiKeychainT for KeyBox {
     }
 }
 
-pub(crate) type HonestMember<'a> = Member<'a, Hasher64, Data, DataIO, KeyBox, Spawner>;
+pub(crate) type HonestMember<'a> = Member<'a, Data, DataIO, KeyBox, Spawner>;
 
 pub fn configure_network(
     n_members: NodeCount,

@@ -24,6 +24,7 @@ rand = "0.8"
 async-trait = "0.1"
 codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive"] }
 parking_lot = "0.11"
+tokio = { version = "1.6.1", features = ["sync"] }
 
 [dev-dependencies]
 sha3 = "0.9.1"

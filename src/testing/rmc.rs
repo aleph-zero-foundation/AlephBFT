@@ -94,15 +94,15 @@ fn prepare_keychains(node_count: NodeCount) -> Vec<TestMultiKeychain> {
         .collect()
 }
 
-struct TestData<'a> {
+struct TestData {
     network: TestNetwork,
-    rmcs: Vec<ReliableMulticast<'a, Hash, TestMultiKeychain>>,
+    rmcs: Vec<ReliableMulticast<Hash, TestMultiKeychain>>,
 }
 
-impl<'a> TestData<'a> {
+impl TestData {
     fn new(
         node_count: NodeCount,
-        keychains: &'a [TestMultiKeychain],
+        keychains: &[TestMultiKeychain],
         message_filter: impl FnMut(NodeIndex, TestMessage) -> bool + 'static,
     ) -> Self {
         let (network, channels) = TestNetwork::new(node_count, message_filter);
@@ -111,7 +111,7 @@ impl<'a> TestData<'a> {
             let rmc = ReliableMulticast::new(
                 rx,
                 tx,
-                &keychains[i],
+                keychains[i].clone(),
                 node_count,
                 DoublingDelayScheduler::new(Duration::from_millis(1)),
             );
@@ -123,12 +123,12 @@ impl<'a> TestData<'a> {
     async fn collect_multisigned_hashes(
         mut self,
         count: usize,
-    ) -> HashMap<NodeIndex, Vec<Multisigned<'a, Hash, TestMultiKeychain>>> {
+    ) -> HashMap<NodeIndex, Vec<Multisigned<Hash, TestMultiKeychain>>> {
         let mut hashes = HashMap::new();
 
         for _ in 0..count {
             // covert each RMC into a future returning an optional unchecked multisigned hash.
-            let rmc_futures: Vec<BoxFuture<Multisigned<'a, Hash, TestMultiKeychain>>> = self
+            let rmc_futures: Vec<BoxFuture<Multisigned<Hash, TestMultiKeychain>>> = self
                 .rmcs
                 .iter_mut()
                 .map(|rmc| rmc.next_multisigned_hash().boxed())

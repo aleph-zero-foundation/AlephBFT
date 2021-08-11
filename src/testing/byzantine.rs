@@ -27,7 +27,7 @@ struct MaliciousMember<'a> {
     forking_round: Round,
     keybox: &'a KeyBox,
     network: Network,
-    unit_store: HashMap<UnitCoord, SignedUnit<'a, Hasher64, Data, KeyBox>>,
+    unit_store: HashMap<UnitCoord, SignedUnit<Hasher64, Data, KeyBox>>,
 }
 
 impl<'a> MaliciousMember<'a> {
@@ -52,7 +52,7 @@ impl<'a> MaliciousMember<'a> {
         }
     }
 
-    fn unit_to_data(su: SignedUnit<'a, Hasher64, Data, KeyBox>) -> NetworkData {
+    fn unit_to_data(su: SignedUnit<Hasher64, Data, KeyBox>) -> NetworkData {
         NetworkDataT(Units(NewUnit(su.into())))
     }
 
@@ -83,15 +83,15 @@ impl<'a> MaliciousMember<'a> {
         }
     }
 
-    fn send_legit_unit(&mut self, su: SignedUnit<'a, Hasher64, Data, KeyBox>) {
+    fn send_legit_unit(&mut self, su: SignedUnit<Hasher64, Data, KeyBox>) {
         let message = Self::unit_to_data(su);
         self.network.send(message, Recipient::Everyone);
     }
 
     fn send_two_variants(
         &mut self,
-        su0: SignedUnit<'a, Hasher64, Data, KeyBox>,
-        su1: SignedUnit<'a, Hasher64, Data, KeyBox>,
+        su0: SignedUnit<Hasher64, Data, KeyBox>,
+        su1: SignedUnit<Hasher64, Data, KeyBox>,
     ) {
         // We send variant k \in {0,1} to each node with index = k (mod 2)
         // We also send to ourselves, it does not matter much.
@@ -138,7 +138,7 @@ impl<'a> MaliciousMember<'a> {
         false
     }
 
-    fn on_unit_received(&mut self, su: SignedUnit<'a, Hasher64, Data, KeyBox>) {
+    fn on_unit_received(&mut self, su: SignedUnit<Hasher64, Data, KeyBox>) {
         let full_unit = su.as_signable();
         let coord: UnitCoord = full_unit.coord();
         // We don't care if we overwrite something as long as we keep at least one version of a unit
