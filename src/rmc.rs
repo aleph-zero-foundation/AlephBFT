@@ -266,7 +266,7 @@ impl<H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMultica
                         self.on_complete_multisignature(multisigned)
                     }
                     incomplete => {
-                        self.hash_states.insert(hash.clone(), incomplete);
+                        self.hash_states.insert(hash, incomplete);
                     }
                 }
             }

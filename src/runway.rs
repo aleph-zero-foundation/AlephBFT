@@ -263,7 +263,7 @@ where
             config,
             threshold,
             store,
-            keybox: keychain.clone(),
+            keybox: keychain,
             alerts_for_alerter,
             notifications_from_alerter,
             tx_consensus,

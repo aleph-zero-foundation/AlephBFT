@@ -402,7 +402,7 @@ where
                     .get(*index)
                     .cloned()
                     .expect("unit should be stored");
-                let message = UnitMessage::NewUnit(signed_unit.into());
+                let message = UnitMessage::NewUnit(signed_unit);
                 let preferred_recipient = Recipient::Everyone;
                 (message, preferred_recipient)
             }
