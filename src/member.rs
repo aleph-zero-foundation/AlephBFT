@@ -4,16 +4,14 @@ use crate::{
     runway::{InitializedRunway, RunwayFacade},
     signed::Signature,
     units::{PreUnit, UncheckedSignedUnit, Unit, UnitCoord},
+    utils::into_infinite_stream,
     Data, DataIO, Hasher, MultiKeychain, Network, NodeCount, NodeIndex, Receiver, Sender,
     SpawnHandle,
 };
 use codec::{Decode, Encode};
 use futures::{
     channel::{mpsc, oneshot},
-    future::ready,
-    pin_mut,
-    stream::iter,
-    Future, FutureExt, Stream, StreamExt,
+    pin_mut, Future, FutureExt, StreamExt,
 };
 use futures_timer::Delay;
 use log::{debug, error, info, trace, warn};
@@ -22,14 +20,9 @@ use std::{
     cmp::Ordering,
     collections::{BinaryHeap, HashSet},
     fmt::Debug,
-    iter::repeat,
     marker::PhantomData,
     time,
 };
-
-pub(crate) fn into_infinite_stream<F: Future>(f: F) -> impl Stream<Item = ()> {
-    f.then(|_| ready(iter(repeat(())))).flatten_stream()
-}
 
 /// A message concerning units, either about new units or some requests for them.
 #[derive(Debug, Encode, Decode, Clone)]
@@ -272,7 +265,7 @@ where
                     },
                 },
 
-                event = self.unit_messages_from_network.next().fuse() => match event {
+                event = self.unit_messages_from_network.next() => match event {
                     Some(message) => {
                         self.runway_facade.enqueue_message(message);
                     },
@@ -295,8 +288,8 @@ where
                 _ = &mut exit => break,
             }
         }
-        self.runway_facade.stop().await;
-        runway_future.next().await;
+        self.runway_facade.stop();
+        runway_future.next().await.unwrap();
         if network_exit.send(()).is_err() {
             debug!(target: "AlephBFT-member", "{:?} network already stopped.", index);
         }

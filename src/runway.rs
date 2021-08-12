@@ -6,12 +6,13 @@ use std::{
 use crate::{
     alerts::{Alert, AlertConfig, AlertMessage, Alerter, ForkProof, ForkingNotification},
     consensus::Consensus,
-    member::{into_infinite_stream, NotificationIn, NotificationOut, UnitMessage},
+    member::{NotificationIn, NotificationOut, UnitMessage},
     network::Recipient,
     nodes::NodeMap,
     units::{
         ControlHash, FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit, UnitCoord, UnitStore,
     },
+    utils::{into_infinite_stream, Barrier},
     Config, Data, DataIO, Hasher, Index, MultiKeychain, NodeCount, NodeIndex, OrderedBatch,
     Receiver, Sender, Signed, SpawnHandle,
 };
@@ -20,7 +21,6 @@ use futures::{
     Future, StreamExt,
 };
 use log::{debug, error, info, trace, warn};
-use tokio::sync::Barrier;
 
 #[derive(Clone)]
 pub(crate) struct TrackedRequest {
@@ -182,7 +182,7 @@ where
         }
     }
 
-    pub(crate) async fn stop(self) {
+    pub(crate) fn stop(self) {
         if self.runway_exit.send(()).is_err() {
             warn!(target: "AlephBFT-runway", "runway already stopped");
         }
@@ -748,7 +748,7 @@ where
     ) {
         info!(target: "AlephBFT-runway", "{:?} Runway starting.", self.index());
 
-        let barrier = Arc::new(Barrier::new(2));
+        let mut barrier = Barrier::new(2);
         let index = self.index();
         let (alerter_exit, exit_stream) = oneshot::channel();
         let alerter_barrier = barrier.clone();
@@ -826,10 +826,10 @@ where
         if consensus_exit.send(()).is_err() {
             debug!(target: "AlephBFT-runway", "{:?} consensus already stopped.", index);
         }
-        consensus_handle.next().await.unwrap();
         if alerter_exit.send(()).is_err() {
             debug!(target: "AlephBFT-runway", "{:?} alerter already stopped.", index);
         }
+        consensus_handle.next().await.unwrap();
         alerter_handle.next().await.unwrap();
 
         info!(target: "AlephBFT-runway", "{:?} Run ended.", index);
