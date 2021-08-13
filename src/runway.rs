@@ -12,7 +12,7 @@ use crate::{
     units::{
         ControlHash, FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit, UnitCoord, UnitStore,
     },
-    utils::into_infinite_stream,
+    utils::{into_infinite_stream, Barrier},
     Config, Data, DataIO, Hasher, Index, MultiKeychain, NodeCount, NodeIndex, OrderedBatch,
     Receiver, Sender, Signed, SpawnHandle,
 };
@@ -750,12 +750,9 @@ where
 
         let index = self.index();
 
-        let mut barriers = Vec::new();
-        let (barrier_tx, mut barrier_rx) = mpsc::unbounded();
+        let mut barrier = Barrier::new();
 
-        let alerter_pre_barrier = barrier_tx.clone();
-        let (barrier, alerter_barrier) = oneshot::channel();
-        barriers.push((barrier, "alerter"));
+        let alerter_barrier = barrier.clone("runway/alerter");
         let (alerter_exit, exit_stream) = oneshot::channel();
         let alerter_handle = self
             .spawn_handle
@@ -763,30 +760,18 @@ where
                 let mut alerter = alerter;
                 alerter.run(exit_stream).await;
 
-                if alerter_pre_barrier.unbounded_send(()).is_err() {
-                    warn!(target: "AlephBFT-runway", "{:?} alerter-task: barrier already dropped.", index);
-                }
-                if alerter_barrier.await.is_err() {
-                    warn!(target: "AlephBFT-runway", "{:?} alerter-task: exit-barrier already dropped.", index);
-                }
+                alerter_barrier.wait().await;
             });
         let mut alerter_handle = into_infinite_stream(alerter_handle).fuse();
 
-        let consensus_pre_barrier = barrier_tx.clone();
-        let (barrier, consensus_barrier) = oneshot::channel();
-        barriers.push((barrier, "consensus"));
+        let consensus_barrier = barrier.clone("runway/consensus");
         let (consensus_exit, exit_stream) = oneshot::channel();
         let consensus_handle = self
             .spawn_handle
             .spawn_essential("runway/consensus", async move {
                 consensus.run(exit_stream).await;
 
-                if consensus_pre_barrier.unbounded_send(()).is_err() {
-                    warn!(target: "AlephBFT-runway", "{:?} consensus-task: barrier already dropped.", index);
-                }
-                if consensus_barrier.await.is_err() {
-                    warn!(target: "AlephBFT-runway", "{:?} consensus-task: exit-barrier already dropped.", index);
-                }
+                consensus_barrier.wait().await;
             });
         let mut consensus_handle = into_infinite_stream(consensus_handle).fuse();
 
@@ -849,18 +834,7 @@ where
             debug!(target: "AlephBFT-runway", "{:?} alerter already stopped.", index);
         }
 
-        // wait till each task reaches its barrier
-        for _ in barriers.iter() {
-            if barrier_rx.next().await.is_none() {
-                warn!(target: "AlephBFT-runway", "{:?} some-task: exit-pre-barrier already dropped.", index);
-            }
-        }
-        // let all tasks know that other tasks already reached the barrier
-        for (barrier, name) in barriers {
-            if barrier.send(()).is_err() {
-                warn!(target: "AlephBFT-runway", "{:?} {:?}-task: exit-barrier already dropped.", index, name);
-            }
-        }
+        barrier.wait().await;
 
         consensus_handle.next().await.unwrap();
         alerter_handle.next().await.unwrap();

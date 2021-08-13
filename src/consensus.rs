@@ -2,7 +2,7 @@ use futures::{
     channel::{mpsc, oneshot},
     StreamExt,
 };
-use log::{debug, info, warn};
+use log::{debug, info};
 
 use crate::{
     config::Config,
@@ -10,7 +10,7 @@ use crate::{
     extender::Extender,
     member::{NotificationIn, NotificationOut},
     terminal::Terminal,
-    utils::into_infinite_stream,
+    utils::{into_infinite_stream, Barrier},
     Hasher, OrderedBatch, Receiver, Sender, SpawnHandle,
 };
 
@@ -43,7 +43,6 @@ impl<H: Hasher, SH: SpawnHandle> Consensus<H, SH> {
         info!(target: "AlephBFT", "{:?} Starting all services...", self.conf.node_ix);
 
         let n_members = self.conf.n_members;
-        let index = self.conf.node_ix;
 
         let (electors_tx, electors_rx) = mpsc::unbounded();
         let mut extender = Extender::<H>::new(
@@ -52,24 +51,16 @@ impl<H: Hasher, SH: SpawnHandle> Consensus<H, SH> {
             electors_rx,
             self.ordered_batch_tx,
         );
-        let mut barriers = Vec::new();
-        let (barrier_tx, mut barrier_rx) = mpsc::unbounded();
+        let mut barrier = Barrier::new();
 
-        let extender_pre_barrier = barrier_tx.clone();
-        let (barrier, extender_barrier) = oneshot::channel();
-        barriers.push((barrier, "extender"));
+        let extender_barrier = barrier.clone("consensus/extender");
         let (extender_exit, exit_rx) = oneshot::channel();
         let extender_handle = self
             .spawn_handle
             .spawn_essential("consensus/extender", async move {
                 extender.extend(exit_rx).await;
 
-                if extender_pre_barrier.unbounded_send(()).is_err() {
-                    warn!(target: "AlephBFT-consensus", "{:?} extender-task: barrier already dropped.", index);
-                }
-                if extender_barrier.await.is_err() {
-                    warn!(target: "AlephBFT-consensus", "{:?} extender-task: exit-barrier already dropped.", index);
-                }
+                extender_barrier.wait().await;
             });
         let mut extender_handle = into_infinite_stream(extender_handle).fuse();
 
@@ -77,25 +68,15 @@ impl<H: Hasher, SH: SpawnHandle> Consensus<H, SH> {
         let new_units_tx = self.outgoing_notifications.clone();
         let mut creator = Creator::new(self.conf.clone(), parents_rx, new_units_tx);
 
-        let creator_pre_barrier = barrier_tx.clone();
-        let (barrier, creator_barrier) = oneshot::channel();
-        barriers.push((barrier, "creator"));
+        let creator_barrier = barrier.clone("consensus/creator");
         let (creator_exit, exit_rx) = oneshot::channel();
         let creator_handle = self
             .spawn_handle
-            .spawn_essential(
-                "consensus/creator",
-                async move {
-                    creator.create(exit_rx).await;
+            .spawn_essential("consensus/creator", async move {
+                creator.create(exit_rx).await;
 
-                    if creator_pre_barrier.unbounded_send(()).is_err() {
-                        warn!(target: "AlephBFT-consensus", "{:?} creator-task: barrier already dropped.", index);
-                    }
-                    if creator_barrier.await.is_err() {
-                        warn!(target: "AlephBFT-consensus", "{:?} creator-task: exit-barrier already dropped.", index);
-                    }
-                },
-            );
+                creator_barrier.wait().await;
+            });
         let mut creator_handle = into_infinite_stream(creator_handle).fuse();
 
         let mut terminal = Terminal::new(
@@ -117,26 +98,15 @@ impl<H: Hasher, SH: SpawnHandle> Consensus<H, SH> {
                 .expect("Channel to extender should be open.")
         }));
 
-        let terminal_pre_barrier = barrier_tx.clone();
-        let (barrier, terminal_barrier) = oneshot::channel();
-        barriers.push((barrier, "terminal"));
+        let terminal_barrier = barrier.clone("consensus/terminal");
         let (terminal_exit, exit_rx) = oneshot::channel();
         let terminal_handle = self
             .spawn_handle
-            .spawn_essential(
-                "consensus/terminal",
-                async move {
-                    terminal.run(exit_rx).await;
+            .spawn_essential("consensus/terminal", async move {
+                terminal.run(exit_rx).await;
 
-                    if terminal_pre_barrier.unbounded_send(()).is_err() {
-                        warn!(target: "AlephBFT-consensus", "{:?} terminal-task: barrier already dropped.", index);
-                    }
-                    if terminal_barrier.await.is_err() {
-                        warn!(target: "AlephBFT-consensus", "{:?} terminal-task: exit-barrier already dropped.", index);
-                    }
-
-                },
-            );
+                terminal_barrier.wait().await;
+            });
         let mut terminal_handle = into_infinite_stream(terminal_handle).fuse();
         info!(target: "AlephBFT", "{:?} All services started.", self.conf.node_ix);
 
@@ -158,18 +128,7 @@ impl<H: Hasher, SH: SpawnHandle> Consensus<H, SH> {
         let _ = creator_exit.send(());
         let _ = extender_exit.send(());
 
-        // wait till each task reaches its barrier
-        for _ in barriers.iter() {
-            if barrier_rx.next().await.is_none() {
-                warn!(target: "AlephBFT-runway", "{:?} some-task: exit-pre-barrier already dropped.", index);
-            }
-        }
-        // let all tasks know that other tasks already reached the barrier
-        for (barrier, name) in barriers {
-            if barrier.send(()).is_err() {
-                warn!(target: "AlephBFT-runway", "{:?} {:?}-task: exit-barrier already dropped.", index, name);
-            }
-        }
+        barrier.wait().await;
 
         terminal_handle.next().await.unwrap();
         creator_handle.next().await.unwrap();
