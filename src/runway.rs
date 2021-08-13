@@ -748,13 +748,15 @@ where
     ) {
         info!(target: "AlephBFT-runway", "{:?} Runway starting.", self.index());
 
+        let index = self.index();
+
         let mut barriers = Vec::new();
         let (barrier_tx, mut barrier_rx) = mpsc::unbounded();
-        let index = self.index();
-        let (alerter_exit, exit_stream) = oneshot::channel();
+
         let alerter_pre_barrier = barrier_tx.clone();
         let (barrier, alerter_barrier) = oneshot::channel();
         barriers.push((barrier, "alerter"));
+        let (alerter_exit, exit_stream) = oneshot::channel();
         let alerter_handle = self
             .spawn_handle
             .spawn_essential("runway/alerter", async move {
@@ -770,10 +772,10 @@ where
             });
         let mut alerter_handle = into_infinite_stream(alerter_handle).fuse();
 
-        let (consensus_exit, exit_stream) = oneshot::channel();
         let consensus_pre_barrier = barrier_tx.clone();
         let (barrier, consensus_barrier) = oneshot::channel();
         barriers.push((barrier, "consensus"));
+        let (consensus_exit, exit_stream) = oneshot::channel();
         let consensus_handle = self
             .spawn_handle
             .spawn_essential("runway/consensus", async move {
@@ -847,13 +849,13 @@ where
             debug!(target: "AlephBFT-runway", "{:?} alerter already stopped.", index);
         }
 
-        // wait till every task reaches its barrier
+        // wait till each task reaches its barrier
         for _ in barriers.iter() {
             if barrier_rx.next().await.is_none() {
                 warn!(target: "AlephBFT-runway", "{:?} some-task: exit-pre-barrier already dropped.", index);
             }
         }
-        // let the tasks know that each other task already reached the barrier
+        // let all tasks know that other tasks already reached the barrier
         for (barrier, name) in barriers {
             if barrier.send(()).is_err() {
                 warn!(target: "AlephBFT-runway", "{:?} {:?}-task: exit-barrier already dropped.", index, name);
