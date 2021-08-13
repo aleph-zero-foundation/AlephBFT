@@ -221,90 +221,6 @@ where
     MK: MultiKeychain,
     SH: SpawnHandle,
 {
-    async fn run<N: Network<H, D, MK::Signature, MK::PartialMultisignature> + 'static>(
-        mut self,
-        runway_future: impl Future<Output = ()>,
-        mut network: NetworkHub<H, D, MK::Signature, MK::PartialMultisignature, N>,
-        mut exit: oneshot::Receiver<()>,
-    ) {
-        info!(target: "AlephBFT-member", "{:?} Spawning network.", self.index());
-        let index = self.index();
-        let (network_exit, exit_stream) = oneshot::channel();
-        let network_handle = self
-            .spawn_handle
-            .spawn_essential("member/network", async move {
-                network.run(exit_stream).await;
-            });
-        let mut network_handle = into_infinite_stream(network_handle).fuse();
-        info!(target: "AlephBFT-member", "{:?} Network spawned.", self.index());
-
-        info!(target: "AlephBFT-member", "{:?} Initializing Runway.", self.index());
-
-        let runway_future = into_infinite_stream(runway_future).fuse();
-        pin_mut!(runway_future);
-
-        let ticker_delay = self.config.delay_config.tick_interval;
-        let mut ticker = Delay::new(ticker_delay).fuse();
-
-        info!(target: "AlephBFT-member", "{:?} Runway initialized.", index);
-
-        loop {
-            futures::select! {
-                _ = runway_future.next() => {
-                    error!(target: "AlephBFT-member", "{:?} Runway terminated early.", index);
-                    break;
-                },
-
-                event = self.runway_facade.next_outgoing_message().fuse() => match event {
-                    Some((message, recipient)) => {
-                        self.on_unit_message_from_units(message, recipient);
-                    },
-                    None => {
-                        error!(target: "AlephBFT-member", "{:?} Unit message stream from Runway closed.", index);
-                        break;
-                    },
-                },
-
-                event = self.unit_messages_from_network.next() => match event {
-                    Some(message) => {
-                        self.runway_facade.enqueue_message(message);
-                    },
-                    None => {
-                        error!(target: "AlephBFT-member", "{:?} Unit message stream from network closed.", index);
-                        break;
-                    },
-                },
-
-                _ = network_handle.next() => {
-                    debug!(target: "AlephBFT-member", "{:?} network task terminated early.", index);
-                    break;
-                },
-
-                _ = &mut ticker => {
-                    self.trigger_tasks();
-                    ticker = Delay::new(ticker_delay).fuse();
-                },
-
-                _ = &mut exit => break,
-            }
-        }
-        self.runway_facade.stop();
-        runway_future.next().await.unwrap();
-        if network_exit.send(()).is_err() {
-            debug!(target: "AlephBFT-member", "{:?} network already stopped.", index);
-        }
-        network_handle.next().await.unwrap();
-        debug!(target: "AlephBFT-member", "{:?} Member stopped.", index);
-    }
-}
-
-impl<H, D, MK, SH> InitializedMember<H, D, MK, SH>
-where
-    H: Hasher,
-    D: Data,
-    MK: MultiKeychain,
-    SH: SpawnHandle,
-{
     fn on_create(&mut self, u: UncheckedSignedUnit<H, D, MK::Signature>) {
         let index = self.scheduled_units.len();
         self.scheduled_units.push(u);
@@ -453,6 +369,82 @@ where
                 }
             },
         }
+    }
+
+    async fn run<N: Network<H, D, MK::Signature, MK::PartialMultisignature> + 'static>(
+        mut self,
+        runway_future: impl Future<Output = ()>,
+        mut network: NetworkHub<H, D, MK::Signature, MK::PartialMultisignature, N>,
+        mut exit: oneshot::Receiver<()>,
+    ) {
+        info!(target: "AlephBFT-member", "{:?} Spawning network.", self.index());
+        let index = self.index();
+        let (network_exit, exit_stream) = oneshot::channel();
+        let network_handle = self
+            .spawn_handle
+            .spawn_essential("member/network", async move {
+                network.run(exit_stream).await;
+            });
+        let mut network_handle = into_infinite_stream(network_handle).fuse();
+        info!(target: "AlephBFT-member", "{:?} Network spawned.", self.index());
+
+        info!(target: "AlephBFT-member", "{:?} Initializing Runway.", self.index());
+
+        let runway_future = into_infinite_stream(runway_future).fuse();
+        pin_mut!(runway_future);
+
+        let ticker_delay = self.config.delay_config.tick_interval;
+        let mut ticker = Delay::new(ticker_delay).fuse();
+
+        info!(target: "AlephBFT-member", "{:?} Runway initialized.", index);
+
+        loop {
+            futures::select! {
+                _ = runway_future.next() => {
+                    error!(target: "AlephBFT-member", "{:?} Runway terminated early.", index);
+                    break;
+                },
+
+                event = self.runway_facade.next_outgoing_message().fuse() => match event {
+                    Some((message, recipient)) => {
+                        self.on_unit_message_from_units(message, recipient);
+                    },
+                    None => {
+                        error!(target: "AlephBFT-member", "{:?} Unit message stream from Runway closed.", index);
+                        break;
+                    },
+                },
+
+                event = self.unit_messages_from_network.next() => match event {
+                    Some(message) => {
+                        self.runway_facade.enqueue_message(message);
+                    },
+                    None => {
+                        error!(target: "AlephBFT-member", "{:?} Unit message stream from network closed.", index);
+                        break;
+                    },
+                },
+
+                _ = network_handle.next() => {
+                    debug!(target: "AlephBFT-member", "{:?} network task terminated early.", index);
+                    break;
+                },
+
+                _ = &mut ticker => {
+                    self.trigger_tasks();
+                    ticker = Delay::new(ticker_delay).fuse();
+                },
+
+                _ = &mut exit => break,
+            }
+        }
+        self.runway_facade.stop();
+        runway_future.next().await.unwrap();
+        if network_exit.send(()).is_err() {
+            debug!(target: "AlephBFT-member", "{:?} network already stopped.", index);
+        }
+        network_handle.next().await.unwrap();
+        debug!(target: "AlephBFT-member", "{:?} Member stopped.", index);
     }
 }
 
