@@ -1,6 +1,6 @@
 use crate::{
     consensus::Consensus,
-    member::{NotificationIn, NotificationOut},
+    runway::{NotificationIn, NotificationOut},
     testing::mock::{gen_config, Hasher64, HonestHub, Spawner},
     units::{ControlHash, PreUnit, Unit},
     Hasher, NodeIndex, SpawnHandle,

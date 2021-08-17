@@ -6,21 +6,96 @@ use std::{
 use crate::{
     alerts::{Alert, AlertConfig, AlertMessage, Alerter, ForkProof, ForkingNotification},
     consensus::Consensus,
-    member::{NotificationIn, NotificationOut, UnitMessage},
+    member::UnitMessage,
     network::Recipient,
     nodes::NodeMap,
     units::{
-        ControlHash, FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit, UnitCoord, UnitStore,
+        ControlHash, FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore,
     },
     utils::{into_infinite_stream, Barrier},
     Config, Data, DataIO, Hasher, Index, MultiKeychain, NodeCount, NodeIndex, OrderedBatch,
-    Receiver, Sender, Signed, SpawnHandle,
+    Receiver, Sender, Signature, Signed, SpawnHandle,
 };
 use futures::{
     channel::{mpsc, oneshot},
     Future, StreamExt,
 };
 use log::{debug, error, info, trace, warn};
+
+/// Type for incoming notifications: Runway to Consensus.
+#[derive(Clone, PartialEq)]
+pub(crate) enum NotificationIn<H: Hasher> {
+    /// A notification carrying a single unit. This might come either from multicast or
+    /// from a response to a request. This is of no importance at this layer.
+    NewUnits(Vec<Unit<H>>),
+    /// Response to a request to decode parents when the control hash is wrong.
+    UnitParents(H::Hash, Vec<H::Hash>),
+}
+
+/// Type for outgoing notifications: Consensus to Runway.
+#[derive(Debug, PartialEq)]
+pub(crate) enum NotificationOut<H: Hasher> {
+    /// Notification about a preunit created by this Consensus Node. Member is meant to
+    /// disseminate this preunit among other nodes.
+    CreatedPreUnit(PreUnit<H>, Vec<H::Hash>),
+    /// Notification that some units are needed but missing. The role of the Member
+    /// is to fetch these unit (somehow).
+    MissingUnits(Vec<UnitCoord>),
+    /// Notification that Consensus has parents incompatible with the control hash.
+    WrongControlHash(H::Hash),
+    /// Notification that a new unit has been added to the DAG, list of decoded parents provided
+    AddedToDag(H::Hash, Vec<H::Hash>),
+}
+
+pub(crate) enum Request<H: Hasher> {
+    RequestCoord(UnitCoord),
+    RequestParents(H::Hash),
+}
+
+pub(crate) type RequestIn<H> = (Request<H>, NodeIndex);
+
+pub(crate) type RequestOut<H> = (Request<H>, Recipient, TrackedRequest);
+
+pub(crate) type ResponseOut<H, D, S> = (Response<H, D, S>, NodeIndex);
+
+pub(crate) enum Response<H: Hasher, D: Data, S: Signature> {
+    ResponseCoord(UncheckedSignedUnit<H, D, S>),
+    ResponseParents(H::Hash, Vec<UncheckedSignedUnit<H, D, S>>),
+}
+
+pub(crate) enum RunwayNotification<H: Hasher, D: Data, S: Signature, ROut, RIn> {
+    NewUnit(UncheckedSignedUnit<H, D, S>),
+    Request(ROut),
+    Response(RIn),
+}
+
+pub(crate) type RunwayNotificationOut<H, D, S> =
+    RunwayNotification<H, D, S, RequestOut<H>, ResponseOut<H, D, S>>;
+
+pub(crate) type RunwayNotificationIn<H, D, S> =
+    RunwayNotification<H, D, S, RequestIn<H>, Response<H, D, S>>;
+
+impl<H: Hasher, D: Data, S: Signature> From<UnitMessage<H, D, S>>
+    for RunwayNotificationIn<H, D, S>
+{
+    fn from(message: UnitMessage<H, D, S>) -> Self {
+        match message {
+            UnitMessage::NewUnit(u) => RunwayNotificationIn::NewUnit(u),
+            UnitMessage::RequestCoord(peer_id, coord) => {
+                RunwayNotificationIn::Request((Request::RequestCoord(coord), peer_id))
+            }
+            UnitMessage::RequestParents(peer_id, u_hash) => {
+                RunwayNotificationIn::Request((Request::RequestParents(u_hash), peer_id))
+            }
+            UnitMessage::ResponseCoord(u) => {
+                RunwayNotificationIn::Response(Response::ResponseCoord(u))
+            }
+            UnitMessage::ResponseParents(u_hash, parents) => {
+                RunwayNotificationIn::Response(Response::ResponseParents(u_hash, parents))
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct TrackedRequest {
@@ -34,7 +109,7 @@ impl TrackedRequest {
         }
     }
 
-    fn is_satisfied(&self) -> bool {
+    pub(crate) fn is_satisfied(&self) -> bool {
         self.satisfied.load(std::sync::atomic::Ordering::Relaxed)
     }
 
@@ -86,11 +161,6 @@ impl<H: Hasher> RequestTracker<H> {
     }
 }
 
-pub(crate) enum OutgoingMessage<M> {
-    WithTrackedRequest(TrackedRequest, M),
-    Raw(M),
-}
-
 pub(crate) struct RunwayFacade<H, D, MK>
 where
     H: Hasher,
@@ -98,10 +168,8 @@ where
     MK: MultiKeychain,
 {
     runway_exit: oneshot::Sender<()>,
-    outgoing_messages: Receiver<OutgoingMessage<(UnitMessage<H, D, MK::Signature>, Recipient)>>,
-    incoming_messages: Sender<UnitMessage<H, D, MK::Signature>>,
-    missing_coords: HashMap<UnitCoord, TrackedRequest>,
-    missing_parents: HashMap<H::Hash, TrackedRequest>,
+    outgoing_messages: Receiver<RunwayNotificationOut<H, D, MK::Signature>>,
+    incoming_messages: Sender<RunwayNotificationIn<H, D, MK::Signature>>,
 }
 
 impl<H, D, MK> RunwayFacade<H, D, MK>
@@ -112,19 +180,20 @@ where
 {
     fn new(
         runway_exit: oneshot::Sender<()>,
-        outgoing_messages: Receiver<OutgoingMessage<(UnitMessage<H, D, MK::Signature>, Recipient)>>,
-        incoming_messages: Sender<UnitMessage<H, D, MK::Signature>>,
+        outgoing_messages: Receiver<RunwayNotificationOut<H, D, MK::Signature>>,
+        incoming_messages: Sender<RunwayNotificationIn<H, D, MK::Signature>>,
     ) -> Self {
         RunwayFacade {
             runway_exit,
             outgoing_messages,
             incoming_messages,
-            missing_coords: HashMap::new(),
-            missing_parents: HashMap::new(),
         }
     }
 
-    pub(crate) fn enqueue_message(&mut self, message: UnitMessage<H, D, MK::Signature>) {
+    pub(crate) fn enqueue_notification(
+        &mut self,
+        message: RunwayNotificationIn<H, D, MK::Signature>,
+    ) {
         self.incoming_messages
             .unbounded_send(message)
             .expect("incoming_messages channel should be open")
@@ -132,54 +201,8 @@ where
 
     pub(crate) async fn next_outgoing_message(
         &mut self,
-    ) -> Option<(UnitMessage<H, D, MK::Signature>, Recipient)> {
-        let out_msg = self.outgoing_messages.next().await;
-        match out_msg {
-            Some(out_msg) => match out_msg {
-                OutgoingMessage::WithTrackedRequest(request, out_msg) => {
-                    match out_msg.0 {
-                        UnitMessage::RequestCoord(_, ref coord) => {
-                            self.missing_coords.insert(*coord, request);
-                        }
-                        UnitMessage::RequestParents(_, ref u_hash) => {
-                            self.missing_parents.insert(*u_hash, request);
-                        }
-                        _ => {}
-                    }
-                    Some(out_msg)
-                }
-                OutgoingMessage::Raw(out_msg) => Some(out_msg),
-            },
-            None => None,
-        }
-    }
-
-    pub(crate) fn missing_parents(&mut self, u_hash: &H::Hash) -> bool {
-        match self.missing_parents.get(u_hash) {
-            Some(r) => {
-                if r.is_satisfied() {
-                    self.missing_parents.remove(u_hash);
-                    false
-                } else {
-                    true
-                }
-            }
-            None => true,
-        }
-    }
-
-    pub(crate) fn missing_coords(&mut self, coord: &UnitCoord) -> bool {
-        match self.missing_coords.get(coord) {
-            Some(r) => {
-                if r.is_satisfied() {
-                    self.missing_coords.remove(coord);
-                    false
-                } else {
-                    true
-                }
-            }
-            None => true,
-        }
+    ) -> Option<RunwayNotificationOut<H, D, MK::Signature>> {
+        self.outgoing_messages.next().await
     }
 
     pub(crate) fn stop(self) {
@@ -200,8 +223,8 @@ where
     runway: Runway<H, D, MK, DP, SH>,
     alerter: Alerter<H, D, MK>,
     consensus: Consensus<H, SH>,
-    outgoing_messages: Receiver<OutgoingMessage<(UnitMessage<H, D, MK::Signature>, Recipient)>>,
-    incoming_messages: Sender<UnitMessage<H, D, MK::Signature>>,
+    outgoing_messages: Receiver<RunwayNotificationOut<H, D, MK::Signature>>,
+    incoming_messages: Sender<RunwayNotificationIn<H, D, MK::Signature>>,
 }
 
 impl<H, D, MK, DP, SH> InitializedRunway<H, D, MK, DP, SH>
@@ -283,16 +306,7 @@ where
             incoming_messages: unit_messages_for_units,
         }
     }
-}
 
-impl<H, D, MK, DP, SH> InitializedRunway<H, D, MK, DP, SH>
-where
-    H: Hasher,
-    D: Data,
-    MK: MultiKeychain,
-    DP: DataIO<D>,
-    SH: SpawnHandle,
-{
     pub(crate) fn start(self) -> (RunwayFacade<H, D, MK>, impl Future<Output = ()>) {
         let (runway_exit, exit_stream) = oneshot::channel();
         let runway = self.runway;
@@ -321,9 +335,8 @@ where
     keybox: MK,
     alerts_for_alerter: Sender<Alert<H, D, MK::Signature>>,
     notifications_from_alerter: Receiver<ForkingNotification<H, D, MK::Signature>>,
-    unit_messages_from_network: Receiver<UnitMessage<H, D, MK::Signature>>,
-    unit_messages_for_network:
-        Sender<OutgoingMessage<(UnitMessage<H, D, MK::Signature>, Recipient)>>,
+    unit_messages_from_network: Receiver<RunwayNotificationIn<H, D, MK::Signature>>,
+    unit_messages_for_network: Sender<RunwayNotificationOut<H, D, MK::Signature>>,
     tx_consensus: Sender<NotificationIn<H>>,
     rx_consensus: Receiver<NotificationOut<H>>,
     ordered_batch_rx: Receiver<Vec<H::Hash>>,
@@ -344,28 +357,32 @@ where
         self.config.node_ix
     }
 
-    fn on_unit_message(&mut self, message: UnitMessage<H, D, MK::Signature>) {
-        use UnitMessage::*;
+    fn on_unit_message(&mut self, message: RunwayNotificationIn<H, D, MK::Signature>) {
         match message {
-            NewUnit(u) => {
+            RunwayNotification::NewUnit(u) => {
                 trace!(target: "AlephBFT-runway", "{:?} New unit received {:?}.", self.index(), &u);
                 self.on_unit_received(u, false)
             }
-            RequestCoord(peer_id, coord) => {
-                self.on_request_coord(peer_id, coord);
-            }
-            ResponseCoord(u) => {
-                trace!(target: "AlephBFT-runway", "{:?} Fetch response received {:?}.", self.index(), &u);
-                self.on_unit_received(u, false)
-            }
-            RequestParents(peer_id, u_hash) => {
-                trace!(target: "AlephBFT-runway", "{:?} Parents request received {:?}.", self.index(), u_hash);
-                self.on_request_parents(peer_id, u_hash);
-            }
-            ResponseParents(u_hash, parents) => {
-                trace!(target: "AlephBFT-runway", "{:?} Response parents received {:?}.", self.index(), u_hash);
-                self.on_parents_response(u_hash, parents);
-            }
+            RunwayNotification::Request((request, peer_id)) => match request {
+                Request::RequestCoord(coord) => {
+                    trace!(target: "AlephBFT-runway", "{:?} Coords request received {:?}.", self.index(), coord);
+                    self.on_request_coord(peer_id, coord);
+                }
+                Request::RequestParents(u_hash) => {
+                    trace!(target: "AlephBFT-runway", "{:?} Parents request received {:?}.", self.index(), u_hash);
+                    self.on_request_parents(peer_id, u_hash);
+                }
+            },
+            RunwayNotification::Response(res) => match res {
+                Response::ResponseCoord(u) => {
+                    trace!(target: "AlephBFT-runway", "{:?} Fetch response received {:?}.", self.index(), &u);
+                    self.on_unit_received(u, false)
+                }
+                Response::ResponseParents(u_hash, parents) => {
+                    trace!(target: "AlephBFT-runway", "{:?} Response parents received {:?}.", self.index(), u_hash);
+                    self.on_parents_response(u_hash, parents);
+                }
+            },
         }
     }
 
@@ -497,17 +514,15 @@ where
 
         if let Some(su) = maybe_su {
             trace!(target: "AlephBFT-runway", "{:?} Answering fetch request for coord {:?} from {:?}.", self.index(), coord, peer_id);
-            let message = UnitMessage::ResponseCoord(su.into());
-            self.send_unit_message(message, peer_id);
+            self.unit_messages_for_network
+                .unbounded_send(RunwayNotification::Response((
+                    Response::ResponseCoord(su.into()),
+                    peer_id,
+                )))
+                .expect("network's channel should be open");
         } else {
             trace!(target: "AlephBFT-runway", "{:?} Not answering fetch request for coord {:?}. Unit not in store.", self.index(), coord);
         }
-    }
-
-    fn send_unit_message(&mut self, message: UnitMessage<H, D, MK::Signature>, peer_id: NodeIndex) {
-        self.unit_messages_for_network
-            .unbounded_send(OutgoingMessage::Raw((message, Recipient::Node(peer_id))))
-            .expect("network's channel should be open")
     }
 
     fn on_request_parents(&mut self, peer_id: NodeIndex, u_hash: H::Hash) {
@@ -530,8 +545,12 @@ where
                     return;
                 }
             }
-            let message = UnitMessage::ResponseParents(u_hash, full_units);
-            self.send_unit_message(message, peer_id);
+            self.unit_messages_for_network
+                .unbounded_send(RunwayNotificationOut::Response((
+                    Response::ResponseParents(u_hash, full_units),
+                    peer_id,
+                )))
+                .expect("network channel should be open")
         } else {
             trace!(target: "AlephBFT-runway", "{:?} Not answering parents request for hash {:?}. Unit not in DAG yet.", self.index(), u_hash);
         }
@@ -619,10 +638,9 @@ where
         let signed_unit: Signed<FullUnit<H, D>, MK> = Signed::sign(full_unit, &self.keybox).await;
         self.store.add_unit(signed_unit.clone(), false);
 
-        let message = UnitMessage::<H, D, MK::Signature>::NewUnit(signed_unit.into());
         trace!(target: "AlephBFT-runway", "{:?} Sending a unit {:?}.", self.index(), hash);
         self.unit_messages_for_network
-            .unbounded_send(OutgoingMessage::Raw((message, Recipient::Everyone)))
+            .unbounded_send(RunwayNotificationOut::NewUnit(signed_unit.into()))
             .expect("network's channel should be open")
     }
 
@@ -665,12 +683,13 @@ where
         trace!(target: "AlephBFT-runway", "{:?} Dealing with missing coords notification {:?}.", self.index(), coords);
         coords.retain(|coord| !self.store.contains_coord(coord));
         for coord in coords {
-            let message = UnitMessage::<H, D, MK::Signature>::RequestCoord(self.index(), coord);
+            let tracked_request = self.request_tracker.get_missing_coords_request(&coord);
             self.unit_messages_for_network
-                .unbounded_send(OutgoingMessage::WithTrackedRequest(
-                    self.request_tracker.get_missing_coords_request(&coord),
-                    (message, Recipient::Everyone),
-                ))
+                .unbounded_send(RunwayNotificationOut::Request((
+                    Request::RequestCoord(coord),
+                    Recipient::Everyone,
+                    tracked_request,
+                )))
                 .expect("network's channel should be open");
         }
     }
@@ -694,12 +713,13 @@ where
             } else {
                 Recipient::Everyone
             };
-            let message = UnitMessage::<H, D, MK::Signature>::RequestParents(self.index(), u_hash);
+            let tracked_request = self.request_tracker.get_missing_parents_request(&u_hash);
             self.unit_messages_for_network
-                .unbounded_send(OutgoingMessage::WithTrackedRequest(
-                    self.request_tracker.get_missing_parents_request(&u_hash),
-                    (message, recipient),
-                ))
+                .unbounded_send(RunwayNotificationOut::Request((
+                    Request::RequestParents(u_hash),
+                    recipient,
+                    tracked_request,
+                )))
                 .expect("network's channel should be open");
         }
     }
@@ -730,16 +750,7 @@ where
             .collect();
         self.send_consensus_notification(NotificationIn::NewUnits(units_to_move))
     }
-}
 
-impl<H, D, MK, DP, SH> Runway<H, D, MK, DP, SH>
-where
-    H: Hasher,
-    D: Data,
-    MK: MultiKeychain,
-    DP: DataIO<D>,
-    SH: SpawnHandle,
-{
     pub(crate) async fn run(
         mut self,
         mut exit: oneshot::Receiver<()>,

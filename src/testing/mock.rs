@@ -23,7 +23,7 @@ use std::{
 
 use crate::{
     exponential_slowdown,
-    member::{NotificationIn, NotificationOut},
+    runway::{NotificationIn, NotificationOut},
     units::{Unit, UnitCoord},
     Config, DataIO as DataIOT, DelayConfig, Hasher, Index, KeyBox as KeyBoxT,
     MultiKeychain as MultiKeychainT, Network as NetworkT, NodeCount, NodeIndex, OrderedBatch,

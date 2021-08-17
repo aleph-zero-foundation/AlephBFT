@@ -1,7 +1,7 @@
 use crate::{
     consensus,
-    member::{NotificationIn, NotificationOut},
     nodes::{NodeCount, NodeIndex, NodeMap},
+    runway::{NotificationIn, NotificationOut},
     testing::mock::{gen_config, Hash64, Hasher64, Spawner},
     units::{ControlHash, PreUnit, Unit},
     Receiver, Round, Sender, SpawnHandle,

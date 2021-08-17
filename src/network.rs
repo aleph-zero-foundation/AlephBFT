@@ -11,7 +11,7 @@ use log::{error, warn};
 use std::fmt::Debug;
 
 /// A recipient of a message, either a specific node or everyone.
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Recipient {
     Everyone,
     Node(NodeIndex),
