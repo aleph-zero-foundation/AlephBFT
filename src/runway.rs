@@ -1,24 +1,21 @@
-use std::{
-    collections::HashMap,
-    sync::{atomic::AtomicBool, Arc},
-};
+use std::collections::HashSet;
 
 use crate::{
     alerts::{Alert, AlertConfig, AlertMessage, Alerter, ForkProof, ForkingNotification},
-    consensus::Consensus,
+    consensus,
     member::UnitMessage,
     network::Recipient,
     nodes::NodeMap,
     units::{
         ControlHash, FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore,
     },
-    utils::{into_infinite_stream, Barrier},
+    utils::into_infinite_stream,
     Config, Data, DataIO, Hasher, Index, MultiKeychain, NodeCount, NodeIndex, OrderedBatch,
     Receiver, Sender, Signature, Signed, SpawnHandle,
 };
 use futures::{
     channel::{mpsc, oneshot},
-    Future, StreamExt,
+    pin_mut, StreamExt,
 };
 use log::{debug, error, info, trace, warn};
 
@@ -54,7 +51,7 @@ pub(crate) enum Request<H: Hasher> {
 
 pub(crate) type RequestIn<H> = (Request<H>, NodeIndex);
 
-pub(crate) type RequestOut<H> = (Request<H>, Recipient, TrackedRequest);
+pub(crate) type RequestOut<H> = (Request<H>, Recipient);
 
 pub(crate) type ResponseOut<H, D, S> = (Response<H, D, S>, NodeIndex);
 
@@ -96,239 +93,15 @@ impl<H: Hasher, D: Data, S: Signature> From<UnitMessage<H, D, S>>
         }
     }
 }
-
-#[derive(Clone)]
-pub(crate) struct TrackedRequest {
-    satisfied: Arc<AtomicBool>,
-}
-
-impl TrackedRequest {
-    fn new() -> Self {
-        TrackedRequest {
-            satisfied: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    pub(crate) fn is_satisfied(&self) -> bool {
-        self.satisfied.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    fn set_satisfied(&mut self) {
-        self.satisfied
-            .store(true, std::sync::atomic::Ordering::Relaxed)
-    }
-}
-
-struct RequestTracker<H: Hasher> {
-    missing_coords: HashMap<UnitCoord, TrackedRequest>,
-    missing_parents: HashMap<H::Hash, TrackedRequest>,
-}
-
-impl<H: Hasher> RequestTracker<H> {
-    fn new() -> Self {
-        RequestTracker {
-            missing_coords: HashMap::new(),
-            missing_parents: HashMap::new(),
-        }
-    }
-
-    fn get_missing_coords_request(&mut self, coord: &UnitCoord) -> TrackedRequest {
-        self.missing_coords
-            .entry(*coord)
-            .or_insert_with(TrackedRequest::new)
-            .clone()
-    }
-
-    fn get_missing_parents_request(&mut self, u_hash: &H::Hash) -> TrackedRequest {
-        self.missing_parents
-            .entry(*u_hash)
-            .or_insert_with(TrackedRequest::new)
-            .clone()
-    }
-
-    fn parents_resolved(&mut self, u_hash: &H::Hash) {
-        self.missing_parents
-            .remove(u_hash)
-            .into_iter()
-            .for_each(|mut req| req.set_satisfied());
-    }
-
-    fn coordinates_resolved(&mut self, coord: &UnitCoord) {
-        self.missing_coords
-            .remove(coord)
-            .into_iter()
-            .for_each(|mut req| req.set_satisfied())
-    }
-}
-
-pub(crate) struct RunwayFacade<H, D, MK>
-where
-    H: Hasher,
-    D: Data,
-    MK: MultiKeychain,
-{
-    runway_exit: oneshot::Sender<()>,
-    outgoing_messages: Receiver<RunwayNotificationOut<H, D, MK::Signature>>,
-    incoming_messages: Sender<RunwayNotificationIn<H, D, MK::Signature>>,
-}
-
-impl<H, D, MK> RunwayFacade<H, D, MK>
-where
-    H: Hasher,
-    D: Data,
-    MK: MultiKeychain,
-{
-    fn new(
-        runway_exit: oneshot::Sender<()>,
-        outgoing_messages: Receiver<RunwayNotificationOut<H, D, MK::Signature>>,
-        incoming_messages: Sender<RunwayNotificationIn<H, D, MK::Signature>>,
-    ) -> Self {
-        RunwayFacade {
-            runway_exit,
-            outgoing_messages,
-            incoming_messages,
-        }
-    }
-
-    pub(crate) fn enqueue_notification(
-        &mut self,
-        message: RunwayNotificationIn<H, D, MK::Signature>,
-    ) {
-        self.incoming_messages
-            .unbounded_send(message)
-            .expect("incoming_messages channel should be open")
-    }
-
-    pub(crate) async fn next_outgoing_message(
-        &mut self,
-    ) -> Option<RunwayNotificationOut<H, D, MK::Signature>> {
-        self.outgoing_messages.next().await
-    }
-
-    pub(crate) fn stop(self) {
-        if self.runway_exit.send(()).is_err() {
-            warn!(target: "AlephBFT-runway", "runway already stopped");
-        }
-    }
-}
-
-pub(crate) struct InitializedRunway<H, D, MK, DP, SH>
+pub(crate) struct Runway<H, D, MK, DP>
 where
     H: Hasher,
     D: Data,
     MK: MultiKeychain,
     DP: DataIO<D>,
-    SH: SpawnHandle,
 {
-    runway: Runway<H, D, MK, DP, SH>,
-    alerter: Alerter<H, D, MK>,
-    consensus: Consensus<H, SH>,
-    outgoing_messages: Receiver<RunwayNotificationOut<H, D, MK::Signature>>,
-    incoming_messages: Sender<RunwayNotificationIn<H, D, MK::Signature>>,
-}
-
-impl<H, D, MK, DP, SH> InitializedRunway<H, D, MK, DP, SH>
-where
-    H: Hasher,
-    D: Data,
-    MK: MultiKeychain,
-    DP: DataIO<D>,
-    SH: SpawnHandle,
-{
-    pub(crate) fn new(
-        config: Config,
-        keychain: MK,
-        data_io: DP,
-        spawn_handle: SH,
-        alert_messages_for_network: Sender<(
-            AlertMessage<H, D, MK::Signature, MK::PartialMultisignature>,
-            Recipient,
-        )>,
-        alert_messages_from_network: Receiver<
-            AlertMessage<H, D, MK::Signature, MK::PartialMultisignature>,
-        >,
-    ) -> Self {
-        let (tx_consensus, consensus_stream) = mpsc::unbounded();
-        let (consensus_sink, rx_consensus) = mpsc::unbounded();
-        let (ordered_batch_tx, ordered_batch_rx) = mpsc::unbounded();
-        let (unit_messages_for_network, unit_messages_from_units) = mpsc::unbounded();
-        let (unit_messages_for_units, unit_messages_from_network) = mpsc::unbounded();
-
-        let (alert_notifications_for_units, notifications_from_alerter) = mpsc::unbounded();
-        let (alerts_for_alerter, alerts_from_units) = mpsc::unbounded();
-        let alert_config = AlertConfig {
-            session_id: config.session_id,
-            n_members: config.n_members,
-        };
-        let alerter = Alerter::new(
-            keychain.clone(),
-            alert_messages_for_network,
-            alert_messages_from_network,
-            alert_notifications_for_units,
-            alerts_from_units,
-            alert_config,
-        );
-
-        let consensus = Consensus::new(
-            config.clone(),
-            spawn_handle.clone(),
-            consensus_stream,
-            consensus_sink,
-            ordered_batch_tx,
-        );
-
-        let n_members = config.n_members;
-        let threshold = (n_members * 2) / 3 + NodeCount(1);
-        let max_round = config.max_round;
-        let store = UnitStore::new(n_members, max_round);
-
-        let runway = Runway {
-            config,
-            threshold,
-            store,
-            keybox: keychain,
-            alerts_for_alerter,
-            notifications_from_alerter,
-            tx_consensus,
-            rx_consensus,
-            data_io,
-            unit_messages_from_network,
-            unit_messages_for_network,
-            spawn_handle,
-            ordered_batch_rx,
-            request_tracker: RequestTracker::new(),
-        };
-        InitializedRunway {
-            runway,
-            alerter,
-            consensus,
-            outgoing_messages: unit_messages_from_units,
-            incoming_messages: unit_messages_for_units,
-        }
-    }
-
-    pub(crate) fn start(self) -> (RunwayFacade<H, D, MK>, impl Future<Output = ()>) {
-        let (runway_exit, exit_stream) = oneshot::channel();
-        let runway = self.runway;
-        let alerter = self.alerter;
-        let consensus = self.consensus;
-        let outgoing_messages = self.outgoing_messages;
-        let incoming_messages = self.incoming_messages;
-        (
-            RunwayFacade::new(runway_exit, outgoing_messages, incoming_messages),
-            async move { runway.run(exit_stream, alerter, consensus).await },
-        )
-    }
-}
-
-pub(crate) struct Runway<H, D, MK, DP, SH>
-where
-    H: Hasher,
-    D: Data,
-    MK: MultiKeychain,
-    DP: DataIO<D>,
-    SH: SpawnHandle,
-{
+    missing_coords: HashSet<UnitCoord>,
+    missing_parents: HashSet<H::Hash>,
     config: Config,
     threshold: NodeCount,
     store: UnitStore<H, D, MK>,
@@ -337,22 +110,59 @@ where
     notifications_from_alerter: Receiver<ForkingNotification<H, D, MK::Signature>>,
     unit_messages_from_network: Receiver<RunwayNotificationIn<H, D, MK::Signature>>,
     unit_messages_for_network: Sender<RunwayNotificationOut<H, D, MK::Signature>>,
+    resolved_requests: Sender<Request<H>>,
     tx_consensus: Sender<NotificationIn<H>>,
     rx_consensus: Receiver<NotificationOut<H>>,
     ordered_batch_rx: Receiver<Vec<H::Hash>>,
     data_io: DP,
-    spawn_handle: SH,
-    request_tracker: RequestTracker<H>,
 }
 
-impl<H, D, MK, DP, SH> Runway<H, D, MK, DP, SH>
+struct RunwayConfig<H: Hasher, D: Data, DP: DataIO<D>, MK: MultiKeychain> {
+    config: Config,
+    keychain: MK,
+    data_io: DP,
+    alerts_for_alerter: Sender<Alert<H, D, MK::Signature>>,
+    notifications_from_alerter: Receiver<ForkingNotification<H, D, MK::Signature>>,
+    tx_consensus: Sender<NotificationIn<H>>,
+    rx_consensus: Receiver<NotificationOut<H>>,
+    unit_messages_from_network: Receiver<RunwayNotificationIn<H, D, MK::Signature>>,
+    unit_messages_for_network: Sender<RunwayNotificationOut<H, D, MK::Signature>>,
+    ordered_batch_rx: Receiver<Vec<H::Hash>>,
+    resolved_requests: Sender<Request<H>>,
+}
+
+impl<H, D, MK, DP> Runway<H, D, MK, DP>
 where
     H: Hasher,
     D: Data,
     MK: MultiKeychain,
     DP: DataIO<D>,
-    SH: SpawnHandle,
 {
+    fn new(config: RunwayConfig<H, D, DP, MK>) -> Self {
+        let n_members = config.config.n_members;
+        let threshold = (n_members * 2) / 3 + NodeCount(1);
+        let max_round = config.config.max_round;
+        let store = UnitStore::new(n_members, max_round);
+
+        Runway {
+            config: config.config,
+            threshold,
+            store,
+            keybox: config.keychain,
+            missing_coords: HashSet::new(),
+            missing_parents: HashSet::new(),
+            resolved_requests: config.resolved_requests,
+            alerts_for_alerter: config.alerts_for_alerter,
+            notifications_from_alerter: config.notifications_from_alerter,
+            unit_messages_from_network: config.unit_messages_from_network,
+            unit_messages_for_network: config.unit_messages_for_network,
+            tx_consensus: config.tx_consensus,
+            rx_consensus: config.rx_consensus,
+            ordered_batch_rx: config.ordered_batch_rx,
+            data_io: config.data_io,
+        }
+    }
+
     fn index(&self) -> NodeIndex {
         self.config.node_ix
     }
@@ -366,11 +176,11 @@ where
             RunwayNotification::Request((request, peer_id)) => match request {
                 Request::RequestCoord(coord) => {
                     trace!(target: "AlephBFT-runway", "{:?} Coords request received {:?}.", self.index(), coord);
-                    self.on_request_coord(peer_id, coord);
+                    self.on_request_coord(peer_id, coord)
                 }
                 Request::RequestParents(u_hash) => {
                     trace!(target: "AlephBFT-runway", "{:?} Parents request received {:?}.", self.index(), u_hash);
-                    self.on_request_parents(peer_id, u_hash);
+                    self.on_request_parents(peer_id, u_hash)
                 }
             },
             RunwayNotification::Response(res) => match res {
@@ -380,7 +190,7 @@ where
                 }
                 Response::ResponseParents(u_hash, parents) => {
                     trace!(target: "AlephBFT-runway", "{:?} Response parents received {:?}.", self.index(), u_hash);
-                    self.on_parents_response(u_hash, parents);
+                    self.on_parents_response(u_hash, parents)
                 }
             },
         }
@@ -390,12 +200,20 @@ where
         if let Some(su) = self.validate_unit(uu) {
             if alert {
                 // Units from alerts explicitly come from forkers, and we want them anyway.
-                self.request_tracker
-                    .coordinates_resolved(&su.as_signable().coord());
+                let coord = su.as_signable().coord();
+                self.resolve_missing_coord(&coord);
                 self.store.add_unit(su, true);
             } else {
                 self.add_unit_to_store_unless_fork(su);
             }
+        }
+    }
+
+    fn resolve_missing_coord(&mut self, coord: &UnitCoord) {
+        if self.missing_coords.remove(coord) {
+            self.resolved_requests
+                .unbounded_send(Request::RequestCoord(*coord))
+                .expect("resolved_requests channel should be open")
         }
     }
 
@@ -452,8 +270,8 @@ where
             return;
         }
 
-        self.request_tracker
-            .coordinates_resolved(&su.as_signable().coord());
+        let coord = su.as_signable().coord();
+        self.resolve_missing_coord(&coord);
         self.store.add_unit(su, false);
     }
 
@@ -519,7 +337,7 @@ where
                     Response::ResponseCoord(su.into()),
                     peer_id,
                 )))
-                .expect("network's channel should be open");
+                .expect("unit_messages_for_network channel should be open")
         } else {
             trace!(target: "AlephBFT-runway", "{:?} Not answering fetch request for coord {:?}. Unit not in store.", self.index(), coord);
         }
@@ -550,7 +368,7 @@ where
                     Response::ResponseParents(u_hash, full_units),
                     peer_id,
                 )))
-                .expect("network channel should be open")
+                .expect("unit_messages_for_network channel should be open")
         } else {
             trace!(target: "AlephBFT-runway", "{:?} Not answering parents request for hash {:?}. Unit not in DAG yet.", self.index(), u_hash);
         }
@@ -619,9 +437,17 @@ where
         }
         let p_hashes: Vec<H::Hash> = p_hashes_node_map.into_iter().flatten().collect();
         self.store.add_parents(u_hash, p_hashes.clone());
-        self.request_tracker.parents_resolved(&u_hash);
-        trace!(target: "AlephBFT-runway", "{:?} Succesful parents reponse for {:?}.", self.index(), u_hash);
+        self.resolve_missing_parents(&u_hash);
+        trace!(target: "AlephBFT-runway", "{:?} Succesful parents response for {:?}.", self.index(), u_hash);
         self.send_consensus_notification(NotificationIn::UnitParents(u_hash, p_hashes));
+    }
+
+    fn resolve_missing_parents(&mut self, u_hash: &H::Hash) {
+        if self.missing_parents.remove(u_hash) {
+            self.resolved_requests
+                .unbounded_send(Request::RequestParents(*u_hash))
+                .expect("resolved_requests channel should be open")
+        }
     }
 
     fn send_consensus_notification(&mut self, notification: NotificationIn<H>) {
@@ -674,7 +500,7 @@ where
             }
             NotificationOut::AddedToDag(h, p_hashes) => {
                 self.store.add_parents(h, p_hashes);
-                self.request_tracker.parents_resolved(&h);
+                self.resolve_missing_parents(&h);
             }
         }
     }
@@ -683,14 +509,14 @@ where
         trace!(target: "AlephBFT-runway", "{:?} Dealing with missing coords notification {:?}.", self.index(), coords);
         coords.retain(|coord| !self.store.contains_coord(coord));
         for coord in coords {
-            let tracked_request = self.request_tracker.get_missing_coords_request(&coord);
-            self.unit_messages_for_network
-                .unbounded_send(RunwayNotificationOut::Request((
-                    Request::RequestCoord(coord),
-                    Recipient::Everyone,
-                    tracked_request,
-                )))
-                .expect("network's channel should be open");
+            if self.missing_coords.insert(coord) {
+                self.unit_messages_for_network
+                    .unbounded_send(RunwayNotificationOut::Request((
+                        Request::RequestCoord(coord),
+                        Recipient::Node(coord.creator()),
+                    )))
+                    .expect("unit_messages_for_network channel should be open")
+            }
         }
     }
 
@@ -713,14 +539,14 @@ where
             } else {
                 Recipient::Everyone
             };
-            let tracked_request = self.request_tracker.get_missing_parents_request(&u_hash);
-            self.unit_messages_for_network
-                .unbounded_send(RunwayNotificationOut::Request((
-                    Request::RequestParents(u_hash),
-                    recipient,
-                    tracked_request,
-                )))
-                .expect("network's channel should be open");
+            if self.missing_parents.insert(u_hash) {
+                self.unit_messages_for_network
+                    .unbounded_send(RunwayNotificationOut::Request((
+                        Request::RequestParents(u_hash),
+                        recipient,
+                    )))
+                    .expect("unit_messages_for_network channel should be open")
+            }
         }
     }
 
@@ -751,40 +577,10 @@ where
         self.send_consensus_notification(NotificationIn::NewUnits(units_to_move))
     }
 
-    pub(crate) async fn run(
-        mut self,
-        mut exit: oneshot::Receiver<()>,
-        alerter: Alerter<H, D, MK>,
-        consensus: Consensus<H, SH>,
-    ) {
+    pub(crate) async fn run(mut self, mut exit: oneshot::Receiver<()>) {
         info!(target: "AlephBFT-runway", "{:?} Runway starting.", self.index());
 
         let index = self.index();
-
-        let mut barrier = Barrier::new();
-
-        let alerter_barrier = barrier.clone("runway/alerter");
-        let (alerter_exit, exit_stream) = oneshot::channel();
-        let alerter_handle = self
-            .spawn_handle
-            .spawn_essential("runway/alerter", async move {
-                let mut alerter = alerter;
-                alerter.run(exit_stream).await;
-
-                alerter_barrier.wait().await;
-            });
-        let mut alerter_handle = into_infinite_stream(alerter_handle).fuse();
-
-        let consensus_barrier = barrier.clone("runway/consensus");
-        let (consensus_exit, exit_stream) = oneshot::channel();
-        let consensus_handle = self
-            .spawn_handle
-            .spawn_essential("runway/consensus", async move {
-                consensus.run(exit_stream).await;
-
-                consensus_barrier.wait().await;
-            });
-        let mut consensus_handle = into_infinite_stream(consensus_handle).fuse();
 
         info!(target: "AlephBFT-runway", "{:?} Runway started.", index);
         loop {
@@ -798,7 +594,9 @@ where
                 },
 
                 notification = self.notifications_from_alerter.next() => match notification {
-                    Some(notification) => self.on_alert_notification(notification),
+                    Some(notification) => {
+                        self.on_alert_notification(notification)
+                    },
                     None => {
                         error!(target: "AlephBFT-runway", "{:?} Alert notification stream closed.", index);
                         break;
@@ -821,35 +619,129 @@ where
                     }
                 },
 
-                _ = alerter_handle.next() => {
-                    debug!(target: "AlephBFT-runway", "{:?} alerter task terminated early.", index);
-                    break;
-                },
-
-                _ = consensus_handle.next() => {
-                    debug!(target: "AlephBFT-runway", "{:?} consensus task terminated early.", index);
-                    break;
-                },
-
                 _ = &mut exit => break,
-            }
+            };
             self.move_units_to_consensus();
         }
 
-        info!(target: "AlephBFT-runway", "{:?} Ending run.", index);
-
-        if consensus_exit.send(()).is_err() {
-            debug!(target: "AlephBFT-runway", "{:?} consensus already stopped.", index);
-        }
-        if alerter_exit.send(()).is_err() {
-            debug!(target: "AlephBFT-runway", "{:?} alerter already stopped.", index);
-        }
-
-        barrier.wait().await;
-
-        consensus_handle.next().await.unwrap();
-        alerter_handle.next().await.unwrap();
-
         info!(target: "AlephBFT-runway", "{:?} Run ended.", index);
     }
+}
+
+pub(crate) async fn run<H, D, MK, DP, SH>(
+    config: Config,
+    keychain: MK,
+    data_io: DP,
+    spawn_handle: SH,
+    alert_messages_for_network: Sender<(
+        AlertMessage<H, D, MK::Signature, MK::PartialMultisignature>,
+        Recipient,
+    )>,
+    alert_messages_from_network: Receiver<
+        AlertMessage<H, D, MK::Signature, MK::PartialMultisignature>,
+    >,
+    unit_messages_from_network: Receiver<RunwayNotificationIn<H, D, MK::Signature>>,
+    unit_messages_for_network: Sender<RunwayNotificationOut<H, D, MK::Signature>>,
+    resolved_requests: Sender<Request<H>>,
+    mut exit: oneshot::Receiver<()>,
+) where
+    H: Hasher,
+    D: Data,
+    MK: MultiKeychain,
+    DP: DataIO<D>,
+    SH: SpawnHandle,
+{
+    let (tx_consensus, consensus_stream) = mpsc::unbounded();
+    let (consensus_sink, rx_consensus) = mpsc::unbounded();
+    let (ordered_batch_tx, ordered_batch_rx) = mpsc::unbounded();
+
+    let (alert_notifications_for_units, notifications_from_alerter) = mpsc::unbounded();
+    let (alerts_for_alerter, alerts_from_units) = mpsc::unbounded();
+    let alert_config = AlertConfig {
+        session_id: config.session_id,
+        n_members: config.n_members,
+    };
+    let (alerter_exit, exit_stream) = oneshot::channel();
+    let alerter = Alerter::new(
+        keychain.clone(),
+        alert_messages_for_network,
+        alert_messages_from_network,
+        alert_notifications_for_units,
+        alerts_from_units,
+        alert_config,
+    );
+
+    let alerter_handle = spawn_handle.spawn_essential("runway/alerter", async move {
+        let mut alerter = alerter;
+        alerter.run(exit_stream).await;
+    });
+    let mut alerter_handle = into_infinite_stream(alerter_handle).fuse();
+
+    let (consensus_exit, exit_stream) = oneshot::channel();
+    let consensus_config = config.clone();
+    let consensus_spawner = spawn_handle.clone();
+    let consensus_handle = spawn_handle.spawn_essential("runway/consensus", async move {
+        consensus::run(
+            consensus_config,
+            consensus_stream,
+            consensus_sink,
+            ordered_batch_tx,
+            consensus_spawner,
+            exit_stream,
+        )
+        .await
+    });
+    let mut consensus_handle = into_infinite_stream(consensus_handle).fuse();
+
+    let index = config.node_ix;
+
+    let runway_config = RunwayConfig {
+        config,
+        keychain,
+        data_io,
+        alerts_for_alerter,
+        notifications_from_alerter,
+        tx_consensus,
+        rx_consensus,
+        unit_messages_from_network,
+        unit_messages_for_network,
+        ordered_batch_rx,
+        resolved_requests,
+    };
+    let (runway_exit, exit_stream) = oneshot::channel();
+    let runway = Runway::new(runway_config);
+    let runway_handle = runway.run(exit_stream);
+    let runway_handle = into_infinite_stream(runway_handle).fuse();
+    pin_mut!(runway_handle);
+
+    futures::select! {
+        _ = runway_handle.next() => {
+            debug!(target: "AlephBFT-runway", "{:?} Runway task terminated early.", index);
+        },
+        _ = alerter_handle.next() => {
+            debug!(target: "AlephBFT-runway", "{:?} Alerter task terminated early.", index);
+        },
+        _ = consensus_handle.next() => {
+            debug!(target: "AlephBFT-runway", "{:?} Consensus task terminated early.", index);
+        },
+        _ = &mut exit => {},
+    }
+
+    info!(target: "AlephBFT-runway", "{:?} Ending run.", index);
+
+    if runway_exit.send(()).is_err() {
+        debug!(target: "AlephBFT-runway", "{:?} Runway already stopped.", index);
+    }
+    if alerter_exit.send(()).is_err() {
+        debug!(target: "AlephBFT-runway", "{:?} Alerter already stopped.", index);
+    }
+    if consensus_exit.send(()).is_err() {
+        debug!(target: "AlephBFT-runway", "{:?} Consensus already stopped.", index);
+    }
+
+    runway_handle.next().await.unwrap();
+    alerter_handle.next().await.unwrap();
+    consensus_handle.next().await.unwrap();
+
+    info!(target: "AlephBFT-runway", "{:?} Runway ended.", index);
 }

@@ -2,8 +2,7 @@ use crate::{
     config::Config,
     network::{NetworkHub, Recipient},
     runway::{
-        InitializedRunway, Request, Response, RunwayFacade, RunwayNotification,
-        RunwayNotificationIn, RunwayNotificationOut, TrackedRequest,
+        self, Request, Response, RunwayNotification, RunwayNotificationIn, RunwayNotificationOut,
     },
     signed::Signature,
     units::{UncheckedSignedUnit, UnitCoord},
@@ -14,7 +13,7 @@ use crate::{
 use codec::{Decode, Encode};
 use futures::{
     channel::{mpsc, oneshot},
-    pin_mut, Future, FutureExt, StreamExt,
+    pin_mut, FutureExt, StreamExt,
 };
 use futures_timer::Delay;
 use log::{debug, error, info, trace};
@@ -23,7 +22,6 @@ use std::{
     cmp::Ordering,
     collections::{BinaryHeap, HashSet},
     fmt::Debug,
-    marker::PhantomData,
     time,
 };
 
@@ -57,12 +55,11 @@ impl<H: Hasher, D: Data, S: Signature> UnitMessage<H, D, S> {
     }
 }
 
-// #[derive(Eq, PartialEq)]
 pub(crate) enum Task<H: Hasher, D: Data, S: Signature> {
     // Request the unit with the given (creator, round) coordinates.
-    CoordRequest(UnitCoord, TrackedRequest),
+    CoordRequest(UnitCoord),
     // Request parents of the unit with the given hash and Recipient.
-    ParentsRequest(H::Hash, Recipient, TrackedRequest),
+    ParentsRequest(H::Hash, Recipient),
     // Broadcast the given unit.
     UnitMulticast(UncheckedSignedUnit<H, D, S>),
 }
@@ -70,12 +67,12 @@ pub(crate) enum Task<H: Hasher, D: Data, S: Signature> {
 impl<H: Hasher, D: Data, S: Signature + PartialEq> PartialEq for Task<H, D, S> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Task::CoordRequest(self_coord, _), Task::CoordRequest(other_coord, _)) => {
+            (Task::CoordRequest(self_coord), Task::CoordRequest(other_coord)) => {
                 self_coord.eq(other_coord)
             }
             (
-                Task::ParentsRequest(self_hash, self_recipient, _),
-                Task::ParentsRequest(other_hash, other_recipient, _),
+                Task::ParentsRequest(self_hash, self_recipient),
+                Task::ParentsRequest(other_hash, other_recipient),
             ) => self_hash.eq(other_hash) && self_recipient.eq(other_recipient),
             (Task::UnitMulticast(self_unit), Task::UnitMulticast(other_unit)) => {
                 self_unit.eq(other_unit)
@@ -120,124 +117,102 @@ impl<H: Hasher, D: Data, S: Signature + Eq + PartialEq> PartialOrd for Scheduled
     }
 }
 
-/// A representation of a committee member responsible for establishing the consensus.
-///
-/// It depends on the following objects (for more detailed description of the above obejcts, see their references):
-/// - [`Hasher`] - an abstraction for creating identifiers for units, alerts, and other internal objects,
-/// - [`DataIO`] - an abstraction for a component that outputs data items and allows to input ordered data items,
-/// - [`MultiKeychain`] - an abstraction for digitally signing arbitrary data and verifying signatures,
-/// - [`Network`] - an abstraction for a network connecting the committee members,
-/// - [`SpawnHandle`] - an abstraction for an executor of asynchronous tasks.
-///
-/// For a detailed description of the consensus implemented in Member see
-/// [docs for devs](https://cardinal-cryptography.github.io/AlephBFT/index.html)
-/// or the [original paper](https://arxiv.org/abs/1908.05156).
-pub struct Member<'a, D, DP, MK, SH>
-where
-    D: Data,
-    DP: DataIO<D> + Send,
-    MK: MultiKeychain,
-    SH: SpawnHandle,
-{
-    config: Config,
-    data_io: DP,
-    keybox: &'a MK,
-    spawn_handle: SH,
-    _phantom: PhantomData<D>,
-}
+// TODO
+// /// A representation of a committee member responsible for establishing the consensus.
+// ///
+// /// It depends on the following objects (for more detailed description of the above obejcts, see their references):
+// /// - [`Hasher`] - an abstraction for creating identifiers for units, alerts, and other internal objects,
+// /// - [`DataIO`] - an abstraction for a component that outputs data items and allows to input ordered data items,
+// /// - [`MultiKeychain`] - an abstraction for digitally signing arbitrary data and verifying signatures,
+// /// - [`Network`] - an abstraction for a network connecting the committee members,
+// /// - [`SpawnHandle`] - an abstraction for an executor of asynchronous tasks.
+// ///
+// /// For a detailed description of the consensus implemented in Member see
+// /// [docs for devs](https://cardinal-cryptography.github.io/AlephBFT/index.html)
+// /// or the [original paper](https://arxiv.org/abs/1908.05156).
+// pub struct Member<D>
+// where
+//     D: Data,
+// {
+//     config: Config,
+//     _phantom: PhantomData<D>,
+// }
 
-impl<'a, D, DP, MK, SH> Member<'a, D, DP, MK, SH>
-where
-    D: Data,
-    DP: DataIO<D> + Send,
-    MK: MultiKeychain,
-    SH: SpawnHandle,
-{
-    /// Create a new instance of the Member for a given session. Under the hood, the Member implementation
-    /// makes an extensive use of asynchronous features of Rust, so creating a new Member doesn't start it.
-    /// See [`Member::run_session`].
-    pub fn new(data_io: DP, keybox: &'a MK, config: Config, spawn_handle: SH) -> Self {
-        Member {
-            config,
-            data_io,
-            keybox,
-            spawn_handle,
-            _phantom: PhantomData,
-        }
-    }
-}
-
-struct InitializedMember<H, D, MK, SH>
+struct Member<H, D, S>
 where
     H: Hasher,
     D: Data,
-    MK: MultiKeychain,
-    MK::Signature: Eq + PartialEq,
-    SH: SpawnHandle,
+    S: Signature + Eq + PartialEq,
 {
     config: Config,
-    task_queue: BinaryHeap<ScheduledTask<H, D, MK::Signature>>,
+    task_queue: BinaryHeap<ScheduledTask<H, D, S>>,
     requested_coords: HashSet<UnitCoord>,
+    not_resolved_parents: HashSet<H::Hash>,
+    not_resolved_coords: HashSet<UnitCoord>,
     n_members: NodeCount,
-    spawn_handle: SH,
-    runway_facade: RunwayFacade<H, D, MK>,
-    unit_messages_for_network: Sender<(UnitMessage<H, D, MK::Signature>, Recipient)>,
-    unit_messages_from_network: Receiver<UnitMessage<H, D, MK::Signature>>,
+    unit_messages_for_network: Sender<(UnitMessage<H, D, S>, Recipient)>,
+    unit_messages_from_network: Receiver<UnitMessage<H, D, S>>,
+    messages_from_network: Sender<RunwayNotificationIn<H, D, S>>,
+    messages_for_network: Receiver<RunwayNotificationOut<H, D, S>>,
+    resolved_requests: Receiver<Request<H>>,
 }
 
-impl<H, D, MK, SH> InitializedMember<H, D, MK, SH>
+impl<H, D, S> Member<H, D, S>
 where
     H: Hasher,
     D: Data,
-    MK: MultiKeychain,
-    MK::Signature: Eq + PartialEq,
-    SH: SpawnHandle,
+    S: Signature + Eq + PartialEq,
 {
     fn new(
         config: Config,
-        spawn_handle: SH,
-        runway_facade: RunwayFacade<H, D, MK>,
-        unit_messages_for_network: Sender<(UnitMessage<H, D, MK::Signature>, Recipient)>,
-        unit_messages_from_network: Receiver<UnitMessage<H, D, MK::Signature>>,
+        unit_messages_for_network: Sender<(UnitMessage<H, D, S>, Recipient)>,
+        unit_messages_from_network: Receiver<UnitMessage<H, D, S>>,
+        messages_from_network: Sender<RunwayNotificationIn<H, D, S>>,
+        messages_for_network: Receiver<RunwayNotificationOut<H, D, S>>,
+        resolved_requests: Receiver<Request<H>>,
     ) -> Self {
         let n_members = config.n_members;
         Self {
             config,
             task_queue: BinaryHeap::new(),
             requested_coords: HashSet::new(),
+            not_resolved_parents: HashSet::new(),
+            not_resolved_coords: HashSet::new(),
             n_members,
-            spawn_handle,
-            runway_facade,
             unit_messages_for_network,
             unit_messages_from_network,
+            messages_from_network,
+            messages_for_network,
+            resolved_requests,
         }
     }
 
-    fn on_create(&mut self, u: UncheckedSignedUnit<H, D, MK::Signature>) {
+    fn on_create(&mut self, u: UncheckedSignedUnit<H, D, S>) {
         let curr_time = time::Instant::now();
         let task = ScheduledTask::new(Task::UnitMulticast(u), curr_time);
         self.task_queue.push(task);
     }
 
-    fn on_request_coord(&mut self, coord: UnitCoord, tracker: TrackedRequest) {
+    fn on_request_coord(&mut self, coord: UnitCoord) {
         trace!(target: "AlephBFT-member", "{:?} Dealing with missing coord notification {:?}.", self.index(), coord);
+        if !self.not_resolved_coords.insert(coord) {
+            return;
+        }
         if !self.requested_coords.insert(coord) {
             return;
         }
         let curr_time = time::Instant::now();
-        let task = ScheduledTask::new(Task::CoordRequest(coord, tracker), curr_time);
+        let task = ScheduledTask::new(Task::CoordRequest(coord), curr_time);
         self.task_queue.push(task);
         self.trigger_tasks();
     }
 
-    fn on_request_parents(
-        &mut self,
-        u_hash: H::Hash,
-        recipient: Recipient,
-        tracker: TrackedRequest,
-    ) {
+    fn on_request_parents(&mut self, u_hash: H::Hash, recipient: Recipient) {
+        if !self.not_resolved_parents.insert(u_hash) {
+            return;
+        }
         let curr_time = time::Instant::now();
-        let task = ScheduledTask::new(Task::ParentsRequest(u_hash, recipient, tracker), curr_time);
+        let task = ScheduledTask::new(Task::ParentsRequest(u_hash, recipient), curr_time);
         self.task_queue.push(task);
         self.trigger_tasks();
     }
@@ -274,11 +249,7 @@ where
         self.config.node_ix
     }
 
-    fn send_unit_message(
-        &mut self,
-        message: UnitMessage<H, D, MK::Signature>,
-        recipient: Recipient,
-    ) {
+    fn send_unit_message(&mut self, message: UnitMessage<H, D, S>, recipient: Recipient) {
         self.unit_messages_for_network
             .unbounded_send((message, recipient))
             .expect("Channel to network should be open")
@@ -289,23 +260,23 @@ where
     /// and should be rescheduled after `delay`.
     fn task_details(
         &mut self,
-        task: &Task<H, D, MK::Signature>,
+        task: &Task<H, D, S>,
         counter: usize,
-    ) -> Option<(UnitMessage<H, D, MK::Signature>, Recipient, time::Duration)> {
+    ) -> Option<(UnitMessage<H, D, S>, Recipient, time::Duration)> {
         // preferred_recipient is Everyone if the message is supposed to be broadcast,
         // and Node(node_id) if the message should be send to one peer (node_id when
         // the task is done for the first time or a random peer otherwise)
         let (message, preferred_recipient) = match task {
-            Task::CoordRequest(coord, tracker) => {
-                if tracker.is_satisfied() {
+            Task::CoordRequest(coord) => {
+                if !self.not_resolved_coords.contains(coord) {
                     return None;
                 }
                 let message = UnitMessage::RequestCoord(self.index(), *coord);
                 let preferred_recipient = Recipient::Node(coord.creator());
                 (message, preferred_recipient)
             }
-            Task::ParentsRequest(hash, preferred_recipient, tracker) => {
-                if tracker.is_satisfied() {
+            Task::ParentsRequest(hash, preferred_recipient) => {
+                if !self.not_resolved_parents.contains(hash) {
                     return None;
                 }
                 let message = UnitMessage::RequestParents(self.index(), *hash);
@@ -338,14 +309,12 @@ where
         Some((message, recipient, delay))
     }
 
-    fn on_unit_message_from_units(&mut self, message: RunwayNotificationOut<H, D, MK::Signature>) {
+    fn on_unit_message_from_units(&mut self, message: RunwayNotificationOut<H, D, S>) {
         match message {
             RunwayNotification::NewUnit(u) => self.on_create(u),
-            RunwayNotification::Request((request, recipient, tracker)) => match request {
-                Request::RequestCoord(coord) => self.on_request_coord(coord, tracker),
-                crate::runway::Request::RequestParents(u_hash) => {
-                    self.on_request_parents(u_hash, recipient, tracker)
-                }
+            RunwayNotification::Request((request, recipient)) => match request {
+                Request::RequestCoord(coord) => self.on_request_coord(coord),
+                Request::RequestParents(u_hash) => self.on_request_parents(u_hash, recipient),
             },
             RunwayNotification::Response((response, recipient)) => match response {
                 Response::ResponseCoord(u) => {
@@ -360,48 +329,31 @@ where
         }
     }
 
-    async fn run<N: Network<H, D, MK::Signature, MK::PartialMultisignature> + 'static>(
-        mut self,
-        runway_future: impl Future<Output = ()>,
-        mut network: NetworkHub<H, D, MK::Signature, MK::PartialMultisignature, N>,
-        mut exit: oneshot::Receiver<()>,
-    ) {
-        info!(target: "AlephBFT-member", "{:?} Spawning network.", self.index());
-        let index = self.index();
-        let (network_exit, exit_stream) = oneshot::channel();
-        let network_handle = self
-            .spawn_handle
-            .spawn_essential("member/network", async move {
-                network.run(exit_stream).await;
-            });
-        let mut network_handle = into_infinite_stream(network_handle).fuse();
-        info!(target: "AlephBFT-member", "{:?} Network spawned.", self.index());
-
-        info!(target: "AlephBFT-member", "{:?} Initializing Runway.", self.index());
-
-        let runway_future = into_infinite_stream(runway_future).fuse();
-        pin_mut!(runway_future);
-
+    async fn run(mut self, mut exit: oneshot::Receiver<()>) {
         let ticker_delay = self.config.delay_config.tick_interval;
         let mut ticker = Delay::new(ticker_delay).fuse();
 
-        info!(target: "AlephBFT-member", "{:?} Runway initialized.", index);
-
         loop {
             futures::select! {
-                _ = runway_future.next() => {
-                    error!(target: "AlephBFT-member", "{:?} Runway terminated early.", index);
-                    break;
-                },
-
-                event = self.runway_facade.next_outgoing_message().fuse() => match event {
+                event = self.messages_for_network.next() => match event {
                     Some(message) => {
                         self.on_unit_message_from_units(message);
                     },
                     None => {
-                        error!(target: "AlephBFT-member", "{:?} Unit message stream from Runway closed.", index);
+                        error!(target: "AlephBFT-member", "{:?} Unit message stream from Runway closed.", self.index());
                         break;
                     },
+                },
+
+                event = self.resolved_requests.next() => match event {
+                    Some(request) => match request {
+                        Request::RequestCoord(coord) => { self.not_resolved_coords.remove(&coord); },
+                        Request::RequestParents(u_hash) => { self.not_resolved_parents.remove(&u_hash); },
+                    },
+                    None => {
+                        error!(target: "AlephBFT-member", "{:?} Resolved-requests stream from Runway closed.", self.index());
+                        break;
+                    }
                 },
 
                 event = self.unit_messages_from_network.next() => match event {
@@ -409,14 +361,9 @@ where
                         self.send_notification_to_runway(message)
                     },
                     None => {
-                        error!(target: "AlephBFT-member", "{:?} Unit message stream from network closed.", index);
+                        error!(target: "AlephBFT-member", "{:?} Unit message stream from network closed.", self.index());
                         break;
                     },
-                },
-
-                _ = network_handle.next() => {
-                    debug!(target: "AlephBFT-member", "{:?} network task terminated early.", index);
-                    break;
                 },
 
                 _ = &mut ticker => {
@@ -427,79 +374,128 @@ where
                 _ = &mut exit => break,
             }
         }
-        self.runway_facade.stop();
-        runway_future.next().await.unwrap();
-        if network_exit.send(()).is_err() {
-            debug!(target: "AlephBFT-member", "{:?} network already stopped.", index);
-        }
-        network_handle.next().await.unwrap();
-        debug!(target: "AlephBFT-member", "{:?} Member stopped.", index);
+        debug!(target: "AlephBFT-member", "{:?} Member stopped.", self.index());
     }
 
-    fn send_notification_to_runway(&mut self, message: UnitMessage<H, D, MK::Signature>) {
+    fn send_notification_to_runway(&mut self, message: UnitMessage<H, D, S>) {
         let notification = RunwayNotificationIn::from(message);
-        self.runway_facade.enqueue_notification(notification)
+        self.messages_from_network
+            .unbounded_send(notification)
+            .expect("Sender to runway with RunwayNotificationIn messages should be open")
     }
 }
 
-impl<'a, D, DP, MK, SH> Member<'a, D, DP, MK, SH>
-where
+/// Actually start the Member as an async task. It stops establishing consensus for new data items after
+/// reaching the threshold specified in [`Config::max_round`] or upon receiving a stop signal from `exit`.
+pub async fn run_session<
+    H: Hasher,
     D: Data,
-    DP: DataIO<D> + Send + 'static,
-    MK: MultiKeychain,
-    MK::Signature: Eq + PartialEq,
+    DP: DataIO<D>,
+    N: Network<H, D, MK::Signature, MK::PartialMultisignature> + 'static,
     SH: SpawnHandle,
+    MK: MultiKeychain,
+>(
+    config: Config,
+    network: N,
+    data_io: DP,
+    keybox: MK,
+    spawn_handle: SH,
+    mut exit: oneshot::Receiver<()>,
+) where
+    MK::Signature: Eq + PartialEq,
 {
-    /// Actually start the Member as an async task. It stops establishing consensus for new data items after
-    /// reaching the threshold specified in [`Config::max_round`] or upon receiving a stop signal from `exit`.
-    pub async fn run_session<
-        H: Hasher,
-        N: Network<H, D, MK::Signature, MK::PartialMultisignature> + 'static,
-    >(
-        self,
-        network: N,
-        exit: oneshot::Receiver<()>,
-    ) {
-        let index = self.config.node_ix;
-        info!(target: "AlephBFT-member", "{:?} Spawning party for a session.", index);
+    let index = config.node_ix;
+    info!(target: "AlephBFT-member", "{:?} Spawning party for a session.", index);
 
-        let (alert_messages_for_alerter, alert_messages_from_network) = mpsc::unbounded();
-        let (alert_messages_for_network, alert_messages_from_alerter) = mpsc::unbounded();
-        let (unit_messages_for_units, unit_messages_from_network) = mpsc::unbounded();
-        let (unit_messages_for_network, unit_messages_from_units) = mpsc::unbounded();
+    let (alert_messages_for_alerter, alert_messages_from_network) = mpsc::unbounded();
+    let (alert_messages_for_network, alert_messages_from_alerter) = mpsc::unbounded();
+    let (unit_messages_for_units, unit_messages_from_network) = mpsc::unbounded();
+    let (unit_messages_for_network, unit_messages_from_units) = mpsc::unbounded();
+    let (runway_messages_for_runway, runway_messages_from_network) = mpsc::unbounded();
+    let (runway_messages_for_network, runway_messages_from_runway) = mpsc::unbounded();
+    let (resolved_requests_tx, resolved_requests_rx) = mpsc::unbounded();
 
-        let network_hub = NetworkHub::new(
-            network,
-            unit_messages_from_units,
-            unit_messages_for_units,
-            alert_messages_from_alerter,
-            alert_messages_for_alerter,
-        );
+    let network_hub = NetworkHub::new(
+        network,
+        unit_messages_from_units,
+        unit_messages_for_units,
+        alert_messages_from_alerter,
+        alert_messages_for_alerter,
+    );
 
-        let runway = InitializedRunway::new(
-            self.config.clone(),
-            self.keybox.clone(),
-            self.data_io,
-            self.spawn_handle.clone(),
-            alert_messages_for_network,
-            alert_messages_from_network,
-        );
-        let (runway_facade, runway_future) = runway.start();
+    info!(target: "AlephBFT-member", "{:?} Spawning network.", index);
+    let (network_exit, exit_stream) = oneshot::channel();
+    let network_handle = spawn_handle.spawn_essential("member/network", async move {
+        let mut network_hub = network_hub;
+        network_hub.run(exit_stream).await;
+    });
+    let network_handle = into_infinite_stream(network_handle).fuse();
+    pin_mut!(network_handle);
+    info!(target: "AlephBFT-member", "{:?} Network spawned.", index);
 
-        let initialized_member = InitializedMember::new(
-            self.config,
-            self.spawn_handle,
-            runway_facade,
-            unit_messages_for_network,
-            unit_messages_from_network,
-        );
+    info!(target: "AlephBFT-member", "{:?} Initializing Runway.", index);
+    let (runway_exit, runway_stream) = oneshot::channel();
+    let runway = runway::run(
+        config.clone(),
+        keybox.clone(),
+        data_io,
+        spawn_handle.clone(),
+        alert_messages_for_network,
+        alert_messages_from_network,
+        runway_messages_from_network,
+        runway_messages_for_network,
+        resolved_requests_tx,
+        runway_stream,
+    );
+    let runway_handle = into_infinite_stream(runway).fuse();
+    pin_mut!(runway_handle);
+    info!(target: "AlephBFT-member", "{:?} Runway initialized.", index);
 
-        info!(target: "AlephBFT-member", "{:?} Running member.", index);
+    info!(target: "AlephBFT-member", "{:?} Initializing Member.", index);
+    let member = Member::new(
+        config,
+        unit_messages_for_network,
+        unit_messages_from_network,
+        runway_messages_for_runway,
+        runway_messages_from_runway,
+        resolved_requests_rx,
+    );
+    let (member_exit, exit_stream) = oneshot::channel();
+    let member_handle = member.run(exit_stream);
+    let member_handle = into_infinite_stream(member_handle).fuse();
+    pin_mut!(member_handle);
+    info!(target: "AlephBFT-member", "{:?} Member initialized.", index);
 
-        initialized_member
-            .run(runway_future, network_hub, exit)
-            .await;
+    futures::select! {
+        _ = network_handle.next() => {
+            error!(target: "AlephBFT-member", "{:?} Network-hub terminated early.", index);
+        },
 
-        info!(target: "AlephBFT-member", "{:?} Run ended.", index);
+        _ = runway_handle.next() => {
+            error!(target: "AlephBFT-member", "{:?} Runway terminated early.", index);
+        },
+
+        _ = member_handle.next() => {
+            error!(target: "AlephBFT-member", "{:?} Member terminated early.", index);
+        },
+
+        _ = &mut exit => {
+            info!(target: "AlephBFT-member", "{:?} exit channel was called.", index);
+        },
     }
+
+    if runway_exit.send(()).is_err() {
+        debug!(target: "AlephBFT-member", "{:?} Runway already stopped.", index);
+    }
+    runway_handle.next().await.unwrap();
+    if member_exit.send(()).is_err() {
+        debug!(target: "AlephBFT-member", "{:?} Member already stopped.", index);
+    }
+    member_handle.next().await.unwrap();
+    if network_exit.send(()).is_err() {
+        debug!(target: "AlephBFT-member", "{:?} Network-hub already stopped.", index);
+    }
+    network_handle.next().await.unwrap();
+
+    info!(target: "AlephBFT-member", "{:?} Run ended.", index);
 }

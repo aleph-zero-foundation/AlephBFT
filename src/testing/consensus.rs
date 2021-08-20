@@ -1,5 +1,5 @@
 use crate::{
-    consensus::Consensus,
+    consensus,
     runway::{NotificationIn, NotificationOut},
     testing::mock::{gen_config, Hasher64, HonestHub, Spawner},
     units::{ControlHash, PreUnit, Unit},
@@ -40,7 +40,7 @@ async fn agree_on_first_batch() {
         batch_rxs.push(batch_rx);
         handles.push(spawner.spawn_essential(
             "consensus",
-            Consensus::new(conf, spawner.clone(), rx, tx, batch_tx).run(exit_rx),
+            consensus::run(conf, rx, tx, batch_tx, spawner.clone(), exit_rx),
         ));
     }
 
@@ -73,7 +73,7 @@ async fn catches_wrong_control_hash() {
 
     let consensus_handle = spawner.spawn_essential(
         "consensus",
-        Consensus::new(conf, spawner.clone(), rx_in, tx_out, batch_tx).run(exit_rx),
+        consensus::run(conf, rx_in, tx_out, batch_tx, spawner.clone(), exit_rx),
     );
     let control_hash = ControlHash::new(&(vec![None; n_nodes]).into());
     let bad_pu = PreUnit::<Hasher64>::new(1.into(), 0, control_hash);

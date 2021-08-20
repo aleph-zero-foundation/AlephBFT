@@ -22,15 +22,13 @@ use std::{
 };
 
 use crate::{
-    exponential_slowdown,
+    exponential_slowdown, run_session,
     runway::{NotificationIn, NotificationOut},
     units::{Unit, UnitCoord},
     Config, DataIO as DataIOT, DelayConfig, Hasher, Index, KeyBox as KeyBoxT,
     MultiKeychain as MultiKeychainT, Network as NetworkT, NodeCount, NodeIndex, OrderedBatch,
     PartialMultisignature as PartialMultisignatureT, Recipient, Round, SpawnHandle, TaskHandle,
 };
-
-use crate::member::Member;
 
 pub fn init_log() {
     let _ = env_logger::builder()
@@ -528,7 +526,18 @@ impl MultiKeychainT for KeyBox {
     }
 }
 
-pub(crate) type HonestMember<'a> = Member<'a, Data, DataIO, KeyBox, Spawner>;
+pub(crate) async fn run_honest_member<
+    N: 'static + NetworkT<Hasher64, Data, Signature, PartialMultisignature>,
+>(
+    config: Config,
+    network: N,
+    data_io: DataIO,
+    keybox: KeyBox,
+    spawn_handle: Spawner,
+    exit: oneshot::Receiver<()>,
+) {
+    run_session(config, network, data_io, keybox, spawn_handle, exit).await
+}
 
 pub fn configure_network(
     n_members: NodeCount,
@@ -560,8 +569,15 @@ pub fn spawn_honest_member(
     let spawner_inner = spawner.clone();
     let member_task = async move {
         let keybox = KeyBox::new(n_members, node_index);
-        let member = HonestMember::new(data_io, &keybox, config, spawner_inner.clone());
-        member.run_session(network, exit_rx).await;
+        run_honest_member(
+            config,
+            network,
+            data_io,
+            keybox,
+            spawner_inner.clone(),
+            exit_rx,
+        )
+        .await
     };
     let handle = spawner.spawn_essential("member", member_task);
     (rx_batch, exit_tx, handle)

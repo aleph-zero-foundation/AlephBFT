@@ -9,7 +9,7 @@ use std::{fmt::Debug, hash::Hash as StdHash, pin::Pin};
 use crate::nodes::NodeMap;
 
 pub use config::{default_config, exponential_slowdown, Config, DelayConfig};
-pub use member::Member;
+pub use member::run_session;
 pub use network::{Network, NetworkData, Recipient};
 pub use nodes::{NodeCount, NodeIndex};
 
