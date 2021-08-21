@@ -146,7 +146,6 @@ where
 {
     config: Config,
     task_queue: BinaryHeap<ScheduledTask<H, D, S>>,
-    requested_coords: HashSet<UnitCoord>,
     not_resolved_parents: HashSet<H::Hash>,
     not_resolved_coords: HashSet<UnitCoord>,
     n_members: NodeCount,
@@ -175,7 +174,6 @@ where
         Self {
             config,
             task_queue: BinaryHeap::new(),
-            requested_coords: HashSet::new(),
             not_resolved_parents: HashSet::new(),
             not_resolved_coords: HashSet::new(),
             n_members,
@@ -196,9 +194,6 @@ where
     fn on_request_coord(&mut self, coord: UnitCoord) {
         trace!(target: "AlephBFT-member", "{:?} Dealing with missing coord notification {:?}.", self.index(), coord);
         if !self.not_resolved_coords.insert(coord) {
-            return;
-        }
-        if !self.requested_coords.insert(coord) {
             return;
         }
         let curr_time = time::Instant::now();
