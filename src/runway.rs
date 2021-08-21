@@ -200,8 +200,6 @@ where
         if let Some(su) = self.validate_unit(uu) {
             if alert {
                 // Units from alerts explicitly come from forkers, and we want them anyway.
-                let coord = su.as_signable().coord();
-                self.resolve_missing_coord(&coord);
                 self.store.add_unit(su, true);
             } else {
                 self.add_unit_to_store_unless_fork(su);
@@ -269,9 +267,6 @@ where
             // There is no point in keeping this unit in any kind of buffer.
             return;
         }
-
-        let coord = su.as_signable().coord();
-        self.resolve_missing_coord(&coord);
         self.store.add_unit(su, false);
     }
 
@@ -437,7 +432,6 @@ where
         }
         let p_hashes: Vec<H::Hash> = p_hashes_node_map.into_iter().flatten().collect();
         self.store.add_parents(u_hash, p_hashes.clone());
-        self.resolve_missing_parents(&u_hash);
         trace!(target: "AlephBFT-runway", "{:?} Succesful parents response for {:?}.", self.index(), u_hash);
         self.send_consensus_notification(NotificationIn::UnitParents(u_hash, p_hashes));
     }
@@ -501,6 +495,12 @@ where
             NotificationOut::AddedToDag(h, p_hashes) => {
                 self.store.add_parents(h, p_hashes);
                 self.resolve_missing_parents(&h);
+                let coord = self.store.unit_by_hash(&h).map(|u| u.as_signable().coord());
+                if let Some(coord) = coord {
+                    self.resolve_missing_coord(&coord)
+                } else {
+                    error!(target: "AlephBFT-runway", "{:?} A unit already added to DAG is not in our store: {:?}.", self.index(), h);
+                }
             }
         }
     }
