@@ -22,7 +22,7 @@ use log::{debug, error, info, trace, warn};
 /// Type for incoming notifications: Runway to Consensus.
 #[derive(Clone, PartialEq)]
 pub(crate) enum NotificationIn<H: Hasher> {
-    /// A notification carrying a single unit. This might come either from multicast or
+    /// A notification carrying units. This might come either from multicast or
     /// from a response to a request. This is of no importance at this layer.
     NewUnits(Vec<Unit<H>>),
     /// Response to a request to decode parents when the control hash is wrong.
