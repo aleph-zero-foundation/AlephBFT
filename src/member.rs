@@ -2,7 +2,8 @@ use crate::{
     config::Config,
     network::{NetworkHub, Recipient},
     runway::{
-        self, Request, Response, RunwayNotification, RunwayNotificationIn, RunwayNotificationOut,
+        self, Request, Response, RunwayIO, RunwayNotification, RunwayNotificationIn,
+        RunwayNotificationOut,
     },
     signed::Signature,
     units::{UncheckedSignedUnit, UnitCoord},
@@ -429,18 +430,21 @@ pub async fn run_session<
     info!(target: "AlephBFT-member", "{:?} Network spawned.", index);
 
     info!(target: "AlephBFT-member", "{:?} Initializing Runway.", index);
-    let (runway_exit, runway_stream) = oneshot::channel();
+    let (runway_exit, exit_stream) = oneshot::channel();
+    let runway_io = RunwayIO {
+        alert_messages_for_network,
+        alert_messages_from_network,
+        unit_messages_from_network: runway_messages_from_network,
+        unit_messages_for_network: runway_messages_for_network,
+        resolved_requests: resolved_requests_tx,
+        exit: exit_stream,
+    };
     let runway = runway::run(
         config.clone(),
         keybox.clone(),
         data_io,
         spawn_handle.clone(),
-        alert_messages_for_network,
-        alert_messages_from_network,
-        runway_messages_from_network,
-        runway_messages_for_network,
-        resolved_requests_tx,
-        runway_stream,
+        runway_io,
     );
     let runway_handle = into_infinite_stream(runway).fuse();
     pin_mut!(runway_handle);

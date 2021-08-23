@@ -628,22 +628,25 @@ where
     }
 }
 
+pub(crate) struct RunwayIO<H: Hasher, D: Data, MK: MultiKeychain> {
+    pub(crate) alert_messages_for_network: Sender<(
+        AlertMessage<H, D, MK::Signature, MK::PartialMultisignature>,
+        Recipient,
+    )>,
+    pub(crate) alert_messages_from_network:
+        Receiver<AlertMessage<H, D, MK::Signature, MK::PartialMultisignature>>,
+    pub(crate) unit_messages_for_network: Sender<RunwayNotificationOut<H, D, MK::Signature>>,
+    pub(crate) unit_messages_from_network: Receiver<RunwayNotificationIn<H, D, MK::Signature>>,
+    pub(crate) resolved_requests: Sender<Request<H>>,
+    pub(crate) exit: oneshot::Receiver<()>,
+}
+
 pub(crate) async fn run<H, D, MK, DP, SH>(
     config: Config,
     keychain: MK,
     data_io: DP,
     spawn_handle: SH,
-    alert_messages_for_network: Sender<(
-        AlertMessage<H, D, MK::Signature, MK::PartialMultisignature>,
-        Recipient,
-    )>,
-    alert_messages_from_network: Receiver<
-        AlertMessage<H, D, MK::Signature, MK::PartialMultisignature>,
-    >,
-    unit_messages_from_network: Receiver<RunwayNotificationIn<H, D, MK::Signature>>,
-    unit_messages_for_network: Sender<RunwayNotificationOut<H, D, MK::Signature>>,
-    resolved_requests: Sender<Request<H>>,
-    mut exit: oneshot::Receiver<()>,
+    runway_io: RunwayIO<H, D, MK>,
 ) where
     H: Hasher,
     D: Data,
@@ -664,8 +667,8 @@ pub(crate) async fn run<H, D, MK, DP, SH>(
     let (alerter_exit, exit_stream) = oneshot::channel();
     let alerter = Alerter::new(
         keychain.clone(),
-        alert_messages_for_network,
-        alert_messages_from_network,
+        runway_io.alert_messages_for_network,
+        runway_io.alert_messages_from_network,
         alert_notifications_for_units,
         alerts_from_units,
         alert_config,
@@ -703,16 +706,17 @@ pub(crate) async fn run<H, D, MK, DP, SH>(
         notifications_from_alerter,
         tx_consensus,
         rx_consensus,
-        unit_messages_from_network,
-        unit_messages_for_network,
+        unit_messages_from_network: runway_io.unit_messages_from_network,
+        unit_messages_for_network: runway_io.unit_messages_for_network,
         ordered_batch_rx,
-        resolved_requests,
+        resolved_requests: runway_io.resolved_requests,
     };
     let (runway_exit, exit_stream) = oneshot::channel();
     let runway = Runway::new(runway_config);
     let runway_handle = runway.run(exit_stream);
     let runway_handle = into_infinite_stream(runway_handle).fuse();
     pin_mut!(runway_handle);
+    let mut exit = runway_io.exit;
 
     futures::select! {
         _ = runway_handle.next() => {
