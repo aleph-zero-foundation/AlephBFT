@@ -118,27 +118,6 @@ impl<H: Hasher, D: Data, S: Signature + Eq + PartialEq> PartialOrd for Scheduled
     }
 }
 
-// TODO
-// /// A representation of a committee member responsible for establishing the consensus.
-// ///
-// /// It depends on the following objects (for more detailed description of the above obejcts, see their references):
-// /// - [`Hasher`] - an abstraction for creating identifiers for units, alerts, and other internal objects,
-// /// - [`DataIO`] - an abstraction for a component that outputs data items and allows to input ordered data items,
-// /// - [`MultiKeychain`] - an abstraction for digitally signing arbitrary data and verifying signatures,
-// /// - [`Network`] - an abstraction for a network connecting the committee members,
-// /// - [`SpawnHandle`] - an abstraction for an executor of asynchronous tasks.
-// ///
-// /// For a detailed description of the consensus implemented in Member see
-// /// [docs for devs](https://cardinal-cryptography.github.io/AlephBFT/index.html)
-// /// or the [original paper](https://arxiv.org/abs/1908.05156).
-// pub struct Member<D>
-// where
-//     D: Data,
-// {
-//     config: Config,
-//     _phantom: PhantomData<D>,
-// }
-
 struct Member<H, D, S>
 where
     H: Hasher,
@@ -381,8 +360,11 @@ where
     }
 }
 
-/// Actually start the Member as an async task. It stops establishing consensus for new data items after
+/// Starts the consensus algorithm as an async task. It stops establishing consensus for new data items after
 /// reaching the threshold specified in [`Config::max_round`] or upon receiving a stop signal from `exit`.
+/// For a detailed description of the consensus implemented by `run_session` see
+/// [docs for devs](https://cardinal-cryptography.github.io/AlephBFT/index.html)
+/// or the [original paper](https://arxiv.org/abs/1908.05156).
 pub async fn run_session<
     H: Hasher,
     D: Data,
