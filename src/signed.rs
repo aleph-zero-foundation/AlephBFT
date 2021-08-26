@@ -9,9 +9,9 @@ use std::fmt::Debug;
 /// The type used as a signature.
 ///
 /// The Signature typically does not contain the index of the node who signed the data.
-pub trait Signature: Debug + Clone + Encode + Decode + Send + Sync + 'static {}
+pub trait Signature: Debug + Clone + Encode + Decode + Send + Sync + Eq + 'static {}
 
-impl<T: Debug + Clone + Encode + Decode + Send + Sync + 'static> Signature for T {}
+impl<T: Debug + Clone + Encode + Decode + Send + Sync + Eq + 'static> Signature for T {}
 
 /// Abstraction of the signing data and verifying signatures.
 ///

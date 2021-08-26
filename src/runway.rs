@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::{
-    alerts::{Alert, AlertConfig, AlertMessage, Alerter, ForkProof, ForkingNotification},
+    alerts::{self, Alert, AlertConfig, AlertMessage, ForkProof, ForkingNotification},
     consensus,
     member::UnitMessage,
     network::Recipient,
@@ -78,11 +78,11 @@ impl<H: Hasher, D: Data, S: Signature> From<UnitMessage<H, D, S>>
     fn from(message: UnitMessage<H, D, S>) -> Self {
         match message {
             UnitMessage::NewUnit(u) => RunwayNotificationIn::NewUnit(u),
-            UnitMessage::RequestCoord(peer_id, coord) => {
-                RunwayNotificationIn::Request((Request::RequestCoord(coord), peer_id))
+            UnitMessage::RequestCoord(node_id, coord) => {
+                RunwayNotificationIn::Request((Request::RequestCoord(coord), node_id))
             }
-            UnitMessage::RequestParents(peer_id, u_hash) => {
-                RunwayNotificationIn::Request((Request::RequestParents(u_hash), peer_id))
+            UnitMessage::RequestParents(node_id, u_hash) => {
+                RunwayNotificationIn::Request((Request::RequestParents(u_hash), node_id))
             }
             UnitMessage::ResponseCoord(u) => {
                 RunwayNotificationIn::Response(Response::ResponseCoord(u))
@@ -665,18 +665,20 @@ pub(crate) async fn run<H, D, MK, DP, SH>(
         n_members: config.n_members,
     };
     let (alerter_exit, exit_stream) = oneshot::channel();
-    let alerter = Alerter::new(
-        keychain.clone(),
-        runway_io.alert_messages_for_network,
-        runway_io.alert_messages_from_network,
-        alert_notifications_for_units,
-        alerts_from_units,
-        alert_config,
-    );
-
+    let alerter_keychain = keychain.clone();
+    let alert_messages_for_network = runway_io.alert_messages_for_network;
+    let alert_messages_from_network = runway_io.alert_messages_from_network;
     let alerter_handle = spawn_handle.spawn_essential("runway/alerter", async move {
-        let mut alerter = alerter;
-        alerter.run(exit_stream).await;
+        alerts::run(
+            alerter_keychain,
+            alert_messages_for_network,
+            alert_messages_from_network,
+            alert_notifications_for_units,
+            alerts_from_units,
+            alert_config,
+            exit_stream,
+        )
+        .await;
     });
     let mut alerter_handle = into_infinite_stream(alerter_handle).fuse();
 

@@ -56,6 +56,7 @@ impl<H: Hasher, D: Data, S: Signature> UnitMessage<H, D, S> {
     }
 }
 
+#[derive(Eq, PartialEq)]
 enum Task<H: Hasher, D: Data, S: Signature> {
     // Request the unit with the given (creator, round) coordinates.
     CoordRequest(UnitCoord),
@@ -65,37 +66,15 @@ enum Task<H: Hasher, D: Data, S: Signature> {
     UnitMulticast(UncheckedSignedUnit<H, D, S>),
 }
 
-impl<H: Hasher, D: Data, S: Signature + PartialEq> PartialEq for Task<H, D, S> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Task::CoordRequest(self_coord), Task::CoordRequest(other_coord)) => {
-                self_coord.eq(other_coord)
-            }
-            (
-                Task::ParentsRequest(self_hash, self_recipient),
-                Task::ParentsRequest(other_hash, other_recipient),
-            ) => self_hash.eq(other_hash) && self_recipient.eq(other_recipient),
-            (Task::UnitMulticast(self_unit), Task::UnitMulticast(other_unit)) => {
-                self_unit.eq(other_unit)
-            }
-            _ => false,
-        }
-    }
-}
-
-impl<H: Hasher, D: Data, S: Signature + PartialEq> Eq for Task<H, D, S> {
-    fn assert_receiver_is_total_eq(&self) {}
-}
-
 #[derive(Eq, PartialEq)]
-struct ScheduledTask<H: Hasher, D: Data, S: Signature + PartialEq> {
+struct ScheduledTask<H: Hasher, D: Data, S: Signature> {
     task: Task<H, D, S>,
     scheduled_time: time::Instant,
     // The number of times the task was performed so far.
     counter: usize,
 }
 
-impl<H: Hasher, D: Data, S: Signature + Eq + PartialEq> ScheduledTask<H, D, S> {
+impl<H: Hasher, D: Data, S: Signature> ScheduledTask<H, D, S> {
     fn new(task: Task<H, D, S>, scheduled_time: time::Instant) -> Self {
         ScheduledTask {
             task,
@@ -105,14 +84,14 @@ impl<H: Hasher, D: Data, S: Signature + Eq + PartialEq> ScheduledTask<H, D, S> {
     }
 }
 
-impl<H: Hasher, D: Data, S: Signature + Eq + PartialEq> Ord for ScheduledTask<H, D, S> {
+impl<H: Hasher, D: Data, S: Signature> Ord for ScheduledTask<H, D, S> {
     fn cmp(&self, other: &Self) -> Ordering {
         // we want earlier times to come first when used in max-heap, hence the below:
         other.scheduled_time.cmp(&self.scheduled_time)
     }
 }
 
-impl<H: Hasher, D: Data, S: Signature + Eq + PartialEq> PartialOrd for ScheduledTask<H, D, S> {
+impl<H: Hasher, D: Data, S: Signature> PartialOrd for ScheduledTask<H, D, S> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
@@ -122,7 +101,7 @@ struct Member<H, D, S>
 where
     H: Hasher,
     D: Data,
-    S: Signature + Eq + PartialEq,
+    S: Signature,
 {
     config: Config,
     task_queue: BinaryHeap<ScheduledTask<H, D, S>>,
@@ -140,7 +119,7 @@ impl<H, D, S> Member<H, D, S>
 where
     H: Hasher,
     D: Data,
-    S: Signature + Eq + PartialEq,
+    S: Signature + Eq,
 {
     fn new(
         config: Config,
@@ -379,9 +358,7 @@ pub async fn run_session<
     keybox: MK,
     spawn_handle: SH,
     mut exit: oneshot::Receiver<()>,
-) where
-    MK::Signature: Eq + PartialEq,
-{
+) {
     let index = config.node_ix;
     info!(target: "AlephBFT-member", "{:?} Spawning party for a session.", index);
 
@@ -393,7 +370,7 @@ pub async fn run_session<
     let (runway_messages_for_network, runway_messages_from_runway) = mpsc::unbounded();
     let (resolved_requests_tx, resolved_requests_rx) = mpsc::unbounded();
 
-    let network_hub = NetworkHub::new(
+    let mut network_hub = NetworkHub::new(
         network,
         unit_messages_from_units,
         unit_messages_for_units,
@@ -404,7 +381,6 @@ pub async fn run_session<
     info!(target: "AlephBFT-member", "{:?} Spawning network.", index);
     let (network_exit, exit_stream) = oneshot::channel();
     let network_handle = spawn_handle.spawn_essential("member/network", async move {
-        let mut network_hub = network_hub;
         network_hub.run(exit_stream).await;
     });
     let network_handle = into_infinite_stream(network_handle).fuse();
