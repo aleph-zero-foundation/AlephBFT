@@ -9,13 +9,12 @@ use crate::{
     units::{
         ControlHash, FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore,
     },
-    utils::into_infinite_stream,
     Config, Data, DataIO, Hasher, Index, MultiKeychain, NodeCount, NodeIndex, OrderedBatch,
-    Receiver, Sender, Signature, Signed, SpawnHandle,
+    Receiver, Round, Sender, SessionId, Signature, Signed, SpawnHandle,
 };
 use futures::{
     channel::{mpsc, oneshot},
-    pin_mut, StreamExt,
+    pin_mut, FutureExt, StreamExt,
 };
 use log::{debug, error, info, trace, warn};
 
@@ -103,7 +102,9 @@ where
 {
     missing_coords: HashSet<UnitCoord>,
     missing_parents: HashSet<H::Hash>,
-    config: Config,
+    node_ix: NodeIndex,
+    session_id: SessionId,
+    n_members: NodeCount,
     threshold: NodeCount,
     store: UnitStore<'a, H, D, MK>,
     keybox: &'a MK,
@@ -119,7 +120,10 @@ where
 }
 
 struct RunwayConfig<'a, H: Hasher, D: Data, DP: DataIO<D>, MK: MultiKeychain> {
-    config: Config,
+    node_ix: NodeIndex,
+    session_id: SessionId,
+    n_members: NodeCount,
+    max_round: Round,
     keychain: &'a MK,
     data_io: DP,
     alerts_for_alerter: Sender<Alert<H, D, MK::Signature>>,
@@ -140,13 +144,12 @@ where
     DP: DataIO<D>,
 {
     fn new(config: RunwayConfig<'a, H, D, DP, MK>) -> Self {
-        let n_members = config.config.n_members;
+        let n_members = config.n_members;
         let threshold = (n_members * 2) / 3 + NodeCount(1);
-        let max_round = config.config.max_round;
+        let max_round = config.max_round;
         let store = UnitStore::new(n_members, max_round);
 
         Runway {
-            config: config.config,
             threshold,
             store,
             keybox: config.keychain,
@@ -161,11 +164,14 @@ where
             rx_consensus: config.rx_consensus,
             ordered_batch_rx: config.ordered_batch_rx,
             data_io: config.data_io,
+            node_ix: config.node_ix,
+            session_id: config.session_id,
+            n_members: config.n_members,
         }
     }
 
     fn index(&self) -> NodeIndex {
-        self.config.node_ix
+        self.node_ix
     }
 
     fn on_unit_message(&mut self, message: RunwayNotificationIn<H, D, MK::Signature>) {
@@ -174,14 +180,14 @@ where
                 trace!(target: "AlephBFT-runway", "{:?} New unit received {:?}.", self.index(), &u);
                 self.on_unit_received(u, false)
             }
-            RunwayNotification::Request((request, peer_id)) => match request {
+            RunwayNotification::Request((request, node_id)) => match request {
                 Request::RequestCoord(coord) => {
                     trace!(target: "AlephBFT-runway", "{:?} Coords request received {:?}.", self.index(), coord);
-                    self.on_request_coord(peer_id, coord)
+                    self.on_request_coord(node_id, coord)
                 }
                 Request::RequestParents(u_hash) => {
                     trace!(target: "AlephBFT-runway", "{:?} Parents request received {:?}.", self.index(), u_hash);
-                    self.on_request_parents(peer_id, u_hash)
+                    self.on_request_parents(node_id, u_hash)
                 }
             },
             RunwayNotification::Response(res) => match res {
@@ -229,7 +235,7 @@ where
             }
         };
         let full_unit = su.as_signable();
-        if full_unit.session_id() != self.config.session_id {
+        if full_unit.session_id() != self.session_id {
             // NOTE: this implies malicious behavior as the unit's session_id
             // is incompatible with session_id of the message it arrived in.
             warn!(target: "AlephBFT-runway", "{:?} A unit with incorrect session_id! {:?}", self.index(), full_unit);
@@ -239,7 +245,7 @@ where
             warn!(target: "AlephBFT-runway", "{:?} A unit with too high round {}! {:?}", self.index(), full_unit.round(), full_unit);
             return None;
         }
-        if full_unit.creator().0 >= self.config.n_members.0 {
+        if full_unit.creator().0 >= self.n_members.0 {
             warn!(target: "AlephBFT-runway", "{:?} A unit with too high creator index {}! {:?}", self.index(), full_unit.creator().0, full_unit);
             return None;
         }
@@ -275,7 +281,7 @@ where
         // NOTE: at this point we cannot validate correctness of the control hash, in principle it could be
         // just a random hash, but we still would not be able to deduce that by looking at the unit only.
         let pre_unit = su.as_signable().as_pre_unit();
-        if pre_unit.n_members() != self.config.n_members {
+        if pre_unit.n_members() != self.n_members {
             warn!(target: "AlephBFT-runway", "{:?} Unit with wrong length of parents map.", self.index());
             return false;
         }
@@ -316,22 +322,22 @@ where
         units: Vec<SignedUnit<H, D, MK>>,
     ) -> Alert<H, D, MK::Signature> {
         Alert::new(
-            self.config.node_ix,
+            self.node_ix,
             proof,
             units.into_iter().map(|signed| signed.into()).collect(),
         )
     }
 
-    fn on_request_coord(&mut self, peer_id: NodeIndex, coord: UnitCoord) {
-        debug!(target: "AlephBFT-runway", "{:?} Received fetch request for coord {:?} from {:?}.", self.index(), coord, peer_id);
+    fn on_request_coord(&mut self, node_id: NodeIndex, coord: UnitCoord) {
+        debug!(target: "AlephBFT-runway", "{:?} Received fetch request for coord {:?} from {:?}.", self.index(), coord, node_id);
         let maybe_su = (self.store.unit_by_coord(coord)).cloned();
 
         if let Some(su) = maybe_su {
-            trace!(target: "AlephBFT-runway", "{:?} Answering fetch request for coord {:?} from {:?}.", self.index(), coord, peer_id);
+            trace!(target: "AlephBFT-runway", "{:?} Answering fetch request for coord {:?} from {:?}.", self.index(), coord, node_id);
             self.unit_messages_for_network
                 .unbounded_send(RunwayNotification::Response((
                     Response::ResponseCoord(su.into()),
-                    peer_id,
+                    node_id,
                 )))
                 .expect("unit_messages_for_network channel should be open")
         } else {
@@ -339,12 +345,12 @@ where
         }
     }
 
-    fn on_request_parents(&mut self, peer_id: NodeIndex, u_hash: H::Hash) {
-        debug!(target: "AlephBFT-runway", "{:?} Received parents request for hash {:?} from {:?}.", self.index(), u_hash, peer_id);
+    fn on_request_parents(&mut self, node_id: NodeIndex, u_hash: H::Hash) {
+        debug!(target: "AlephBFT-runway", "{:?} Received parents request for hash {:?} from {:?}.", self.index(), u_hash, node_id);
 
         if let Some(p_hashes) = self.store.get_parents(u_hash) {
             let p_hashes = p_hashes.clone();
-            trace!(target: "AlephBFT-runway", "{:?} Answering parents request for hash {:?} from {:?}.", self.index(), u_hash, peer_id);
+            trace!(target: "AlephBFT-runway", "{:?} Answering parents request for hash {:?} from {:?}.", self.index(), u_hash, node_id);
             let mut full_units = Vec::new();
             for hash in p_hashes.iter() {
                 if let Some(fu) = self.store.unit_by_hash(hash) {
@@ -362,7 +368,7 @@ where
             self.unit_messages_for_network
                 .unbounded_send(RunwayNotificationOut::Response((
                     Response::ResponseParents(u_hash, full_units),
-                    peer_id,
+                    node_id,
                 )))
                 .expect("unit_messages_for_network channel should be open")
         } else {
@@ -400,8 +406,7 @@ where
             return;
         }
 
-        let mut p_hashes_node_map: NodeMap<Option<H::Hash>> =
-            NodeMap::new_with_len(self.config.n_members);
+        let mut p_hashes_node_map: NodeMap<Option<H::Hash>> = NodeMap::new_with_len(self.n_members);
         for (i, uu) in parents.into_iter().enumerate() {
             let su = match self.validate_unit(uu) {
                 None => {
@@ -454,7 +459,7 @@ where
     async fn on_create(&mut self, u: PreUnit<H>) {
         debug!(target: "AlephBFT-runway", "{:?} On create notification.", self.index());
         let data = self.data_io.get_data();
-        let full_unit = FullUnit::new(u, data, self.config.session_id);
+        let full_unit = FullUnit::new(u, data, self.session_id);
         let hash: <H as Hasher>::Hash = full_unit.hash();
         let signed_unit = Signed::sign(full_unit, self.keybox).await;
         self.store.add_unit(signed_unit.clone(), false);
@@ -531,12 +536,12 @@ where
             let notification = NotificationIn::UnitParents(u_hash, p_hashes);
             self.send_consensus_notification(notification);
         } else {
-            let peer_id = self
+            let node_id = self
                 .store
                 .unit_by_hash(&u_hash)
                 .map(|u| u.as_signable().creator());
-            let recipient = if let Some(peer_id) = peer_id {
-                Recipient::Node(peer_id)
+            let recipient = if let Some(node_id) = node_id {
+                Recipient::Node(node_id)
             } else {
                 Recipient::Everyone
             };
@@ -578,7 +583,7 @@ where
         self.send_consensus_notification(NotificationIn::NewUnits(units_to_move))
     }
 
-    pub(crate) async fn run(mut self, mut exit: oneshot::Receiver<()>) {
+    async fn run(mut self, mut exit: oneshot::Receiver<()>) {
         info!(target: "AlephBFT-runway", "{:?} Runway starting.", self.index());
 
         let index = self.index();
@@ -639,7 +644,6 @@ pub(crate) struct RunwayIO<H: Hasher, D: Data, MK: MultiKeychain> {
     pub(crate) unit_messages_for_network: Sender<RunwayNotificationOut<H, D, MK::Signature>>,
     pub(crate) unit_messages_from_network: Receiver<RunwayNotificationIn<H, D, MK::Signature>>,
     pub(crate) resolved_requests: Sender<Request<H>>,
-    pub(crate) exit: oneshot::Receiver<()>,
 }
 
 pub(crate) async fn run<H, D, MK, DP, SH>(
@@ -648,6 +652,7 @@ pub(crate) async fn run<H, D, MK, DP, SH>(
     data_io: DP,
     spawn_handle: SH,
     runway_io: RunwayIO<H, D, MK>,
+    mut exit: oneshot::Receiver<()>,
 ) where
     H: Hasher,
     D: Data,
@@ -681,7 +686,8 @@ pub(crate) async fn run<H, D, MK, DP, SH>(
         )
         .await;
     });
-    let mut alerter_handle = into_infinite_stream(alerter_handle).fuse();
+    let alerter_exit_handle = alerter_handle.shared();
+    let mut alerter_handle = alerter_exit_handle.clone().fuse();
 
     let (consensus_exit, exit_stream) = oneshot::channel();
     let consensus_config = config.clone();
@@ -697,12 +703,12 @@ pub(crate) async fn run<H, D, MK, DP, SH>(
         )
         .await
     });
-    let mut consensus_handle = into_infinite_stream(consensus_handle).fuse();
+    let consensus_exit_handle = consensus_handle.shared();
+    let mut consensus_handle = consensus_exit_handle.clone().fuse();
 
     let index = config.node_ix;
 
     let runway_config = RunwayConfig {
-        config,
         keychain: &keychain,
         data_io,
         alerts_for_alerter,
@@ -713,22 +719,25 @@ pub(crate) async fn run<H, D, MK, DP, SH>(
         unit_messages_for_network: runway_io.unit_messages_for_network,
         ordered_batch_rx,
         resolved_requests: runway_io.resolved_requests,
+        node_ix: config.node_ix,
+        session_id: config.session_id,
+        n_members: config.n_members,
+        max_round: config.max_round,
     };
     let (runway_exit, exit_stream) = oneshot::channel();
     let runway = Runway::new(runway_config);
-    let runway_handle = runway.run(exit_stream);
-    let runway_handle = into_infinite_stream(runway_handle).fuse();
+    let runway_exit_handle = runway.run(exit_stream).shared();
+    let runway_handle = runway_exit_handle.clone().fuse();
     pin_mut!(runway_handle);
-    let mut exit = runway_io.exit;
 
     futures::select! {
-        _ = runway_handle.next() => {
+        _ = runway_handle => {
             debug!(target: "AlephBFT-runway", "{:?} Runway task terminated early.", index);
         },
-        _ = alerter_handle.next() => {
+        _ = alerter_handle => {
             debug!(target: "AlephBFT-runway", "{:?} Alerter task terminated early.", index);
         },
-        _ = consensus_handle.next() => {
+        _ = consensus_handle => {
             debug!(target: "AlephBFT-runway", "{:?} Consensus task terminated early.", index);
         },
         _ = &mut exit => {},
@@ -746,9 +755,9 @@ pub(crate) async fn run<H, D, MK, DP, SH>(
         debug!(target: "AlephBFT-runway", "{:?} Consensus already stopped.", index);
     }
 
-    runway_handle.next().await.unwrap();
-    alerter_handle.next().await.unwrap();
-    consensus_handle.next().await.unwrap();
+    runway_exit_handle.await;
+    alerter_exit_handle.await.unwrap();
+    consensus_exit_handle.await.unwrap();
 
     info!(target: "AlephBFT-runway", "{:?} Runway ended.", index);
 }

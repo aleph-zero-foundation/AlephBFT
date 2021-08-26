@@ -7,7 +7,6 @@ use crate::{
     },
     signed::Signature,
     units::{UncheckedSignedUnit, UnitCoord},
-    utils::into_infinite_stream,
     Data, DataIO, Hasher, MultiKeychain, Network, NodeCount, NodeIndex, Receiver, Sender,
     SpawnHandle,
 };
@@ -383,7 +382,8 @@ pub async fn run_session<
     let network_handle = spawn_handle.spawn_essential("member/network", async move {
         network_hub.run(exit_stream).await;
     });
-    let network_handle = into_infinite_stream(network_handle).fuse();
+    let network_exit_handle = network_handle.shared();
+    let network_handle = network_exit_handle.clone().fuse();
     pin_mut!(network_handle);
     info!(target: "AlephBFT-member", "{:?} Network spawned.", index);
 
@@ -395,16 +395,17 @@ pub async fn run_session<
         unit_messages_from_network: runway_messages_from_network,
         unit_messages_for_network: runway_messages_for_network,
         resolved_requests: resolved_requests_tx,
-        exit: exit_stream,
     };
-    let runway = runway::run(
+    let runway_handle = runway::run(
         config.clone(),
         keybox.clone(),
         data_io,
         spawn_handle.clone(),
         runway_io,
+        exit_stream,
     );
-    let runway_handle = into_infinite_stream(runway).fuse();
+    let runway_exit_handle = runway_handle.shared();
+    let runway_handle = runway_exit_handle.clone().fuse();
     pin_mut!(runway_handle);
     info!(target: "AlephBFT-member", "{:?} Runway initialized.", index);
 
@@ -418,21 +419,21 @@ pub async fn run_session<
         resolved_requests_rx,
     );
     let (member_exit, exit_stream) = oneshot::channel();
-    let member_handle = member.run(exit_stream);
-    let member_handle = into_infinite_stream(member_handle).fuse();
+    let member_exit_handle = member.run(exit_stream).shared();
+    let member_handle = member_exit_handle.clone().fuse();
     pin_mut!(member_handle);
     info!(target: "AlephBFT-member", "{:?} Member initialized.", index);
 
     futures::select! {
-        _ = network_handle.next() => {
+        _ = network_handle => {
             error!(target: "AlephBFT-member", "{:?} Network-hub terminated early.", index);
         },
 
-        _ = runway_handle.next() => {
+        _ = runway_handle => {
             error!(target: "AlephBFT-member", "{:?} Runway terminated early.", index);
         },
 
-        _ = member_handle.next() => {
+        _ = member_handle => {
             error!(target: "AlephBFT-member", "{:?} Member terminated early.", index);
         },
 
@@ -444,15 +445,15 @@ pub async fn run_session<
     if runway_exit.send(()).is_err() {
         debug!(target: "AlephBFT-member", "{:?} Runway already stopped.", index);
     }
-    runway_handle.next().await.unwrap();
+    runway_exit_handle.await;
     if member_exit.send(()).is_err() {
         debug!(target: "AlephBFT-member", "{:?} Member already stopped.", index);
     }
-    member_handle.next().await.unwrap();
+    member_exit_handle.await;
     if network_exit.send(()).is_err() {
         debug!(target: "AlephBFT-member", "{:?} Network-hub already stopped.", index);
     }
-    network_handle.next().await.unwrap();
+    network_exit_handle.await.unwrap();
 
     info!(target: "AlephBFT-member", "{:?} Run ended.", index);
 }

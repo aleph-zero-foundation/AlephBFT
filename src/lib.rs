@@ -29,7 +29,6 @@ mod terminal;
 #[cfg(test)]
 pub mod testing;
 mod units;
-mod utils;
 
 /// The number of a session for which the consensus is run.
 pub type SessionId = u64;
