@@ -1,6 +1,6 @@
 use crate::{
     config::Config,
-    network::{NetworkHub, Recipient},
+    network::{self, Recipient},
     runway::{
         self, Request, Response, RunwayIO, RunwayNotification, RunwayNotificationIn,
         RunwayNotificationOut,
@@ -369,18 +369,19 @@ pub async fn run_session<
     let (runway_messages_for_network, runway_messages_from_runway) = mpsc::unbounded();
     let (resolved_requests_tx, resolved_requests_rx) = mpsc::unbounded();
 
-    let mut network_hub = NetworkHub::new(
-        network,
-        unit_messages_from_units,
-        unit_messages_for_units,
-        alert_messages_from_alerter,
-        alert_messages_for_alerter,
-    );
-
     info!(target: "AlephBFT-member", "{:?} Spawning network.", index);
     let (network_exit, exit_stream) = oneshot::channel();
+
     let network_handle = spawn_handle.spawn_essential("member/network", async move {
-        network_hub.run(exit_stream).await;
+        network::run(
+            network,
+            unit_messages_from_units,
+            unit_messages_for_units,
+            alert_messages_from_alerter,
+            alert_messages_for_alerter,
+            exit_stream,
+        )
+        .await
     });
     let network_exit_handle = network_handle.shared();
     let network_handle = network_exit_handle.clone().fuse();

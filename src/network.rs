@@ -109,7 +109,7 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> NetworkData<H,
     }
 }
 
-pub(crate) struct NetworkHub<
+struct NetworkHub<
     H: Hasher,
     D: Data,
     S: Signature,
@@ -126,7 +126,7 @@ pub(crate) struct NetworkHub<
 impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature, N: Network<H, D, S, MS>>
     NetworkHub<H, D, S, MS, N>
 {
-    pub fn new(
+    fn new(
         network: N,
         units_to_send: Receiver<(UnitMessage<H, D, S>, Recipient)>,
         units_received: Sender<UnitMessage<H, D, S>>,
@@ -164,7 +164,7 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature, N: Network<H, 
         }
     }
 
-    pub async fn run(&mut self, mut exit: oneshot::Receiver<()>) {
+    async fn run(mut self, mut exit: oneshot::Receiver<()>) {
         loop {
             use NetworkDataInner::*;
             futures::select! {
@@ -193,6 +193,31 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature, N: Network<H, 
             }
         }
     }
+}
+
+pub(crate) async fn run<
+    H: Hasher,
+    D: Data,
+    S: Signature,
+    MS: PartialMultisignature,
+    N: Network<H, D, S, MS>,
+>(
+    network: N,
+    units_to_send: Receiver<(UnitMessage<H, D, S>, Recipient)>,
+    units_received: Sender<UnitMessage<H, D, S>>,
+    alerts_to_send: Receiver<(AlertMessage<H, D, S, MS>, Recipient)>,
+    alerts_received: Sender<AlertMessage<H, D, S, MS>>,
+    exit: oneshot::Receiver<()>,
+) {
+    NetworkHub::new(
+        network,
+        units_to_send,
+        units_received,
+        alerts_to_send,
+        alerts_received,
+    )
+    .run(exit)
+    .await
 }
 
 #[cfg(test)]
