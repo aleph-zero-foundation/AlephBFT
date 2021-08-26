@@ -93,7 +93,8 @@ impl<H: Hasher, D: Data, S: Signature> From<UnitMessage<H, D, S>>
         }
     }
 }
-pub(crate) struct Runway<H, D, MK, DP>
+
+struct Runway<'a, H, D, MK, DP>
 where
     H: Hasher,
     D: Data,
@@ -104,8 +105,8 @@ where
     missing_parents: HashSet<H::Hash>,
     config: Config,
     threshold: NodeCount,
-    store: UnitStore<H, D, MK>,
-    keybox: MK,
+    store: UnitStore<'a, H, D, MK>,
+    keybox: &'a MK,
     alerts_for_alerter: Sender<Alert<H, D, MK::Signature>>,
     notifications_from_alerter: Receiver<ForkingNotification<H, D, MK::Signature>>,
     unit_messages_from_network: Receiver<RunwayNotificationIn<H, D, MK::Signature>>,
@@ -117,9 +118,9 @@ where
     data_io: DP,
 }
 
-struct RunwayConfig<H: Hasher, D: Data, DP: DataIO<D>, MK: MultiKeychain> {
+struct RunwayConfig<'a, H: Hasher, D: Data, DP: DataIO<D>, MK: MultiKeychain> {
     config: Config,
-    keychain: MK,
+    keychain: &'a MK,
     data_io: DP,
     alerts_for_alerter: Sender<Alert<H, D, MK::Signature>>,
     notifications_from_alerter: Receiver<ForkingNotification<H, D, MK::Signature>>,
@@ -131,14 +132,14 @@ struct RunwayConfig<H: Hasher, D: Data, DP: DataIO<D>, MK: MultiKeychain> {
     resolved_requests: Sender<Request<H>>,
 }
 
-impl<H, D, MK, DP> Runway<H, D, MK, DP>
+impl<'a, H, D, MK, DP> Runway<'a, H, D, MK, DP>
 where
     H: Hasher,
     D: Data,
     MK: MultiKeychain,
     DP: DataIO<D>,
 {
-    fn new(config: RunwayConfig<H, D, DP, MK>) -> Self {
+    fn new(config: RunwayConfig<'a, H, D, DP, MK>) -> Self {
         let n_members = config.config.n_members;
         let threshold = (n_members * 2) / 3 + NodeCount(1);
         let max_round = config.config.max_round;
@@ -219,8 +220,8 @@ where
     fn validate_unit(
         &self,
         uu: UncheckedSignedUnit<H, D, MK::Signature>,
-    ) -> Option<SignedUnit<H, D, MK>> {
-        let su = match uu.check(&self.keybox) {
+    ) -> Option<SignedUnit<'a, H, D, MK>> {
+        let su = match uu.check(self.keybox) {
             Ok(su) => su,
             Err(uu) => {
                 warn!(target: "AlephBFT-runway", "{:?} Wrong signature received {:?}.", self.index(), &uu);
@@ -249,7 +250,7 @@ where
         Some(su)
     }
 
-    fn add_unit_to_store_unless_fork(&mut self, su: SignedUnit<H, D, MK>) {
+    fn add_unit_to_store_unless_fork(&mut self, su: SignedUnit<'a, H, D, MK>) {
         let full_unit = su.as_signable();
         trace!(target: "AlephBFT-member", "{:?} Adding member unit to store {:?}", self.index(), full_unit);
         if self.store.is_forker(full_unit.creator()) {
@@ -455,7 +456,7 @@ where
         let data = self.data_io.get_data();
         let full_unit = FullUnit::new(u, data, self.config.session_id);
         let hash: <H as Hasher>::Hash = full_unit.hash();
-        let signed_unit: Signed<FullUnit<H, D>, MK> = Signed::sign(full_unit, &self.keybox).await;
+        let signed_unit = Signed::sign(full_unit, self.keybox).await;
         self.store.add_unit(signed_unit.clone(), false);
 
         trace!(target: "AlephBFT-runway", "{:?} Sending a unit {:?}.", self.index(), hash);
@@ -702,7 +703,7 @@ pub(crate) async fn run<H, D, MK, DP, SH>(
 
     let runway_config = RunwayConfig {
         config,
-        keychain,
+        keychain: &keychain,
         data_io,
         alerts_for_alerter,
         notifications_from_alerter,

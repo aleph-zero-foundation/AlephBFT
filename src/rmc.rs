@@ -174,21 +174,21 @@ impl<T: Send + Sync + Clone> TaskScheduler<T> for DoublingDelayScheduler<T> {
 ///
 /// We refer to the documentation https://cardinal-cryptography.github.io/AlephBFT/reliable_broadcast.html
 /// for a high-level description of this protocol and how it is used for fork alerts.
-pub struct ReliableMulticast<H: Signable + Hash, MK: MultiKeychain> {
-    hash_states: HashMap<H, PartiallyMultisigned<H, MK>>,
+pub struct ReliableMulticast<'a, H: Signable + Hash, MK: MultiKeychain> {
+    hash_states: HashMap<H, PartiallyMultisigned<'a, H, MK>>,
     network_rx: UnboundedReceiver<Message<H, MK::Signature, MK::PartialMultisignature>>,
     network_tx: UnboundedSender<Message<H, MK::Signature, MK::PartialMultisignature>>,
-    keychain: MK,
+    keychain: &'a MK,
     scheduler: Box<dyn TaskScheduler<Task<H, MK>>>,
-    multisigned_hashes_tx: UnboundedSender<Multisigned<H, MK>>,
-    multisigned_hashes_rx: UnboundedReceiver<Multisigned<H, MK>>,
+    multisigned_hashes_tx: UnboundedSender<Multisigned<'a, H, MK>>,
+    multisigned_hashes_rx: UnboundedReceiver<Multisigned<'a, H, MK>>,
 }
 
-impl<H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMulticast<H, MK> {
+impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMulticast<'a, H, MK> {
     pub fn new(
         network_rx: UnboundedReceiver<Message<H, MK::Signature, MK::PartialMultisignature>>,
         network_tx: UnboundedSender<Message<H, MK::Signature, MK::PartialMultisignature>>,
-        keychain: MK,
+        keychain: &'a MK,
         //kept for compatibility
         _node_count: NodeCount,
         scheduler: impl TaskScheduler<Task<H, MK>> + 'static,
@@ -208,7 +208,7 @@ impl<H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMultica
     /// Initiate a new instance of RMC for `hash`.
     pub async fn start_rmc(&mut self, hash: H) {
         debug!(target: "AlephBFT-rmc", "starting rmc for {:?}", hash);
-        let signed_hash = Signed::sign_with_index(hash, &self.keychain).await;
+        let signed_hash = Signed::sign_with_index(hash, self.keychain).await;
 
         let message = Message::SignedHash(signed_hash.into_unchecked());
         self.handle_message(message.clone());
@@ -217,7 +217,7 @@ impl<H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMultica
         self.scheduler.add_task(task);
     }
 
-    fn on_complete_multisignature(&mut self, multisigned: Multisigned<H, MK>) {
+    fn on_complete_multisignature(&mut self, multisigned: Multisigned<'a, H, MK>) {
         let hash = multisigned.as_signable().clone();
         self.hash_states.insert(
             hash,
@@ -240,7 +240,7 @@ impl<H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMultica
             return;
         }
         match message {
-            Message::MultisignedHash(unchecked) => match unchecked.check_multi(&self.keychain) {
+            Message::MultisignedHash(unchecked) => match unchecked.check_multi(self.keychain) {
                 Ok(multisigned) => {
                     self.on_complete_multisignature(multisigned);
                 }
@@ -249,7 +249,7 @@ impl<H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMultica
                 }
             },
             Message::SignedHash(unchecked) => {
-                let signed_hash = match unchecked.check(&self.keychain) {
+                let signed_hash = match unchecked.check(self.keychain) {
                     Ok(signed_hash) => signed_hash,
                     Err(_) => {
                         warn!(target: "AlephBFT-rmc", "Received a hash with a bad signature");
@@ -258,15 +258,15 @@ impl<H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMultica
                 };
 
                 let new_state = match self.hash_states.remove(&hash) {
-                    None => signed_hash.into_partially_multisigned(&self.keychain),
-                    Some(partial) => partial.add_signature(signed_hash, &self.keychain),
+                    None => signed_hash.into_partially_multisigned(self.keychain),
+                    Some(partial) => partial.add_signature(signed_hash, self.keychain),
                 };
                 match new_state {
                     PartiallyMultisigned::Complete { multisigned } => {
                         self.on_complete_multisignature(multisigned)
                     }
                     incomplete => {
-                        self.hash_states.insert(hash, incomplete);
+                        self.hash_states.insert(hash.clone(), incomplete);
                     }
                 }
             }
@@ -281,7 +281,7 @@ impl<H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMultica
     }
 
     /// Fetches final multisignature.
-    pub fn get_multisigned(&self, hash: &H) -> Option<Multisigned<H, MK>> {
+    pub fn get_multisigned(&self, hash: &H) -> Option<Multisigned<'a, H, MK>> {
         match self.hash_states.get(hash)? {
             PartiallyMultisigned::Complete { multisigned } => Some(multisigned.clone()),
             _ => None,
@@ -289,7 +289,7 @@ impl<H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMultica
     }
 
     /// Perform underlying tasks until the multisignature for the hash of this instance is collected.
-    pub async fn next_multisigned_hash(&mut self) -> Multisigned<H, MK> {
+    pub async fn next_multisigned_hash(&mut self) -> Multisigned<'a, H, MK> {
         loop {
             futures::select! {
                 multisigned_hash = self.multisigned_hashes_rx.next() => {

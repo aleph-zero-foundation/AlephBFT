@@ -27,7 +27,7 @@ struct MaliciousMember<'a> {
     forking_round: Round,
     keybox: &'a KeyBox,
     network: Network,
-    unit_store: HashMap<UnitCoord, SignedUnit<Hasher64, Data, KeyBox>>,
+    unit_store: HashMap<UnitCoord, SignedUnit<'a, Hasher64, Data, KeyBox>>,
 }
 
 impl<'a> MaliciousMember<'a> {
@@ -138,7 +138,7 @@ impl<'a> MaliciousMember<'a> {
         false
     }
 
-    fn on_unit_received(&mut self, su: SignedUnit<Hasher64, Data, KeyBox>) {
+    fn on_unit_received(&mut self, su: SignedUnit<'a, Hasher64, Data, KeyBox>) {
         let full_unit = su.as_signable();
         let coord: UnitCoord = full_unit.coord();
         // We don't care if we overwrite something as long as we keep at least one version of a unit

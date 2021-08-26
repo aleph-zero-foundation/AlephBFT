@@ -5,7 +5,7 @@ use crate::{
 use async_trait::async_trait;
 use codec::{Decode, Encode, Error, Input, Output};
 use log::warn;
-use std::fmt::Debug;
+use std::{fmt::Debug, marker::PhantomData};
 /// The type used as a signature.
 ///
 /// The Signature typically does not contain the index of the node who signed the data.
@@ -82,7 +82,7 @@ impl<T: AsRef<[u8]> + Clone> Signable for T {
 /// A pair consisting of an instance of the `Signable` trait and an (arbitrary) signature.
 ///
 /// The method `[UncheckedSigned::check]` can be used to upgrade this `struct` to
-/// `[Signed<T, KB>]` which ensures that the signature matches the signed object.
+/// `[Signed<'a, T, KB>]` which ensures that the signature matches the signed object.
 #[derive(Clone, Debug, Decode, Encode, PartialEq, Eq, Hash)]
 pub struct UncheckedSigned<T: Signable, S: Signature> {
     signable: T,
@@ -144,7 +144,10 @@ impl<T: Signable + Index, S: Signature> UncheckedSigned<T, S> {
         if !key_box.verify(self.signable.hash().as_ref(), &self.signature, index) {
             return Err(SignatureError { unchecked: self });
         }
-        Ok(Signed { unchecked: self })
+        Ok(Signed {
+            unchecked: self,
+            marker: PhantomData,
+        })
     }
 }
 
@@ -163,7 +166,10 @@ impl<T: Signable, S: PartialMultisignature> UncheckedSigned<T, S> {
         if !(keychain.is_complete(self.signable.hash().as_ref(), &self.signature)) {
             return Err(SignatureError { unchecked: self });
         }
-        Ok(Multisigned { unchecked: self })
+        Ok(Multisigned {
+            unchecked: self,
+            marker: PhantomData,
+        })
     }
 }
 
@@ -183,22 +189,27 @@ impl<T: Signable, S: Signature> From<UncheckedSigned<Indexed<T>, S>> for Uncheck
 }
 
 /// A correctly signed object of type `T`.
+///
+/// The correctness is guaranteed by storing a (phantom) reference to the `KeyBox` that verified
+/// the signature.
 #[derive(Debug)]
-pub struct Signed<T: Signable + Index, KB: KeyBox> {
+pub struct Signed<'a, T: Signable + Index, KB: KeyBox> {
     unchecked: UncheckedSigned<T, KB::Signature>,
+    marker: PhantomData<&'a KB>,
 }
 
-impl<'a, T: Signable + Clone + Index, KB: KeyBox> Clone for Signed<T, KB> {
+impl<'a, T: Signable + Clone + Index, KB: KeyBox> Clone for Signed<'a, T, KB> {
     fn clone(&self) -> Self {
         Signed {
             unchecked: self.unchecked.clone(),
+            marker: PhantomData,
         }
     }
 }
 
-impl<'a, T: Signable + Index, KB: KeyBox> Signed<T, KB> {
+impl<'a, T: Signable + Index, KB: KeyBox> Signed<'a, T, KB> {
     /// Create a signed object from a signable. The index of `signable` must match the index of the `key_box`.
-    pub async fn sign(signable: T, key_box: &'a KB) -> Signed<T, KB> {
+    pub async fn sign(signable: T, key_box: &'a KB) -> Signed<'a, T, KB> {
         assert_eq!(signable.index(), key_box.index());
         let signature = key_box.sign(signable.hash().as_ref()).await;
         Signed {
@@ -206,6 +217,7 @@ impl<'a, T: Signable + Index, KB: KeyBox> Signed<T, KB> {
                 signable,
                 signature,
             },
+            marker: PhantomData,
         }
     }
 
@@ -219,17 +231,17 @@ impl<'a, T: Signable + Index, KB: KeyBox> Signed<T, KB> {
     }
 }
 
-impl<'a, T: Signable, KB: KeyBox> Signed<Indexed<T>, KB> {
+impl<'a, T: Signable, KB: KeyBox> Signed<'a, Indexed<T>, KB> {
     /// Create a signed object from a signable. The index is added based on the index of the `key_box`.
-    pub async fn sign_with_index(signable: T, key_box: &'a KB) -> Signed<Indexed<T>, KB> {
+    pub async fn sign_with_index(signable: T, key_box: &'a KB) -> Signed<'a, Indexed<T>, KB> {
         Signed::sign(Indexed::new(signable, key_box.index()), key_box).await
     }
 }
 
-impl<'a, T: Signable, MK: MultiKeychain> Signed<Indexed<T>, MK> {
+impl<'a, T: Signable, MK: MultiKeychain> Signed<'a, Indexed<T>, MK> {
     /// Transform a singly signed object into a partially multisigned consisting of just the signed object.
     /// Note that depending on the setup, it may yield a complete signature.
-    pub fn into_partially_multisigned(self, keychain: &'a MK) -> PartiallyMultisigned<T, MK> {
+    pub fn into_partially_multisigned(self, keychain: &'a MK) -> PartiallyMultisigned<'a, T, MK> {
         let multisignature =
             keychain.from_signature(&self.unchecked.signature, self.unchecked.signable.index);
         let unchecked = UncheckedSigned {
@@ -238,7 +250,10 @@ impl<'a, T: Signable, MK: MultiKeychain> Signed<Indexed<T>, MK> {
         };
         if keychain.is_complete(unchecked.signable.hash().as_ref(), &unchecked.signature) {
             PartiallyMultisigned::Complete {
-                multisigned: Multisigned { unchecked },
+                multisigned: Multisigned {
+                    unchecked,
+                    marker: PhantomData,
+                },
             }
         } else {
             PartiallyMultisigned::Incomplete { unchecked }
@@ -246,8 +261,10 @@ impl<'a, T: Signable, MK: MultiKeychain> Signed<Indexed<T>, MK> {
     }
 }
 
-impl<T: Signable + Index, KB: KeyBox> From<Signed<T, KB>> for UncheckedSigned<T, KB::Signature> {
-    fn from(signed: Signed<T, KB>) -> Self {
+impl<'a, T: Signable + Index, KB: KeyBox> From<Signed<'a, T, KB>>
+    for UncheckedSigned<T, KB::Signature>
+{
+    fn from(signed: Signed<'a, T, KB>) -> Self {
         signed.into_unchecked()
     }
 }
@@ -259,7 +276,7 @@ impl<T: Signable + Index, KB: KeyBox> From<Signed<T, KB>> for UncheckedSigned<T,
 /// implement the [`Index`] trait, it should use the `Signed::sign_with_index` method which will
 /// use this wrapper transparently. Note that in the implementation of `Signable` for `Indexed<T>`,
 /// the hash is the hash of the underlying data `T`. Therefore, instances of the type
-/// [`Signed<Indexed<T>, MK>`] can be aggregated into `Multisigned<'a, T, MK>`
+/// [`Signed<'a, Indexed<T>, MK>`] can be aggregated into `Multisigned<'a, T, MK>`
 #[derive(Clone, Encode, Decode, Debug, PartialEq, Eq, Hash)]
 pub struct Indexed<T: Signable> {
     signable: T,
@@ -292,16 +309,17 @@ impl<T: Signable> Index for Indexed<T> {
 
 /// Signable data together with a complete multisignature.
 ///
-/// An instance of `Multisigned<T: Signable, MK: MultiKeychain>` consists of a data of type `T`
+/// An instance of `Multisigned<'a, T: Signable, MK: MultiKeychain>` consists of a data of type `T`
 /// together with a multisignature which is valid and complete according to a multikeychain
 /// reference `&'a MK`. The lifetime parameter ensures that the data with a multisignature do not
 /// outlive the session.
 #[derive(Debug)]
-pub struct Multisigned<T: Signable, MK: MultiKeychain> {
+pub struct Multisigned<'a, T: Signable, MK: MultiKeychain> {
     unchecked: UncheckedSigned<T, MK::PartialMultisignature>,
+    marker: PhantomData<&'a MK>,
 }
 
-impl<'a, T: Signable, MK: MultiKeychain> Multisigned<T, MK> {
+impl<'a, T: Signable, MK: MultiKeychain> Multisigned<'a, T, MK> {
     /// Get a reference to the multisigned object.
     pub fn as_signable(&self) -> &T {
         &self.unchecked.signable
@@ -312,25 +330,26 @@ impl<'a, T: Signable, MK: MultiKeychain> Multisigned<T, MK> {
     }
 }
 
-impl<'a, T: Signable, MK: MultiKeychain> From<Multisigned<T, MK>>
+impl<'a, T: Signable, MK: MultiKeychain> From<Multisigned<'a, T, MK>>
     for UncheckedSigned<T, MK::PartialMultisignature>
 {
-    fn from(signed: Multisigned<T, MK>) -> Self {
+    fn from(signed: Multisigned<'a, T, MK>) -> Self {
         signed.into_unchecked()
     }
 }
 
-impl<'a, T: Signable + Clone, MK: MultiKeychain> Clone for Multisigned<T, MK> {
+impl<'a, T: Signable + Clone, MK: MultiKeychain> Clone for Multisigned<'a, T, MK> {
     fn clone(&self) -> Self {
         Multisigned {
             unchecked: self.unchecked.clone(),
+            marker: self.marker,
         }
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct IncompleteMultisignatureError<T: Signable, MK: MultiKeychain> {
-    partial: PartiallyMultisigned<T, MK>,
+pub(crate) struct IncompleteMultisignatureError<'a, T: Signable, MK: MultiKeychain> {
+    partial: PartiallyMultisigned<'a, T, MK>,
 }
 
 /// Signable data together with a valid partial multisignature.
@@ -339,18 +358,18 @@ pub(crate) struct IncompleteMultisignatureError<T: Signable, MK: MultiKeychain> 
 /// If the multisignature is complete, you can get [`Multisigned`] by pattern matching
 /// against the variant [`PartiallyMultisigned::Complete`].
 #[derive(Debug)]
-pub enum PartiallyMultisigned<T: Signable, MK: MultiKeychain> {
+pub enum PartiallyMultisigned<'a, T: Signable, MK: MultiKeychain> {
     Incomplete {
         unchecked: UncheckedSigned<T, MK::PartialMultisignature>,
     },
     Complete {
-        multisigned: Multisigned<T, MK>,
+        multisigned: Multisigned<'a, T, MK>,
     },
 }
 
-impl<'a, T: Signable, MK: MultiKeychain> PartiallyMultisigned<T, MK> {
+impl<'a, T: Signable, MK: MultiKeychain> PartiallyMultisigned<'a, T, MK> {
     /// Create a partially multisigned object.
-    pub async fn sign(signable: T, keychain: &'a MK) -> PartiallyMultisigned<T, MK> {
+    pub async fn sign(signable: T, keychain: &'a MK) -> PartiallyMultisigned<'a, T, MK> {
         Signed::sign_with_index(signable, keychain)
             .await
             .into_partially_multisigned(keychain)
@@ -381,7 +400,7 @@ impl<'a, T: Signable, MK: MultiKeychain> PartiallyMultisigned<T, MK> {
     }
 
     /// Adds a signature and checks if multisignature is complete.
-    pub fn add_signature(self, signed: Signed<Indexed<T>, MK>, keychain: &'a MK) -> Self {
+    pub fn add_signature(self, signed: Signed<'a, Indexed<T>, MK>, keychain: &'a MK) -> Self {
         if self.as_signable().hash().as_ref() != signed.as_signable().hash().as_ref() {
             warn!(target: "AlephBFT-signed", "Tried to add a signature of a different object");
             return self;
@@ -393,7 +412,10 @@ impl<'a, T: Signable, MK: MultiKeychain> PartiallyMultisigned<T, MK> {
                     .add_signature(&signed.unchecked.signature, signed.unchecked.signable.index);
                 if keychain.is_complete(unchecked.signable.hash().as_ref(), &unchecked.signature) {
                     PartiallyMultisigned::Complete {
-                        multisigned: Multisigned { unchecked },
+                        multisigned: Multisigned {
+                            unchecked,
+                            marker: PhantomData,
+                        },
                     }
                 } else {
                     PartiallyMultisigned::Incomplete { unchecked }
