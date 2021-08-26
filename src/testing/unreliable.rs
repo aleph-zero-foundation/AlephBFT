@@ -1,7 +1,4 @@
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 
 use crate::{
     member::UnitMessage,
@@ -12,6 +9,7 @@ use crate::{
     NodeCount, NodeIndex, Round, SpawnHandle,
 };
 use futures::StreamExt;
+use parking_lot::Mutex;
 
 struct CorruptPacket {
     recipient: NodeIndex,
@@ -38,7 +36,7 @@ struct NoteRequest {
     sender: NodeIndex,
     creator: NodeIndex,
     round: Round,
-    requested: Arc<AtomicBool>,
+    requested: Arc<Mutex<bool>>,
 }
 
 impl NetworkHook for NoteRequest {
@@ -48,7 +46,7 @@ impl NetworkHook for NoteRequest {
         if sender == self.sender {
             if let crate::NetworkData(Units(RequestCoord(_, co))) = data {
                 if co.round() == self.round && co.creator() == self.creator {
-                    self.requested.store(true, Ordering::Relaxed);
+                    *self.requested.lock() = true;
                 }
             }
         }
@@ -71,7 +69,7 @@ async fn request_missing_coord() {
         creator: censoring_node,
         round: censoring_round,
     });
-    let requested = Arc::new(AtomicBool::new(false));
+    let requested = Arc::new(Mutex::new(false));
     net_hub.add_hook(NoteRequest {
         sender: censored_node,
         creator: censoring_node,
@@ -113,5 +111,5 @@ async fn request_missing_coord() {
         let _ = handle.await;
     }
 
-    assert!(requested.load(Ordering::Relaxed))
+    assert!(*requested.lock())
 }
