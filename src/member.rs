@@ -119,7 +119,7 @@ impl<H, D, S> Member<H, D, S>
 where
     H: Hasher,
     D: Data,
-    S: Signature + Eq,
+    S: Signature,
 {
     fn new(
         config: Config,
