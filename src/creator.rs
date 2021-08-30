@@ -136,6 +136,7 @@ impl<H: Hasher> Creator<H> {
                 self.add_unit(u.round(), u.creator(), u.hash());
             } else {
                 warn!(target: "AlephBFT-creator", "{:?} get error as result from channel with parents.", self.node_ix);
+                return;
             }
         }
     }
