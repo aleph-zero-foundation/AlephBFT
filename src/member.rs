@@ -13,6 +13,7 @@ use crate::{
 use codec::{Decode, Encode};
 use futures::{
     channel::{mpsc, oneshot},
+    future::FusedFuture,
     pin_mut, FutureExt, StreamExt,
 };
 use futures_timer::Delay;
@@ -383,8 +384,7 @@ pub async fn run_session<
         )
         .await
     });
-    let network_exit_handle = network_handle.shared();
-    let network_handle = network_exit_handle.clone().fuse();
+    let network_handle = network_handle.fuse();
     pin_mut!(network_handle);
     info!(target: "AlephBFT-member", "{:?} Network spawned.", index);
 
@@ -405,8 +405,7 @@ pub async fn run_session<
         runway_io,
         exit_stream,
     );
-    let runway_exit_handle = runway_handle.shared();
-    let runway_handle = runway_exit_handle.clone().fuse();
+    let runway_handle = runway_handle.fuse();
     pin_mut!(runway_handle);
     info!(target: "AlephBFT-member", "{:?} Runway initialized.", index);
 
@@ -420,8 +419,7 @@ pub async fn run_session<
         resolved_requests_rx,
     );
     let (member_exit, exit_stream) = oneshot::channel();
-    let member_exit_handle = member.run(exit_stream).shared();
-    let member_handle = member_exit_handle.clone().fuse();
+    let member_handle = member.run(exit_stream).fuse();
     pin_mut!(member_handle);
     info!(target: "AlephBFT-member", "{:?} Member initialized.", index);
 
@@ -446,15 +444,21 @@ pub async fn run_session<
     if runway_exit.send(()).is_err() {
         debug!(target: "AlephBFT-member", "{:?} Runway already stopped.", index);
     }
-    runway_exit_handle.await;
+    if !runway_handle.is_terminated() {
+        runway_handle.await;
+    }
     if member_exit.send(()).is_err() {
         debug!(target: "AlephBFT-member", "{:?} Member already stopped.", index);
     }
-    member_exit_handle.await;
+    if !member_handle.is_terminated() {
+        member_handle.await;
+    }
     if network_exit.send(()).is_err() {
         debug!(target: "AlephBFT-member", "{:?} Network-hub already stopped.", index);
     }
-    network_exit_handle.await.unwrap();
+    if !network_handle.is_terminated() {
+        network_handle.await.unwrap();
+    }
 
     info!(target: "AlephBFT-member", "{:?} Run ended.", index);
 }

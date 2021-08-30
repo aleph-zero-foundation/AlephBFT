@@ -14,6 +14,7 @@ use crate::{
 };
 use futures::{
     channel::{mpsc, oneshot},
+    future::FusedFuture,
     pin_mut, FutureExt, StreamExt,
 };
 use log::{debug, error, info, trace, warn};
@@ -686,8 +687,7 @@ pub(crate) async fn run<H, D, MK, DP, SH>(
         )
         .await;
     });
-    let alerter_exit_handle = alerter_handle.shared();
-    let mut alerter_handle = alerter_exit_handle.clone().fuse();
+    let mut alerter_handle = alerter_handle.fuse();
 
     let (consensus_exit, exit_stream) = oneshot::channel();
     let consensus_config = config.clone();
@@ -703,8 +703,7 @@ pub(crate) async fn run<H, D, MK, DP, SH>(
         )
         .await
     });
-    let consensus_exit_handle = consensus_handle.shared();
-    let mut consensus_handle = consensus_exit_handle.clone().fuse();
+    let mut consensus_handle = consensus_handle.fuse();
 
     let index = config.node_ix;
 
@@ -726,8 +725,7 @@ pub(crate) async fn run<H, D, MK, DP, SH>(
     };
     let (runway_exit, exit_stream) = oneshot::channel();
     let runway = Runway::new(runway_config);
-    let runway_exit_handle = runway.run(exit_stream).shared();
-    let runway_handle = runway_exit_handle.clone().fuse();
+    let runway_handle = runway.run(exit_stream).fuse();
     pin_mut!(runway_handle);
 
     futures::select! {
@@ -755,9 +753,15 @@ pub(crate) async fn run<H, D, MK, DP, SH>(
         debug!(target: "AlephBFT-runway", "{:?} Consensus already stopped.", index);
     }
 
-    runway_exit_handle.await;
-    alerter_exit_handle.await.unwrap();
-    consensus_exit_handle.await.unwrap();
+    if !runway_handle.is_terminated() {
+        runway_handle.await;
+    }
+    if !alerter_handle.is_terminated() {
+        alerter_handle.await.unwrap();
+    }
+    if !consensus_handle.is_terminated() {
+        consensus_handle.await.unwrap();
+    }
 
     info!(target: "AlephBFT-runway", "{:?} Runway ended.", index);
 }
