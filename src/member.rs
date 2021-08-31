@@ -108,8 +108,8 @@ where
     n_members: NodeCount,
     unit_messages_for_network: Sender<(UnitMessage<H, D, S>, Recipient)>,
     unit_messages_from_network: Receiver<UnitMessage<H, D, S>>,
-    messages_from_network: Sender<RunwayNotificationIn<H, D, S>>,
-    messages_for_network: Receiver<RunwayNotificationOut<H, D, S>>,
+    notifications_for_runway: Sender<RunwayNotificationIn<H, D, S>>,
+    notifications_from_runway: Receiver<RunwayNotificationOut<H, D, S>>,
     resolved_requests: Receiver<Request<H>>,
 }
 
@@ -123,8 +123,8 @@ where
         config: Config,
         unit_messages_for_network: Sender<(UnitMessage<H, D, S>, Recipient)>,
         unit_messages_from_network: Receiver<UnitMessage<H, D, S>>,
-        messages_from_network: Sender<RunwayNotificationIn<H, D, S>>,
-        messages_for_network: Receiver<RunwayNotificationOut<H, D, S>>,
+        notifications_for_runway: Sender<RunwayNotificationIn<H, D, S>>,
+        notifications_from_runway: Receiver<RunwayNotificationOut<H, D, S>>,
         resolved_requests: Receiver<Request<H>>,
     ) -> Self {
         let n_members = config.n_members;
@@ -136,8 +136,8 @@ where
             n_members,
             unit_messages_for_network,
             unit_messages_from_network,
-            messages_from_network,
-            messages_for_network,
+            notifications_for_runway,
+            notifications_from_runway,
             resolved_requests,
         }
     }
@@ -287,7 +287,7 @@ where
 
         loop {
             futures::select! {
-                event = self.messages_for_network.next() => match event {
+                event = self.notifications_from_runway.next() => match event {
                     Some(message) => {
                         self.on_unit_message_from_units(message);
                     },
@@ -334,7 +334,7 @@ where
     fn send_notification_to_runway(&mut self, message: UnitMessage<H, D, S>) -> Result<(), ()> {
         match RunwayNotificationIn::try_from(message) {
             Ok(notification) => {
-                self.messages_from_network
+                self.notifications_for_runway
                     .unbounded_send(notification)
                     .expect("Sender to runway with RunwayNotificationIn messages should be open");
                 Ok(())
