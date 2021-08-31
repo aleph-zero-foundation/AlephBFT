@@ -49,28 +49,22 @@ pub(crate) enum Request<H: Hasher> {
     RequestParents(H::Hash),
 }
 
-pub(crate) type RequestIn<H> = (Request<H>, NodeIndex);
-
-pub(crate) type RequestOut<H> = (Request<H>, Recipient);
-
-pub(crate) type ResponseOut<H, D, S> = (Response<H, D, S>, NodeIndex);
-
 pub(crate) enum Response<H: Hasher, D: Data, S: Signature> {
     ResponseCoord(UncheckedSignedUnit<H, D, S>),
     ResponseParents(H::Hash, Vec<UncheckedSignedUnit<H, D, S>>),
 }
 
-pub(crate) enum RunwayNotification<H: Hasher, D: Data, S: Signature, ROut, RIn> {
+pub(crate) enum RunwayNotificationOut<H: Hasher, D: Data, S: Signature> {
     NewUnit(UncheckedSignedUnit<H, D, S>),
-    Request(ROut),
-    Response(RIn),
+    Request(Request<H>, Recipient),
+    Response(Response<H, D, S>, NodeIndex),
 }
 
-pub(crate) type RunwayNotificationOut<H, D, S> =
-    RunwayNotification<H, D, S, RequestOut<H>, ResponseOut<H, D, S>>;
-
-pub(crate) type RunwayNotificationIn<H, D, S> =
-    RunwayNotification<H, D, S, RequestIn<H>, Response<H, D, S>>;
+pub(crate) enum RunwayNotificationIn<H: Hasher, D: Data, S: Signature> {
+    NewUnit(UncheckedSignedUnit<H, D, S>),
+    Request(Request<H>, NodeIndex),
+    Response(Response<H, D, S>),
+}
 
 impl<H: Hasher, D: Data, S: Signature> TryFrom<UnitMessage<H, D, S>>
     for RunwayNotificationIn<H, D, S>
@@ -81,10 +75,10 @@ impl<H: Hasher, D: Data, S: Signature> TryFrom<UnitMessage<H, D, S>>
         let result = match message {
             UnitMessage::NewUnit(u) => RunwayNotificationIn::NewUnit(u),
             UnitMessage::RequestCoord(node_id, coord) => {
-                RunwayNotificationIn::Request((Request::RequestCoord(coord), node_id))
+                RunwayNotificationIn::Request(Request::RequestCoord(coord), node_id)
             }
             UnitMessage::RequestParents(node_id, u_hash) => {
-                RunwayNotificationIn::Request((Request::RequestParents(u_hash), node_id))
+                RunwayNotificationIn::Request(Request::RequestParents(u_hash), node_id)
             }
             UnitMessage::ResponseCoord(u) => {
                 RunwayNotificationIn::Response(Response::ResponseCoord(u))
@@ -180,11 +174,11 @@ where
 
     fn on_unit_message(&mut self, message: RunwayNotificationIn<H, D, MK::Signature>) {
         match message {
-            RunwayNotification::NewUnit(u) => {
+            RunwayNotificationIn::NewUnit(u) => {
                 trace!(target: "AlephBFT-runway", "{:?} New unit received {:?}.", self.index(), &u);
                 self.on_unit_received(u, false)
             }
-            RunwayNotification::Request((request, node_id)) => match request {
+            RunwayNotificationIn::Request(request, node_id) => match request {
                 Request::RequestCoord(coord) => {
                     trace!(target: "AlephBFT-runway", "{:?} Coords request received {:?}.", self.index(), coord);
                     self.on_request_coord(node_id, coord)
@@ -194,7 +188,7 @@ where
                     self.on_request_parents(node_id, u_hash)
                 }
             },
-            RunwayNotification::Response(res) => match res {
+            RunwayNotificationIn::Response(res) => match res {
                 Response::ResponseCoord(u) => {
                     trace!(target: "AlephBFT-runway", "{:?} Fetch response received {:?}.", self.index(), &u);
                     self.on_unit_received(u, false)
@@ -339,10 +333,10 @@ where
         if let Some(su) = maybe_su {
             trace!(target: "AlephBFT-runway", "{:?} Answering fetch request for coord {:?} from {:?}.", self.index(), coord, node_id);
             self.unit_messages_for_network
-                .unbounded_send(RunwayNotification::Response((
+                .unbounded_send(RunwayNotificationOut::Response(
                     Response::ResponseCoord(su.into()),
                     node_id,
-                )))
+                ))
                 .expect("unit_messages_for_network channel should be open")
         } else {
             trace!(target: "AlephBFT-runway", "{:?} Not answering fetch request for coord {:?}. Unit not in store.", self.index(), coord);
@@ -370,10 +364,10 @@ where
                 }
             }
             self.unit_messages_for_network
-                .unbounded_send(RunwayNotificationOut::Response((
+                .unbounded_send(RunwayNotificationOut::Response(
                     Response::ResponseParents(u_hash, full_units),
                     node_id,
-                )))
+                ))
                 .expect("unit_messages_for_network channel should be open")
         } else {
             trace!(target: "AlephBFT-runway", "{:?} Not answering parents request for hash {:?}. Unit not in DAG yet.", self.index(), u_hash);
@@ -521,10 +515,10 @@ where
         for coord in coords {
             if self.missing_coords.insert(coord) {
                 self.unit_messages_for_network
-                    .unbounded_send(RunwayNotificationOut::Request((
+                    .unbounded_send(RunwayNotificationOut::Request(
                         Request::RequestCoord(coord),
                         Recipient::Node(coord.creator()),
-                    )))
+                    ))
                     .expect("unit_messages_for_network channel should be open")
             }
         }
@@ -551,10 +545,10 @@ where
             };
             if self.missing_parents.insert(u_hash) {
                 self.unit_messages_for_network
-                    .unbounded_send(RunwayNotificationOut::Request((
+                    .unbounded_send(RunwayNotificationOut::Request(
                         Request::RequestParents(u_hash),
                         recipient,
-                    )))
+                    ))
                     .expect("unit_messages_for_network channel should be open")
             }
         }

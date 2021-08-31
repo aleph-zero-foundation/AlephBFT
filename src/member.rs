@@ -1,10 +1,7 @@
 use crate::{
     config::Config,
     network::{self, Recipient},
-    runway::{
-        self, Request, Response, RunwayIO, RunwayNotification, RunwayNotificationIn,
-        RunwayNotificationOut,
-    },
+    runway::{self, Request, Response, RunwayIO, RunwayNotificationIn, RunwayNotificationOut},
     signed::Signature,
     units::{UncheckedSignedUnit, UnitCoord},
     Data, DataIO, Hasher, MultiKeychain, Network, NodeCount, NodeIndex, Receiver, Sender,
@@ -266,12 +263,12 @@ where
 
     fn on_unit_message_from_units(&mut self, message: RunwayNotificationOut<H, D, S>) {
         match message {
-            RunwayNotification::NewUnit(u) => self.on_create(u),
-            RunwayNotification::Request((request, recipient)) => match request {
+            RunwayNotificationOut::NewUnit(u) => self.on_create(u),
+            RunwayNotificationOut::Request(request, recipient) => match request {
                 Request::RequestCoord(coord) => self.on_request_coord(coord),
                 Request::RequestParents(u_hash) => self.on_request_parents(u_hash, recipient),
             },
-            RunwayNotification::Response((response, recipient)) => match response {
+            RunwayNotificationOut::Response(response, recipient) => match response {
                 Response::ResponseCoord(u) => {
                     let message = UnitMessage::ResponseCoord(u);
                     self.send_unit_message(message, Recipient::Node(recipient))
@@ -313,7 +310,7 @@ where
 
                 event = self.unit_messages_from_network.next() => match event {
                     Some(message) => {
-                        if let Err(_) = self.send_notification_to_runway(message) {
+                        if self.send_notification_to_runway(message).is_err() {
                             error!(target: "AlephBFT-member", "{:?} Unable to convert a UnitMessage into an instance of RunwayNotificationIn.", self.index());
                         }
                     },
