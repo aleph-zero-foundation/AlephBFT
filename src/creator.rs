@@ -1,7 +1,7 @@
 use crate::{
     config::{Config, DelaySchedule},
-    member::NotificationOut,
     nodes::{NodeCount, NodeIndex, NodeMap},
+    runway::NotificationOut,
     units::{ControlHash, PreUnit, Unit},
     Hasher, Receiver, Round, Sender,
 };

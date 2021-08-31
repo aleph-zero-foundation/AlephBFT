@@ -1,4 +1,4 @@
-use aleph_bft::{NodeCount, NodeIndex, OrderedBatch, Recipient, TaskHandle};
+use aleph_bft::{run_session, NodeCount, NodeIndex, OrderedBatch, Recipient, TaskHandle};
 use async_trait::async_trait;
 use codec::{Decode, Encode};
 use futures::{
@@ -71,9 +71,7 @@ async fn main() {
             index: my_id.into(),
         };
         let config = aleph_bft::default_config(n_members.into(), my_id.into(), 0);
-        let member = aleph_bft::Member::new(data_io, &keybox, config, Spawner {});
-
-        member.run_session(network, exit).await
+        run_session(config, network, data_io, keybox, Spawner {}, exit).await
     });
 
     let mut finalized = HashSet::new();

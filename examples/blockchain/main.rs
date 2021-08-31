@@ -1,7 +1,7 @@
 use futures::{channel::oneshot, StreamExt};
 use log::{debug, info};
 
-use aleph_bft::NodeIndex;
+use aleph_bft::{run_session, NodeIndex};
 use chain::{gen_chain_config, run_blockchain, DataIO, DataStore};
 use chrono::Local;
 use crypto::KeyBox;
@@ -103,9 +103,7 @@ async fn main() {
             index: my_id.into(),
         };
         let config = aleph_bft::default_config(n_members.into(), my_id.into(), 0);
-        let member = aleph_bft::Member::new(data_io, &keybox, config, Spawner {});
-
-        member.run_session(network, exit).await
+        run_session(config, network, data_io, keybox, Spawner {}, exit).await
     });
 
     let mut max_block_finalized = 0;
