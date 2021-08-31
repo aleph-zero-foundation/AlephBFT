@@ -22,6 +22,7 @@ use rand::Rng;
 use std::{
     cmp::Ordering,
     collections::{BinaryHeap, HashSet},
+    convert::TryFrom,
     fmt::Debug,
     time,
 };
@@ -312,7 +313,9 @@ where
 
                 event = self.unit_messages_from_network.next() => match event {
                     Some(message) => {
-                        self.send_notification_to_runway(message)
+                        if let Err(_) = self.send_notification_to_runway(message) {
+                            error!(target: "AlephBFT-member", "{:?} Unable to convert a UnitMessage into an instance of RunwayNotificationIn.", self.index());
+                        }
                     },
                     None => {
                         error!(target: "AlephBFT-member", "{:?} Unit message stream from network closed.", self.index());
@@ -331,11 +334,16 @@ where
         debug!(target: "AlephBFT-member", "{:?} Member stopped.", self.index());
     }
 
-    fn send_notification_to_runway(&mut self, message: UnitMessage<H, D, S>) {
-        let notification = RunwayNotificationIn::from(message);
-        self.messages_from_network
-            .unbounded_send(notification)
-            .expect("Sender to runway with RunwayNotificationIn messages should be open")
+    fn send_notification_to_runway(&mut self, message: UnitMessage<H, D, S>) -> Result<(), ()> {
+        match RunwayNotificationIn::try_from(message) {
+            Ok(notification) => {
+                self.messages_from_network
+                    .unbounded_send(notification)
+                    .expect("Sender to runway with RunwayNotificationIn messages should be open");
+                Ok(())
+            }
+            Err(_) => Err(()),
+        }
     }
 }
 

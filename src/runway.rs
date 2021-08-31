@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, convert::TryFrom};
 
 use crate::{
     alerts::{self, Alert, AlertConfig, AlertMessage, ForkProof, ForkingNotification},
@@ -72,11 +72,13 @@ pub(crate) type RunwayNotificationOut<H, D, S> =
 pub(crate) type RunwayNotificationIn<H, D, S> =
     RunwayNotification<H, D, S, RequestIn<H>, Response<H, D, S>>;
 
-impl<H: Hasher, D: Data, S: Signature> From<UnitMessage<H, D, S>>
+impl<H: Hasher, D: Data, S: Signature> TryFrom<UnitMessage<H, D, S>>
     for RunwayNotificationIn<H, D, S>
 {
-    fn from(message: UnitMessage<H, D, S>) -> Self {
-        match message {
+    type Error = ();
+
+    fn try_from(message: UnitMessage<H, D, S>) -> Result<Self, Self::Error> {
+        let result = match message {
             UnitMessage::NewUnit(u) => RunwayNotificationIn::NewUnit(u),
             UnitMessage::RequestCoord(node_id, coord) => {
                 RunwayNotificationIn::Request((Request::RequestCoord(coord), node_id))
@@ -90,7 +92,8 @@ impl<H: Hasher, D: Data, S: Signature> From<UnitMessage<H, D, S>>
             UnitMessage::ResponseParents(u_hash, parents) => {
                 RunwayNotificationIn::Response(Response::ResponseParents(u_hash, parents))
             }
-        }
+        };
+        Ok(result)
     }
 }
 
