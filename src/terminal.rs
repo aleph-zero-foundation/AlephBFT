@@ -125,6 +125,7 @@ pub(crate) struct Terminal<H: Hasher> {
     // The same as above, but this time we await for a unit (with a particular hash) to be added to the Dag.
     // Once this happens, we notify all the children.
     children_hash: HashMap<H::Hash, Vec<H::Hash>>,
+    exiting: bool,
 }
 
 impl<H: Hasher> Terminal<H> {
@@ -143,6 +144,7 @@ impl<H: Hasher> Terminal<H> {
             unit_by_coord: HashMap::new(),
             children_coord: HashMap::new(),
             children_hash: HashMap::new(),
+            exiting: false,
         }
     }
 
@@ -227,9 +229,7 @@ impl<H: Hasher> Terminal<H> {
             }
             if !coords_to_request.is_empty() {
                 trace!(target: "AlephBFT-terminal", "{:?} Missing coords {:?}", self.node_id, coords_to_request);
-                self.ntfct_tx
-                    .unbounded_send(NotificationOut::MissingUnits(coords_to_request))
-                    .expect("Channel should be open");
+                self.send_notification(NotificationOut::MissingUnits(coords_to_request));
             }
         }
     }
@@ -251,9 +251,7 @@ impl<H: Hasher> Terminal<H> {
             parent_hashes.push(*p_hash);
         }
 
-        self.ntfct_tx
-            .unbounded_send(NotificationOut::AddedToDag(*u_hash, parent_hashes))
-            .expect("Channel should be open");
+        self.send_notification(NotificationOut::AddedToDag(*u_hash, parent_hashes));
     }
 
     // We set the correct parent hashes for unit u.
@@ -310,9 +308,7 @@ impl<H: Hasher> Terminal<H> {
     }
 
     fn on_wrong_hash_detected(&mut self, u_hash: H::Hash) {
-        self.ntfct_tx
-            .unbounded_send(NotificationOut::WrongControlHash(u_hash))
-            .expect("Channel should be open");
+        self.send_notification(NotificationOut::WrongControlHash(u_hash));
     }
 
     // This drains the event queue. Note that new events might be added to the queue as the result of
@@ -346,6 +342,13 @@ impl<H: Hasher> Terminal<H> {
         self.post_insert.push(hook);
     }
 
+    fn send_notification(&mut self, notification: NotificationOut<H>) {
+        if self.ntfct_tx.unbounded_send(notification).is_err() {
+            warn!(target: "AlephBFT-terminal", "{:?} Notification channel should be open", self.node_id);
+            self.exiting = true;
+        }
+    }
+
     pub(crate) async fn run(&mut self, mut exit: oneshot::Receiver<()>) {
         loop {
             futures::select! {
@@ -365,9 +368,13 @@ impl<H: Hasher> Terminal<H> {
                     }
                 }
                 _ = &mut exit => {
-                    info!(target: "AlephBFT-terminal", "{:?} received exit signal.", self.node_id);
-                    return
+                    info!(target: "AlephBFT-terminal", "{:?} received exit signal", self.node_id);
+                    self.exiting = true;
                 }
+            }
+            if self.exiting {
+                info!(target: "AlephBFT-terminal", "{:?} Terminal decided to exit.", self.node_id);
+                break;
             }
         }
     }

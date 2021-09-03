@@ -1,7 +1,7 @@
 use futures::{channel::oneshot, StreamExt};
 use std::collections::{HashMap, VecDeque};
 
-use log::{debug, info};
+use log::{debug, info, warn};
 
 use crate::{
     nodes::{NodeCount, NodeIndex, NodeMap},
@@ -73,6 +73,7 @@ pub(crate) struct Extender<H: Hasher> {
     n_members: NodeCount,
     candidates: Vec<H::Hash>,
     finalizer_tx: Sender<Vec<H::Hash>>,
+    exiting: bool,
 }
 
 impl<H: Hasher> Extender<H> {
@@ -91,6 +92,7 @@ impl<H: Hasher> Extender<H> {
             units_by_round: vec![vec![]],
             n_members,
             candidates: vec![],
+            exiting: false,
         }
     }
 
@@ -150,9 +152,10 @@ impl<H: Hasher> Extender<H> {
 
         // We reverse for the batch to start with least recent units.
         batch.reverse();
-        self.finalizer_tx
-            .unbounded_send(batch)
-            .expect("Channel for batches should be open");
+        if self.finalizer_tx.unbounded_send(batch).is_err() {
+            warn!(target: "AlephBFT-extender", "{:?} Channel for batches should be open", self.node_id);
+            self.exiting = true;
+        }
 
         debug!(target: "AlephBFT-extender", "{:?} Finalized round {:?} with head {:?}.", self.node_id, round, head);
         self.units_by_round[round as usize].clear();
@@ -306,8 +309,12 @@ impl<H: Hasher> Extender<H> {
                 }
                 _ = &mut exit => {
                     info!(target: "AlephBFT-extender", "{:?} received exit signal.", self.node_id);
-                    break
+                    self.exiting = true;
                 }
+            }
+            if self.exiting {
+                info!(target: "AlephBFT-extender", "{:?} Extender decided to exit.", self.node_id);
+                break;
             }
         }
     }

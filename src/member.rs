@@ -14,12 +14,12 @@ use futures::{
     pin_mut, FutureExt, StreamExt,
 };
 use futures_timer::Delay;
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 use rand::Rng;
 use std::{
     cmp::Ordering,
     collections::{BinaryHeap, HashSet},
-    convert::TryFrom,
+    convert::TryInto,
     fmt::Debug,
     time,
 };
@@ -111,6 +111,7 @@ where
     notifications_for_runway: Sender<RunwayNotificationIn<H, D, S>>,
     notifications_from_runway: Receiver<RunwayNotificationOut<H, D, S>>,
     resolved_requests: Receiver<Request<H>>,
+    exiting: bool,
 }
 
 impl<H, D, S> Member<H, D, S>
@@ -139,6 +140,7 @@ where
             notifications_for_runway,
             notifications_from_runway,
             resolved_requests,
+            exiting: false,
         }
     }
 
@@ -181,9 +183,7 @@ where
             if let Some((message, recipient, delay)) =
                 self.task_details(&request.task, request.counter)
             {
-                self.unit_messages_for_network
-                    .unbounded_send((message, recipient))
-                    .expect("Channel to network should be open");
+                self.send_unit_message(message, recipient);
                 request.scheduled_time += delay;
                 request.counter += 1;
                 self.task_queue.push(request);
@@ -202,9 +202,14 @@ where
     }
 
     fn send_unit_message(&mut self, message: UnitMessage<H, D, S>, recipient: Recipient) {
-        self.unit_messages_for_network
+        if self
+            .unit_messages_for_network
             .unbounded_send((message, recipient))
-            .expect("Channel to network should be open")
+            .is_err()
+        {
+            warn!(target: "AlephBFT-member", "{:?} Channel to network should be open", self.index());
+            self.exiting = true;
+        }
     }
 
     /// Given a task and the number of times it was performed, returns `None` if the task is no longer active, or
@@ -309,10 +314,9 @@ where
                 },
 
                 event = self.unit_messages_from_network.next() => match event {
-                    Some(message) => {
-                        if self.send_notification_to_runway(message).is_err() {
-                            error!(target: "AlephBFT-member", "{:?} Unable to convert a UnitMessage into an instance of RunwayNotificationIn.", self.index());
-                        }
+                    Some(message) => match message.try_into() {
+                        Ok(notification) => self.send_notification_to_runway(notification),
+                        Err(_) => error!(target: "AlephBFT-member", "{:?} Unable to convert a UnitMessage into an instance of RunwayNotificationIn.", self.index()),
                     },
                     None => {
                         error!(target: "AlephBFT-member", "{:?} Unit message stream from network closed.", self.index());
@@ -325,21 +329,27 @@ where
                     ticker = Delay::new(ticker_delay).fuse();
                 },
 
-                _ = &mut exit => break,
+                _ = &mut exit => {
+                    info!(target: "AlephBFT-member", "{:?} received exit signal", self.index());
+                    self.exiting = true;
+                },
+            }
+            if self.exiting {
+                info!(target: "AlephBFT-member", "{:?} Member decided to exit.", self.index());
+                break;
             }
         }
         debug!(target: "AlephBFT-member", "{:?} Member stopped.", self.index());
     }
 
-    fn send_notification_to_runway(&mut self, message: UnitMessage<H, D, S>) -> Result<(), ()> {
-        match RunwayNotificationIn::try_from(message) {
-            Ok(notification) => {
-                self.notifications_for_runway
-                    .unbounded_send(notification)
-                    .expect("Sender to runway with RunwayNotificationIn messages should be open");
-                Ok(())
-            }
-            Err(_) => Err(()),
+    fn send_notification_to_runway(&mut self, notification: RunwayNotificationIn<H, D, S>) {
+        if self
+            .notifications_for_runway
+            .unbounded_send(notification)
+            .is_err()
+        {
+            warn!(target: "AlephBFT-member", "{:?} Sender to runway with RunwayNotificationIn messages should be open", self.index());
+            self.exiting = true;
         }
     }
 }
@@ -452,12 +462,14 @@ pub async fn run_session<
     if !runway_handle.is_terminated() {
         runway_handle.await;
     }
+
     if member_exit.send(()).is_err() {
         debug!(target: "AlephBFT-member", "{:?} Member already stopped.", index);
     }
     if !member_handle.is_terminated() {
         member_handle.await;
     }
+
     if network_exit.send(()).is_err() {
         debug!(target: "AlephBFT-member", "{:?} Network-hub already stopped.", index);
     }

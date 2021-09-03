@@ -32,6 +32,7 @@ pub(crate) struct Creator<H: Hasher> {
     n_candidates_by_round: Vec<NodeCount>, // len of this - 1 is the highest round number of all known units
     create_lag: DelaySchedule,
     max_round: Round,
+    exiting: bool,
 }
 
 impl<H: Hasher> Creator<H> {
@@ -50,6 +51,7 @@ impl<H: Hasher> Creator<H> {
             n_candidates_by_round: vec![NodeCount(0)],
             create_lag: conf.delay_config.unit_creation_delay,
             max_round: conf.max_round,
+            exiting: false,
         }
     }
 
@@ -77,9 +79,14 @@ impl<H: Hasher> Creator<H> {
 
         let new_preunit = PreUnit::new(self.node_ix, round, control_hash);
         trace!(target: "AlephBFT-creator", "{:?} Created a new unit {:?} at round {:?}.", self.node_ix, new_preunit, round);
-        self.new_units_tx
+        if self
+            .new_units_tx
             .unbounded_send(NotificationOut::CreatedPreUnit(new_preunit, parent_hashes))
-            .expect("Notification channel should be open");
+            .is_err()
+        {
+            warn!(target: "AlephBFT-creator", "{:?} Notification channel should be open", self.node_ix);
+            self.exiting = true;
+        }
 
         self.init_round(round + 1);
     }
@@ -155,11 +162,16 @@ impl<H: Hasher> Creator<H> {
                     }
                     _ = &mut exit => {
                         info!(target: "AlephBFT-creator", "{:?} received exit signal.", self.node_ix);
-                        return;
+                        self.exiting = true;
                     }
                 }
             }
             self.create_unit(round);
+
+            if self.exiting {
+                info!(target: "AlephBFT-creator", "{:?} Creator decided to exit.", self.node_ix);
+                break;
+            }
         }
         warn!(target: "AlephBFT-creator", "{:?} Maximum round reached. Not creating another unit.", self.node_ix);
     }

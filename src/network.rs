@@ -7,7 +7,7 @@ use crate::{
 };
 use codec::{Decode, Encode};
 use futures::{channel::oneshot, FutureExt, StreamExt};
-use log::{error, warn};
+use log::{error, info, warn};
 use std::fmt::Debug;
 
 /// A recipient of a message, either a specific node or everyone.
@@ -192,6 +192,7 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature, N: Network<H, 
                 _ = &mut exit => break,
             }
         }
+        info!(target: "AlephBFT-network-hub", "Network ended.");
     }
 }
 
