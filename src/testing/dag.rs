@@ -16,6 +16,7 @@ use log::{debug, error, trace};
 use rand::{distributions::Open01, prelude::*};
 use std::{cmp, time::Duration};
 
+use crate::testing::mock::complete_oneshot;
 use std::collections::HashMap;
 
 #[derive(Clone)]
@@ -131,9 +132,18 @@ async fn run_consensus_on_dag(
     let (_exit_tx, exit_rx) = oneshot::channel();
     let (batch_tx, mut batch_rx) = mpsc::unbounded();
     let spawner = Spawner::new();
+    let starting_round = complete_oneshot(0);
     spawner.spawn(
         "consensus",
-        consensus::run(conf, rx_in, tx_out, batch_tx, spawner.clone(), exit_rx),
+        consensus::run(
+            conf,
+            rx_in,
+            tx_out,
+            batch_tx,
+            spawner.clone(),
+            starting_round,
+            exit_rx,
+        ),
     );
     spawner.spawn("feeder", feeder.run());
     let mut batches = Vec::new();

@@ -3,7 +3,7 @@ use futures::{
     future::FusedFuture,
     FutureExt,
 };
-use log::{debug, info};
+use log::{debug, error, info};
 
 use crate::{
     config::Config,
@@ -11,7 +11,7 @@ use crate::{
     extender::Extender,
     runway::{NotificationIn, NotificationOut},
     terminal::Terminal,
-    Hasher, OrderedBatch, Receiver, Sender, SpawnHandle,
+    Hasher, OrderedBatch, Receiver, Round, Sender, SpawnHandle,
 };
 
 pub(crate) async fn run<H: Hasher + 'static>(
@@ -20,6 +20,7 @@ pub(crate) async fn run<H: Hasher + 'static>(
     outgoing_notifications: Sender<NotificationOut<H>>,
     ordered_batch_tx: Sender<OrderedBatch<H::Hash>>,
     spawn_handle: impl SpawnHandle,
+    starting_round: oneshot::Receiver<Round>,
     mut exit: oneshot::Receiver<()>,
 ) {
     info!(target: "AlephBFT", "{:?} Starting all services...", conf.node_ix);
@@ -42,10 +43,14 @@ pub(crate) async fn run<H: Hasher + 'static>(
 
     let (creator_exit, exit_rx) = oneshot::channel();
     let mut creator_handle = spawn_handle
-        .spawn_essential(
-            "consensus/creator",
-            async move { creator.create(exit_rx).await },
-        )
+        .spawn_essential("consensus/creator", async move {
+            match starting_round.await {
+                Ok(round) => creator.create(round, exit_rx).await,
+                Err(e) => {
+                    error!(target: "AlephBFT-creator", "Starting round not provided: {}", e);
+                }
+            }
+        })
         .fuse();
 
     let mut terminal = Terminal::new(index, incoming_notifications, outgoing_notifications);

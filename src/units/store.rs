@@ -44,6 +44,20 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
         self.by_coord.contains_key(coord)
     }
 
+    pub(crate) fn newest_unit(
+        &self,
+        index: NodeIndex,
+    ) -> Option<UncheckedSignedUnit<H, D, KB::Signature>> {
+        Some(
+            self.by_coord
+                .values()
+                .filter(|su| su.as_signable().creator() == index)
+                .max_by_key(|su| su.as_signable().round())?
+                .clone()
+                .into_unchecked(),
+        )
+    }
+
     // Outputs new legit units that are supposed to be sent to Consensus and empties the buffer.
     pub(crate) fn yield_buffer_units(&mut self) -> Vec<SignedUnit<'a, H, D, KB>> {
         std::mem::take(&mut self.legit_buffer)

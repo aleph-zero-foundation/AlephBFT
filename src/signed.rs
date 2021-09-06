@@ -94,6 +94,10 @@ impl<T: Signable, S: Signature> UncheckedSigned<T, S> {
         &self.signable
     }
 
+    pub fn into_signable(self) -> T {
+        self.signable
+    }
+
     pub fn signature(&self) -> S {
         self.signature.clone()
     }
@@ -224,6 +228,10 @@ impl<'a, T: Signable + Index, KB: KeyBox> Signed<'a, T, KB> {
     /// Get a reference to the signed object.
     pub fn as_signable(&self) -> &T {
         &self.unchecked.signable
+    }
+
+    pub fn into_signable(self) -> T {
+        self.unchecked.signable
     }
 
     pub(crate) fn into_unchecked(self) -> UncheckedSigned<T, KB::Signature> {

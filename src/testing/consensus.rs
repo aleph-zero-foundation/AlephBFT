@@ -1,7 +1,7 @@
 use crate::{
     consensus,
     runway::{NotificationIn, NotificationOut},
-    testing::mock::{gen_config, Hasher64, HonestHub, Spawner},
+    testing::mock::{complete_oneshot, gen_config, Hasher64, HonestHub, Spawner},
     units::{ControlHash, PreUnit, Unit},
     Hasher, NodeIndex, SpawnHandle,
 };
@@ -38,9 +38,18 @@ async fn agree_on_first_batch() {
         exits.push(exit_tx);
         let (batch_tx, batch_rx) = mpsc::unbounded();
         batch_rxs.push(batch_rx);
+        let starting_round = complete_oneshot(0);
         handles.push(spawner.spawn_essential(
             "consensus",
-            consensus::run(conf, rx, tx, batch_tx, spawner.clone(), exit_rx),
+            consensus::run(
+                conf,
+                rx,
+                tx,
+                batch_tx,
+                spawner.clone(),
+                starting_round,
+                exit_rx,
+            ),
         ));
     }
 
@@ -70,10 +79,19 @@ async fn catches_wrong_control_hash() {
     let conf = gen_config(NodeIndex(node_ix), n_nodes.into());
     let (exit_tx, exit_rx) = oneshot::channel();
     let (batch_tx, _batch_rx) = mpsc::unbounded();
+    let starting_round = complete_oneshot(0);
 
     let consensus_handle = spawner.spawn_essential(
         "consensus",
-        consensus::run(conf, rx_in, tx_out, batch_tx, spawner.clone(), exit_rx),
+        consensus::run(
+            conf,
+            rx_in,
+            tx_out,
+            batch_tx,
+            spawner.clone(),
+            starting_round,
+            exit_rx,
+        ),
     );
     let control_hash = ControlHash::new(&(vec![None; n_nodes]).into());
     let bad_pu = PreUnit::<Hasher64>::new(1.into(), 0, control_hash);

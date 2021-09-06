@@ -4,8 +4,8 @@ use crate::{
     runway::{self, Request, Response, RunwayIO, RunwayNotificationIn, RunwayNotificationOut},
     signed::Signature,
     units::{UncheckedSignedUnit, UnitCoord},
-    Data, DataIO, Hasher, MultiKeychain, Network, NodeCount, NodeIndex, Receiver, Sender,
-    SpawnHandle,
+    Data, DataIO, Hasher, MultiKeychain, Network, NodeCount, NodeIndex, Receiver, Sender, Signable,
+    SpawnHandle, UncheckedSigned,
 };
 use codec::{Decode, Encode};
 use futures::{
@@ -24,6 +24,28 @@ use std::{
     time,
 };
 
+#[derive(Debug, Encode, Decode, Clone)]
+pub(crate) struct NewestUnitResponse<H: Hasher, D: Data, S: Signature> {
+    pub(crate) requester: NodeIndex,
+    pub(crate) responder: NodeIndex,
+    pub(crate) unit: Option<UncheckedSignedUnit<H, D, S>>,
+    pub(crate) salt: u64,
+}
+
+impl<H: Hasher, D: Data, S: Signature> Signable for NewestUnitResponse<H, D, S> {
+    type Hash = Vec<u8>;
+
+    fn hash(&self) -> Self::Hash {
+        self.encode()
+    }
+}
+
+impl<H: Hasher, D: Data, S: Signature> crate::Index for NewestUnitResponse<H, D, S> {
+    fn index(&self) -> NodeIndex {
+        self.responder
+    }
+}
+
 /// A message concerning units, either about new units or some requests for them.
 #[derive(Debug, Encode, Decode, Clone)]
 pub(crate) enum UnitMessage<H: Hasher, D: Data, S: Signature> {
@@ -37,6 +59,10 @@ pub(crate) enum UnitMessage<H: Hasher, D: Data, S: Signature> {
     RequestParents(NodeIndex, H::Hash),
     /// Response to a request for a full list of parents.
     ResponseParents(H::Hash, Vec<UncheckedSignedUnit<H, D, S>>),
+    /// Request by a node for the newest unit created by them, together with a u64 salt
+    RequestNewest(NodeIndex, u64),
+    /// Response to RequestNewest: (our index, maybe unit, salt) signed by us
+    ResponseNewest(UncheckedSigned<NewestUnitResponse<H, D, S>, S>),
 }
 
 impl<H: Hasher, D: Data, S: Signature> UnitMessage<H, D, S> {
@@ -47,6 +73,13 @@ impl<H: Hasher, D: Data, S: Signature> UnitMessage<H, D, S> {
             Self::ResponseCoord(uu) => vec![uu.as_signable().data().clone()],
             Self::RequestParents(_, _) => Vec::new(),
             Self::ResponseParents(_, units) => units
+                .iter()
+                .map(|uu| uu.as_signable().data().clone())
+                .collect(),
+            UnitMessage::RequestNewest(_, _) => Vec::new(),
+            UnitMessage::ResponseNewest(response) => response
+                .as_signable()
+                .unit
                 .iter()
                 .map(|uu| uu.as_signable().data().clone())
                 .collect(),
@@ -62,6 +95,8 @@ enum Task<H: Hasher, D: Data, S: Signature> {
     ParentsRequest(H::Hash, Recipient),
     // Broadcast the given unit.
     UnitMulticast(UncheckedSignedUnit<H, D, S>),
+    // Request the newest unit created by node itself.
+    RequestNewest(u64),
 }
 
 #[derive(Eq, PartialEq)]
@@ -105,6 +140,7 @@ where
     task_queue: BinaryHeap<ScheduledTask<H, D, S>>,
     not_resolved_parents: HashSet<H::Hash>,
     not_resolved_coords: HashSet<UnitCoord>,
+    newest_unit_resolved: bool,
     n_members: NodeCount,
     unit_messages_for_network: Sender<(UnitMessage<H, D, S>, Recipient)>,
     unit_messages_from_network: Receiver<UnitMessage<H, D, S>>,
@@ -134,6 +170,7 @@ where
             task_queue: BinaryHeap::new(),
             not_resolved_parents: HashSet::new(),
             not_resolved_coords: HashSet::new(),
+            newest_unit_resolved: false,
             n_members,
             unit_messages_for_network,
             unit_messages_from_network,
@@ -167,6 +204,13 @@ where
         }
         let curr_time = time::Instant::now();
         let task = ScheduledTask::new(Task::ParentsRequest(u_hash, recipient), curr_time);
+        self.task_queue.push(task);
+        self.trigger_tasks();
+    }
+
+    fn on_request_newest(&mut self, salt: u64) {
+        let curr_time = time::Instant::now();
+        let task = ScheduledTask::new(Task::RequestNewest(salt), curr_time);
         self.task_queue.push(task);
         self.trigger_tasks();
     }
@@ -245,6 +289,14 @@ where
                 let preferred_recipient = Recipient::Everyone;
                 (message, preferred_recipient)
             }
+            Task::RequestNewest(salt) => {
+                if self.newest_unit_resolved {
+                    return None;
+                }
+                let message = UnitMessage::RequestNewest(self.index(), *salt);
+                let preferred_recipient = Recipient::Everyone;
+                (message, preferred_recipient)
+            }
         };
         let (recipient, delay) = match preferred_recipient {
             Recipient::Everyone => (
@@ -270,17 +322,23 @@ where
         match message {
             RunwayNotificationOut::NewUnit(u) => self.on_create(u),
             RunwayNotificationOut::Request(request, recipient) => match request {
-                Request::RequestCoord(coord) => self.on_request_coord(coord),
-                Request::RequestParents(u_hash) => self.on_request_parents(u_hash, recipient),
+                Request::Coord(coord) => self.on_request_coord(coord),
+                Request::Parents(u_hash) => self.on_request_parents(u_hash, recipient),
+                Request::NewestUnit(salt) => self.on_request_newest(salt),
             },
             RunwayNotificationOut::Response(response, recipient) => match response {
-                Response::ResponseCoord(u) => {
+                Response::Coord(u) => {
                     let message = UnitMessage::ResponseCoord(u);
                     self.send_unit_message(message, Recipient::Node(recipient))
                 }
-                Response::ResponseParents(u_hash, parents) => {
+                Response::Parents(u_hash, parents) => {
                     let message = UnitMessage::ResponseParents(u_hash, parents);
                     self.send_unit_message(message, Recipient::Node(recipient))
+                }
+                Response::NewestUnit(response) => {
+                    let requester = response.as_signable().requester;
+                    let message = UnitMessage::ResponseNewest(response);
+                    self.send_unit_message(message, Recipient::Node(requester))
                 }
             },
         }
@@ -304,8 +362,11 @@ where
 
                 event = self.resolved_requests.next() => match event {
                     Some(request) => match request {
-                        Request::RequestCoord(coord) => { self.not_resolved_coords.remove(&coord); },
-                        Request::RequestParents(u_hash) => { self.not_resolved_parents.remove(&u_hash); },
+                        Request::Coord(coord) => { self.not_resolved_coords.remove(&coord); },
+                        Request::Parents(u_hash) => { self.not_resolved_parents.remove(&u_hash); },
+                        Request::NewestUnit(_) => {
+                            self.newest_unit_resolved = true;
+                        }
                     },
                     None => {
                         error!(target: "AlephBFT-member", "{:?} Resolved-requests stream from Runway closed.", self.index());

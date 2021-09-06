@@ -136,7 +136,8 @@ impl<H: Hasher> Creator<H> {
         // Additionally, our unit from previous round must be available.
         let threshold = (self.n_members * 2) / 3 + NodeCount(1);
 
-        while self.n_candidates_by_round[prev_round_index] < threshold
+        while self.n_candidates_by_round.len() <= prev_round_index
+            || self.n_candidates_by_round[prev_round_index] < threshold
             || self.candidates_by_round[prev_round_index][self.node_ix].is_none()
         {
             if let Some(u) = self.parents_rx.next().await {
@@ -148,8 +149,9 @@ impl<H: Hasher> Creator<H> {
         }
     }
 
-    pub(crate) async fn create(&mut self, mut exit: oneshot::Receiver<()>) {
-        for round in 0..self.max_round {
+    pub(crate) async fn create(&mut self, starting_round: Round, mut exit: oneshot::Receiver<()>) {
+        log::debug!(target: "AlephBFT-creator", "Creator starting from round {}", starting_round);
+        for round in starting_round..self.max_round {
             let mut delay = Delay::new(Duration::from_secs(30 * 60)).fuse();
             loop {
                 futures::select! {
@@ -165,13 +167,12 @@ impl<H: Hasher> Creator<H> {
                         self.exiting = true;
                     }
                 }
+                if self.exiting {
+                    info!(target: "AlephBFT-creator", "{:?} Creator decided to exit.", self.node_ix);
+                    return;
+                }
             }
             self.create_unit(round);
-
-            if self.exiting {
-                info!(target: "AlephBFT-creator", "{:?} Creator decided to exit.", self.node_ix);
-                break;
-            }
         }
         warn!(target: "AlephBFT-creator", "{:?} Maximum round reached. Not creating another unit.", self.node_ix);
     }
@@ -278,9 +279,9 @@ mod tests {
 
             test_controller.units_out.push(units_out);
 
-            let (killer, exit) = oneshot::channel::<()>();
+            let (killer, i) = oneshot::channel::<()>();
 
-            let handle = tokio::spawn(async move { creator.create(exit).await });
+            let handle = tokio::spawn(async move { creator.create(0, i).await });
 
             killers.push(killer);
             handles.push(handle);
@@ -314,6 +315,84 @@ mod tests {
         assert_eq!(
             test_controller.n_candidates_by_round[rounds - 1],
             test_controller.n_members
+        );
+        finish(killers, handles).await;
+    }
+    // Crash recovery test
+    // This test starts with 7 creators. After 25 rounds 2 of them are killed and start again after rest will get to round 50.
+    // Then it is checked if 5 creators achieve round 75 and rest round 73.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+    async fn crashed_creators_should_create_dag() {
+        let n_members: usize = 7;
+        let rounds: usize = 25;
+        let n_fallen_members: usize = 0;
+        let max_units: usize = n_members * rounds;
+
+        let (mut test_controller, mut killers, mut handles, to_test_controller) =
+            start(n_members, n_fallen_members, max_units).await;
+        test_controller.control().await;
+
+        let n_fallen_members = 2;
+        let rounds = 50;
+        let mut last_indexes: Vec<usize> = vec![];
+        for node_ix in 0..n_fallen_members {
+            test_controller.units_out.pop().unwrap();
+            killers.pop().unwrap().send(()).unwrap();
+            handles.pop().unwrap();
+
+            let last_index: usize = test_controller
+                .candidates_by_round
+                .iter()
+                .enumerate()
+                .filter(|(_, val)| val[node_ix.into()].is_some())
+                .max_by_key(|&(i, _)| i)
+                .unwrap()
+                .0;
+            last_indexes.push(last_index);
+        }
+
+        let max_units = (n_members - n_fallen_members) * rounds
+            + last_indexes.iter().sum::<usize>()
+            + n_fallen_members;
+        test_controller.max_units = max_units;
+        test_controller.control().await;
+
+        for (mut node_ix, _last_index) in last_indexes.into_iter().enumerate() {
+            node_ix += 5;
+            let (units_out, from_test_controller) = mpsc::unbounded();
+
+            let mut creator = Creator::new(
+                gen_config(node_ix.into(), n_members.into()),
+                from_test_controller,
+                to_test_controller.clone(),
+            );
+            creator.n_candidates_by_round = test_controller.n_candidates_by_round.clone();
+            creator.candidates_by_round = test_controller.candidates_by_round.clone();
+
+            test_controller.units_out.push(units_out);
+
+            let (killer, exit) = oneshot::channel::<()>();
+
+            let handle = tokio::spawn(async move { creator.create(25, exit).await });
+
+            killers.push(killer);
+            handles.push(handle);
+        }
+
+        let rounds = 75;
+        let max_units = n_members * rounds - n_fallen_members * 2;
+        test_controller.max_units = max_units;
+        test_controller.control().await;
+
+        for round in 0..(rounds - 2) {
+            assert_eq!(
+                test_controller.n_candidates_by_round[round],
+                n_members.into()
+            );
+        }
+        assert!(
+            test_controller.n_candidates_by_round[rounds - 1]
+                >= (n_members - n_fallen_members).into()
         );
         finish(killers, handles).await;
     }
@@ -352,7 +431,7 @@ mod tests {
 
             let (killer, exit) = oneshot::channel::<()>();
 
-            let handle = tokio::spawn(async move { creator.create(exit).await });
+            let handle = tokio::spawn(async move { creator.create(0, exit).await });
 
             killers.push(killer);
             handles.push(handle);
