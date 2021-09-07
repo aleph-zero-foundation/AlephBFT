@@ -10,7 +10,7 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 
-use log::{debug, info, warn};
+use log::{debug, info, trace, warn};
 
 use std::{collections::HashMap, error::Error, io, iter, time::Duration};
 
@@ -372,8 +372,14 @@ impl NetworkManager {
                     }
                 }
                 event = self.swarm.next().fuse() => {
-                    // called only to poll inner future
-                    panic!("Unexpected event: {:?}", event);
+                    match event {
+                        Some(event) => {
+                            trace!("Received a swarm event: {:?}", event);
+                        }
+                        None => {
+                            panic!("Swarm stream ended");
+                        }
+                    }
                 }
                _ = &mut exit  => break,
             }

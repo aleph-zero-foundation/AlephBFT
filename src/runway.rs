@@ -923,14 +923,18 @@ pub(crate) async fn run<H, D, MK, DP, SH>(
         debug!(target: "AlephBFT-runway", "{:?} Consensus already stopped.", index);
     }
     if !consensus_handle.is_terminated() {
-        consensus_handle.await.unwrap();
+        if let Err(()) = consensus_handle.await {
+            warn!(target: "AlephBFT-runway", "{:?} Consensus finished with an error", index);
+        }
     }
 
     if alerter_exit.send(()).is_err() {
         debug!(target: "AlephBFT-runway", "{:?} Alerter already stopped.", index);
     }
     if !alerter_handle.is_terminated() {
-        alerter_handle.await.unwrap();
+        if let Err(()) = alerter_handle.await {
+            warn!(target: "AlephBFT-runway", "{:?} Alerter finished with an error", index);
+        }
     }
 
     if runway_exit.send(()).is_err() {

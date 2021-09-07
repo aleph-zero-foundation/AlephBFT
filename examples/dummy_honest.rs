@@ -335,8 +335,7 @@ impl NetworkManager {
                     }
                 }
                 event = self.swarm.next() => {
-                    // called only to poll inner future
-                    panic!("Unexpected event: {:?}", event);
+                    event.unwrap();
                 }
                 _ = exit.next() => break,
             }

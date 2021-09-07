@@ -535,7 +535,9 @@ pub async fn run_session<
         debug!(target: "AlephBFT-member", "{:?} Network-hub already stopped.", index);
     }
     if !network_handle.is_terminated() {
-        network_handle.await.unwrap();
+        if let Err(()) = network_handle.await {
+            warn!(target: "AlephBFT-member", "{:?} Network task stopped with an error", index);
+        }
     }
 
     info!(target: "AlephBFT-member", "{:?} Run ended.", index);
