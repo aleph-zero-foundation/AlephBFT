@@ -3,11 +3,11 @@ use futures::{
     future::FusedFuture,
     FutureExt,
 };
-use log::{debug, error, info};
+use log::{debug, info};
 
 use crate::{
     config::Config,
-    creator::Creator,
+    creator,
     extender::Extender,
     runway::{NotificationIn, NotificationOut},
     terminal::Terminal,
@@ -37,19 +37,16 @@ pub(crate) async fn run<H: Hasher + 'static>(
         })
         .fuse();
 
-    let (parents_tx, parents_rx) = mpsc::unbounded();
-    let new_units_tx = outgoing_notifications.clone();
-    let mut creator = Creator::new(conf.clone(), parents_rx, new_units_tx);
+    let (parents_for_creator, parents_from_terminal) = mpsc::unbounded();
 
     let (creator_exit, exit_rx) = oneshot::channel();
+    let io = creator::IO{
+        outgoing_units: outgoing_notifications.clone(),
+        incoming_parents: parents_from_terminal,
+    };
     let mut creator_handle = spawn_handle
         .spawn_essential("consensus/creator", async move {
-            match starting_round.await {
-                Ok(round) => creator.create(round, exit_rx).await,
-                Err(e) => {
-                    error!(target: "AlephBFT-creator", "Starting round not provided: {}", e);
-                }
-            }
+            creator::run(conf.clone().into(), io, starting_round, exit_rx).await;
         })
         .fuse();
 
@@ -57,7 +54,7 @@ pub(crate) async fn run<H: Hasher + 'static>(
 
     // send a new parent candidate to the creator
     terminal.register_post_insert_hook(Box::new(move |u| {
-        parents_tx
+        parents_for_creator
             .unbounded_send(u.into())
             .expect("Channel to creator should be open.");
     }));
