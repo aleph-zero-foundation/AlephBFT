@@ -35,6 +35,11 @@ pub(crate) struct Creator<H: Hasher> {
     exiting: bool,
 }
 
+#[derive(Debug)]
+enum CreatorError {
+    ParentChannelClosed,
+}
+
 impl<H: Hasher> Creator<H> {
     pub(crate) fn new(
         conf: Config,
@@ -100,7 +105,7 @@ impl<H: Hasher> Creator<H> {
         }
     }
 
-    async fn wait_until_ready(&mut self, round: Round) {
+    async fn wait_until_ready(&mut self, round: Round) -> Result<(), CreatorError> {
         let mut delay = Delay::new((self.create_lag)(round.into())).fuse();
         loop {
             // We need to require a number higher by one then currently highest round
@@ -128,7 +133,7 @@ impl<H: Hasher> Creator<H> {
         let prev_round_index = match round.checked_sub(1) {
             Some(prev_round) => prev_round as usize,
             None => {
-                return;
+                return Ok(());
             }
         };
 
@@ -144,9 +149,10 @@ impl<H: Hasher> Creator<H> {
                 self.add_unit(u.round(), u.creator(), u.hash());
             } else {
                 warn!(target: "AlephBFT-creator", "{:?} get error as result from channel with parents.", self.node_ix);
-                return;
+                return Err(CreatorError::ParentChannelClosed);
             }
         }
+        Ok(())
     }
 
     pub(crate) async fn create(&mut self, starting_round: Round, mut exit: oneshot::Receiver<()>) {
@@ -155,8 +161,13 @@ impl<H: Hasher> Creator<H> {
             let mut delay = Delay::new(Duration::from_secs(30 * 60)).fuse();
             loop {
                 futures::select! {
-                    _ = self.wait_until_ready(round).fuse() => {
-                        break;
+                    res = self.wait_until_ready(round).fuse() => {
+                        if let Err(e) = res {
+                            warn!(target: "AlephBFT-creator", "{:?} Impossible to create a unit, error {:?}, terminating Creator.", self.node_ix, e);
+                            return;
+                        } else {
+                            break;
+                        }
                     }
                     _ = &mut delay => {
                         warn!(target: "AlephBFT-creator", "{:?} more than half hour has passed since we created the previous unit.", self.node_ix);

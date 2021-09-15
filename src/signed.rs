@@ -135,7 +135,7 @@ impl<T: Signable, S: Signature> UncheckedSigned<T, S> {
 /// Error type returned when a verification of a signature fails.
 #[derive(Clone, Debug)]
 pub struct SignatureError<T: Signable, S: Signature> {
-    unchecked: UncheckedSigned<T, S>,
+    pub unchecked: UncheckedSigned<T, S>,
 }
 
 impl<T: Signable + Index, S: Signature> UncheckedSigned<T, S> {
@@ -356,8 +356,8 @@ impl<'a, T: Signable + Clone, MK: MultiKeychain> Clone for Multisigned<'a, T, MK
 }
 
 #[derive(Debug)]
-pub(crate) struct IncompleteMultisignatureError<'a, T: Signable, MK: MultiKeychain> {
-    partial: PartiallyMultisigned<'a, T, MK>,
+pub struct IncompleteMultisignatureError<'a, T: Signable, MK: MultiKeychain> {
+    pub partial: PartiallyMultisigned<'a, T, MK>,
 }
 
 /// Signable data together with a valid partial multisignature.
