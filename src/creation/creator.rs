@@ -212,7 +212,7 @@ mod tests {
         let n_members = NodeCount(7);
         let mut creators = creator_set(n_members);
         let mut expected_hashes_per_round = Vec::new();
-        for round in 0..=1 {
+        for round in 0..2 {
             let new_units = create_units(creators.iter().skip(1), round);
             let new_units: Vec<_> = new_units
                 .into_iter()
@@ -225,7 +225,7 @@ mod tests {
             expected_hashes_per_round.push(expected_hashes);
         }
         let creator = &mut creators[0];
-        for round in 0..=2 {
+        for round in 0..3 {
             assert!(creator.can_create(round));
             let (preunit, parent_hashes) = creator.create_unit(round);
             assert_eq!(preunit.round(), round);
@@ -264,7 +264,7 @@ mod tests {
         let n_members = NodeCount(7);
         let mut creators = creator_set(n_members);
         let mut expected_hashes_per_round = Vec::new();
-        for round in 0..=3 {
+        for round in 0..4 {
             let new_units = create_units(creators.iter().skip(1), round);
             let new_units: Vec<_> = new_units
                 .into_iter()
@@ -284,7 +284,7 @@ mod tests {
         let n_members = NodeCount(7);
         let mut creators = creator_set(n_members);
         let mut expected_hashes_per_round = Vec::new();
-        for round in 0..=2 {
+        for round in 0..3 {
             let new_units = create_units(creators.iter().skip(1), round);
             let new_units: Vec<_> = new_units
                 .into_iter()

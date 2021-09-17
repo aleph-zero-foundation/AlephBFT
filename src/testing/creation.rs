@@ -30,7 +30,7 @@ fn preunit_to_unit(preunit: PreUnit) -> Unit {
 }
 
 struct TestController {
-    units_per_creator: NodeMap<usize>,
+    max_round_per_creator: NodeMap<Round>,
     parents_for_creators: Sender<Unit>,
     units_from_creators: Receiver<NotificationOut>,
 }
@@ -42,7 +42,7 @@ impl TestController {
         n_members: NodeCount,
     ) -> Self {
         TestController {
-            units_per_creator: NodeMap::new_with_len(n_members),
+            max_round_per_creator: NodeMap::new_with_len(n_members),
             parents_for_creators,
             units_from_creators,
         }
@@ -64,7 +64,7 @@ impl TestController {
             if unit.round() > round_reached {
                 round_reached = unit.round();
             }
-            self.units_per_creator[unit.creator()] += 1;
+            self.max_round_per_creator[unit.creator()] += 1;
             self.parents_for_creators
                 .unbounded_send(unit.clone())
                 .expect("Creator input channel isn't closed.");
@@ -154,9 +154,9 @@ async fn synchronous_creators_should_create_dag() {
         }
     }
     assert!(test_controller
-        .units_per_creator
+        .max_round_per_creator
         .iter()
-        .all(|r| *r >= (max_round - 1) as usize));
+        .all(|r| *r >= (max_round - 1)));
     finish(killers, handles).await;
 }
 
@@ -218,24 +218,15 @@ async fn disconnected_creators_should_create_dag() {
         }
     }
     assert!(test_controller
-        .units_per_creator
+        .max_round_per_creator
         .iter()
-        .all(|r| *r >= (max_round - 3) as usize));
+        .all(|r| *r >= (max_round - 3)));
     assert!(
         test_controller
-            .units_per_creator
+            .max_round_per_creator
             .iter()
-            .map(
-                // There should be an easier way to do this...
-                |r| {
-                    if *r >= (max_round - 1) as usize {
-                        1
-                    } else {
-                        0
-                    }
-                }
-            )
-            .sum::<u32>()
+            .filter(|r| *r >= &(max_round - 1))
+            .count()
             >= 5
     );
     finish(killers, handles).await;
@@ -287,24 +278,15 @@ async fn late_creators_should_create_dag() {
         }
     }
     assert!(test_controller
-        .units_per_creator
+        .max_round_per_creator
         .iter()
-        .all(|r| *r >= (max_round - 3) as usize));
+        .all(|r| *r >= (max_round - 3)));
     assert!(
         test_controller
-            .units_per_creator
+            .max_round_per_creator
             .iter()
-            .map(
-                // There should be an easier way to do this...
-                |r| {
-                    if *r >= (max_round - 1) as usize {
-                        1
-                    } else {
-                        0
-                    }
-                }
-            )
-            .sum::<u32>()
+            .filter(|r| *r >= &(max_round - 1))
+            .count()
             >= 5
     );
     finish(killers, handles).await;
