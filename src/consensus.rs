@@ -7,7 +7,7 @@ use log::{debug, info};
 
 use crate::{
     config::Config,
-    creator,
+    creation,
     extender::Extender,
     runway::{NotificationIn, NotificationOut},
     terminal::Terminal,
@@ -40,13 +40,13 @@ pub(crate) async fn run<H: Hasher + 'static>(
     let (parents_for_creator, parents_from_terminal) = mpsc::unbounded();
 
     let (creator_exit, exit_rx) = oneshot::channel();
-    let io = creator::IO{
+    let io = creation::IO {
         outgoing_units: outgoing_notifications.clone(),
         incoming_parents: parents_from_terminal,
     };
     let mut creator_handle = spawn_handle
-        .spawn_essential("consensus/creator", async move {
-            creator::run(conf.clone().into(), io, starting_round, exit_rx).await;
+        .spawn_essential("consensus/creation", async move {
+            creation::run(conf.clone().into(), io, starting_round, exit_rx).await;
         })
         .fuse();
 
