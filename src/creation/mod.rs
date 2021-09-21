@@ -42,12 +42,12 @@ async fn wait_until_ready<H: Hasher>(
     round: Round,
     creator: &mut Creator<H>,
     create_lag: &DelaySchedule,
+    mut ignore_delay: bool,
     incoming_parents: &mut Receiver<Unit<H>>,
     mut exit: &mut oneshot::Receiver<()>,
 ) -> Result<(), ()> {
     let mut delay = Delay::new(create_lag(round.into())).fuse();
-    let mut delay_passed = false;
-    while !delay_passed || !creator.can_create(round) {
+    while !ignore_delay || !creator.can_create(round) {
         futures::select! {
             unit = incoming_parents.next() => match unit {
                 Some(unit) => creator.add_unit(&unit),
@@ -57,10 +57,10 @@ async fn wait_until_ready<H: Hasher>(
                 }
             },
             _ = &mut delay => {
-                if delay_passed {
-                    warn!(target: "AlephBFT-creator", "More than half hour has passed since we created the previous unit.");
+                if ignore_delay {
+                    warn!(target: "AlephBFT-creator", "Delay passed despite us not waiting for it.");
                 }
-                delay_passed = true;
+                ignore_delay = true;
                 delay = Delay::new(Duration::from_secs(30 * 60)).fuse();
             },
             _ = exit => {
@@ -111,20 +111,28 @@ pub async fn run<H: Hasher>(
     };
     debug!(target: "AlephBFT-creator", "Creator starting from round {}", starting_round);
     for round in starting_round..max_round {
-        if !creator.is_behind(round)
-            && wait_until_ready(
-                round,
-                &mut creator,
-                &create_lag,
-                &mut incoming_parents,
-                &mut exit,
-            )
-            .await
-            .is_err()
+        // Skip waiting if we are way behind.
+        let ignore_delay = creator.current_round() > round + 2;
+        if wait_until_ready(
+            round,
+            &mut creator,
+            &create_lag,
+            ignore_delay,
+            &mut incoming_parents,
+            &mut exit,
+        )
+        .await
+        .is_err()
         {
             return;
         }
-        let (unit, parent_hashes) = creator.create_unit(round);
+        let (unit, parent_hashes) = match creator.create_unit(round) {
+            Ok((u, ph)) => (u, ph),
+            Err(_) => {
+                error!(target: "AlephBFT-creator", "Creation of a unit failed despite checks.");
+                return;
+            }
+        };
         if let Err(e) =
             outgoing_units.unbounded_send(NotificationOut::CreatedPreUnit(unit, parent_hashes))
         {

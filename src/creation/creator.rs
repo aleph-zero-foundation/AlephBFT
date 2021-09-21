@@ -22,7 +22,7 @@ impl<H: Hasher> Creator<H> {
         }
     }
 
-    fn current_round(&self) -> Round {
+    pub(super) fn current_round(&self) -> Round {
         (self.n_candidates_by_round.len() - 1) as Round
     }
 
@@ -36,7 +36,11 @@ impl<H: Hasher> Creator<H> {
         }
     }
 
-    pub(super) fn create_unit(&self, round: Round) -> (PreUnit<H>, Vec<H::Hash>) {
+    // only returns an error if can_create(round) was false
+    pub(super) fn create_unit(&self, round: Round) -> Result<(PreUnit<H>, Vec<H::Hash>), ()> {
+        if !self.can_create(round) {
+            return Err(());
+        }
         let parents = {
             if round == 0 {
                 NodeMap::new_with_len(self.n_members)
@@ -50,7 +54,7 @@ impl<H: Hasher> Creator<H> {
 
         let new_preunit = PreUnit::new(self.node_id, round, control_hash);
         trace!(target: "AlephBFT-creator", "Created a new unit {:?} at round {:?}.", new_preunit, round);
-        (new_preunit, parent_hashes)
+        Ok((new_preunit, parent_hashes))
     }
 
     pub(super) fn add_unit(&mut self, unit: &Unit<H>) {
@@ -63,12 +67,6 @@ impl<H: Hasher> Creator<H> {
             self.candidates_by_round[round as usize][pid] = Some(hash);
             self.n_candidates_by_round[round as usize] += NodeCount(1);
         }
-    }
-
-    /// Check whether the provided round is far behind the current round, meaning the unit of that
-    /// round should be created without delay.
-    pub(super) fn is_behind(&self, round: Round) -> bool {
-        round + 2 < self.current_round()
     }
 
     /// To create a new unit, we need to have at least floor(2*N/3) + 1 parents available in previous round.
@@ -119,7 +117,11 @@ mod tests {
         let mut result = Vec::new();
         for creator in creators {
             assert!(creator.can_create(round));
-            result.push(creator.create_unit(round));
+            result.push(
+                creator
+                    .create_unit(round)
+                    .expect("Creation should succeed if can_create."),
+            );
         }
         result
     }
@@ -145,9 +147,12 @@ mod tests {
         let n_members = NodeCount(7);
         let round = 0;
         let creator = Creator::new(NodeIndex(0), n_members);
+        assert_eq!(creator.current_round(), round);
         assert!(creator.can_create(round));
         assert!(!creator.can_create(round + 1));
-        let (preunit, parent_hashes) = creator.create_unit(round);
+        let (preunit, parent_hashes) = creator
+            .create_unit(round)
+            .expect("Creation should succeed if can_create.");
         assert_eq!(preunit.round(), round);
         assert_eq!(parent_hashes.len(), 0);
     }
@@ -165,9 +170,12 @@ mod tests {
         let creator = &mut creators[0];
         add_units(creator, &new_units);
         let round = 1;
+        assert_eq!(creator.current_round(), 0);
         assert!(creator.can_create(round));
         assert!(!creator.can_create(round + 1));
-        let (preunit, parent_hashes) = creator.create_unit(round);
+        let (preunit, parent_hashes) = creator
+            .create_unit(round)
+            .expect("Creation should succeed if can_create.");
         assert_eq!(preunit.round(), round);
         assert_eq!(parent_hashes, expected_hashes);
     }
@@ -185,9 +193,12 @@ mod tests {
         let creator = &mut creators[0];
         add_units(creator, &new_units);
         let round = 1;
+        assert_eq!(creator.current_round(), 0);
         assert!(creator.can_create(round));
         assert!(!creator.can_create(round + 1));
-        let (preunit, parent_hashes) = creator.create_unit(round);
+        let (preunit, parent_hashes) = creator
+            .create_unit(round)
+            .expect("Creation should succeed if can_create.");
         assert_eq!(preunit.round(), round);
         assert_eq!(parent_hashes, expected_hashes);
     }
@@ -204,7 +215,9 @@ mod tests {
         let creator = &mut creators[0];
         add_units(creator, &new_units);
         let round = 1;
+        assert_eq!(creator.current_round(), 0);
         assert!(!creator.can_create(round));
+        assert!(creator.create_unit(round).is_err())
     }
 
     #[test]
@@ -225,9 +238,12 @@ mod tests {
             expected_hashes_per_round.push(expected_hashes);
         }
         let creator = &mut creators[0];
+        assert_eq!(creator.current_round(), 1);
         for round in 0..3 {
             assert!(creator.can_create(round));
-            let (preunit, parent_hashes) = creator.create_unit(round);
+            let (preunit, parent_hashes) = creator
+                .create_unit(round)
+                .expect("Creation should succeed if can_create.");
             assert_eq!(preunit.round(), round);
             let parent_hashes: HashSet<_> = parent_hashes.into_iter().collect();
             if round != 0 {
@@ -257,45 +273,5 @@ mod tests {
         add_units(creator, &new_units);
         let round = 1;
         assert!(!creator.can_create(round));
-    }
-
-    #[test]
-    fn recognizes_when_behind() {
-        let n_members = NodeCount(7);
-        let mut creators = creator_set(n_members);
-        let mut expected_hashes_per_round = Vec::new();
-        for round in 0..4 {
-            let new_units = create_units(creators.iter().skip(1), round);
-            let new_units: Vec<_> = new_units
-                .into_iter()
-                .map(|(pu, _)| preunit_to_unit(pu))
-                .collect();
-            let expected_hashes: HashSet<_> = new_units.iter().map(|u| u.hash()).collect();
-            for creator in creators.iter_mut() {
-                add_units(creator, &new_units);
-            }
-            expected_hashes_per_round.push(expected_hashes);
-        }
-        assert!(creators[0].is_behind(0));
-    }
-
-    #[test]
-    fn not_overzelously_behind() {
-        let n_members = NodeCount(7);
-        let mut creators = creator_set(n_members);
-        let mut expected_hashes_per_round = Vec::new();
-        for round in 0..3 {
-            let new_units = create_units(creators.iter().skip(1), round);
-            let new_units: Vec<_> = new_units
-                .into_iter()
-                .map(|(pu, _)| preunit_to_unit(pu))
-                .collect();
-            let expected_hashes: HashSet<_> = new_units.iter().map(|u| u.hash()).collect();
-            for creator in creators.iter_mut() {
-                add_units(creator, &new_units);
-            }
-            expected_hashes_per_round.push(expected_hashes);
-        }
-        assert!(!creators[0].is_behind(0));
     }
 }
