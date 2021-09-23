@@ -47,12 +47,12 @@ async fn create_unit<H: Hasher>(
     mut exit: &mut oneshot::Receiver<()>,
 ) -> Result<(PreUnit<H>, Vec<H::Hash>), ()> {
     let mut delay = Delay::new(create_lag(round.into())).fuse();
-    let mut result = if can_create {
-        creator.create_unit(round)
-    } else {
-        None
-    };
-    while !can_create || result.is_none() {
+    loop {
+        if can_create {
+            if let Some(result) = creator.create_unit(round) {
+                return Ok(result);
+            }
+        }
         futures::select! {
             unit = incoming_parents.next() => match unit {
                 Some(unit) => creator.add_unit(&unit),
@@ -73,11 +73,7 @@ async fn create_unit<H: Hasher>(
                 return Err(());
             },
         }
-        if can_create {
-            result = creator.create_unit(round);
-        }
     }
-    Ok(result.expect("We just checked that it isn't None."))
 }
 
 /// A process responsible for creating new units. It receives all the units added locally to the Dag
