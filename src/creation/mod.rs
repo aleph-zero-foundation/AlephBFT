@@ -2,7 +2,7 @@ use crate::{
     config::{Config as GeneralConfig, DelaySchedule},
     nodes::{NodeCount, NodeIndex},
     runway::NotificationOut,
-    units::Unit,
+    units::{PreUnit, Unit},
     Hasher, Receiver, Round, Sender,
 };
 use futures::{channel::oneshot, FutureExt, StreamExt};
@@ -38,16 +38,21 @@ pub struct IO<H: Hasher> {
     pub(crate) outgoing_units: Sender<NotificationOut<H>>,
 }
 
-async fn wait_until_ready<H: Hasher>(
+async fn create_unit<H: Hasher>(
     round: Round,
     creator: &mut Creator<H>,
     create_lag: &DelaySchedule,
-    mut ignore_delay: bool,
+    mut can_create: bool,
     incoming_parents: &mut Receiver<Unit<H>>,
     mut exit: &mut oneshot::Receiver<()>,
-) -> Result<(), ()> {
+) -> Result<(PreUnit<H>, Vec<H::Hash>), ()> {
     let mut delay = Delay::new(create_lag(round.into())).fuse();
-    while !ignore_delay || !creator.can_create(round) {
+    let mut result = if can_create {
+        creator.create_unit(round)
+    } else {
+        None
+    };
+    while !can_create || result.is_none() {
         futures::select! {
             unit = incoming_parents.next() => match unit {
                 Some(unit) => creator.add_unit(&unit),
@@ -57,10 +62,10 @@ async fn wait_until_ready<H: Hasher>(
                 }
             },
             _ = &mut delay => {
-                if ignore_delay {
+                if can_create {
                     warn!(target: "AlephBFT-creator", "Delay passed despite us not waiting for it.");
                 }
-                ignore_delay = true;
+                can_create = true;
                 delay = Delay::new(Duration::from_secs(30 * 60)).fuse();
             },
             _ = exit => {
@@ -68,8 +73,11 @@ async fn wait_until_ready<H: Hasher>(
                 return Err(());
             },
         }
+        if can_create {
+            result = creator.create_unit(round);
+        }
     }
-    Ok(())
+    Ok(result.expect("We just checked that it isn't None."))
 }
 
 /// A process responsible for creating new units. It receives all the units added locally to the Dag
@@ -112,8 +120,9 @@ pub async fn run<H: Hasher>(
     debug!(target: "AlephBFT-creator", "Creator starting from round {}", starting_round);
     for round in starting_round..max_round {
         // Skip waiting if we are way behind.
+        // We have to be two rounds behind, otherwise someone could force us to skip all delays.
         let ignore_delay = creator.current_round() > round + 2;
-        if wait_until_ready(
+        let (unit, parent_hashes) = match create_unit(
             round,
             &mut creator,
             &create_lag,
@@ -122,14 +131,9 @@ pub async fn run<H: Hasher>(
             &mut exit,
         )
         .await
-        .is_err()
         {
-            return;
-        }
-        let (unit, parent_hashes) = match creator.create_unit(round) {
             Ok((u, ph)) => (u, ph),
             Err(_) => {
-                error!(target: "AlephBFT-creator", "Creation of a unit failed despite checks.");
                 return;
             }
         };

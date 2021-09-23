@@ -36,10 +36,12 @@ impl<H: Hasher> Creator<H> {
         }
     }
 
-    // only returns an error if can_create(round) was false
-    pub(super) fn create_unit(&self, round: Round) -> Result<(PreUnit<H>, Vec<H::Hash>), ()> {
+    /// Returns `None` if a unit cannot be created.
+    /// To create a new unit, we need to have at least floor(2*N/3) + 1 parents available in previous round.
+    /// Additionally, our unit from previous round must be available.
+    pub(super) fn create_unit(&self, round: Round) -> Option<(PreUnit<H>, Vec<H::Hash>)> {
         if !self.can_create(round) {
-            return Err(());
+            return None;
         }
         let parents = {
             if round == 0 {
@@ -54,7 +56,7 @@ impl<H: Hasher> Creator<H> {
 
         let new_preunit = PreUnit::new(self.node_id, round, control_hash);
         trace!(target: "AlephBFT-creator", "Created a new unit {:?} at round {:?}.", new_preunit, round);
-        Ok((new_preunit, parent_hashes))
+        Some((new_preunit, parent_hashes))
     }
 
     pub(super) fn add_unit(&mut self, unit: &Unit<H>) {
@@ -69,9 +71,7 @@ impl<H: Hasher> Creator<H> {
         }
     }
 
-    /// To create a new unit, we need to have at least floor(2*N/3) + 1 parents available in previous round.
-    /// Additionally, our unit from previous round must be available.
-    pub(super) fn can_create(&self, round: Round) -> bool {
+    fn can_create(&self, round: Round) -> bool {
         if round == 0 {
             return true;
         }
@@ -116,11 +116,10 @@ mod tests {
     ) -> Vec<(PreUnit, Vec<<Hasher64 as Hasher>::Hash>)> {
         let mut result = Vec::new();
         for creator in creators {
-            assert!(creator.can_create(round));
             result.push(
                 creator
                     .create_unit(round)
-                    .expect("Creation should succeed if can_create."),
+                    .expect("Creation should succeed."),
             );
         }
         result
@@ -148,11 +147,9 @@ mod tests {
         let round = 0;
         let creator = Creator::new(NodeIndex(0), n_members);
         assert_eq!(creator.current_round(), round);
-        assert!(creator.can_create(round));
-        assert!(!creator.can_create(round + 1));
         let (preunit, parent_hashes) = creator
             .create_unit(round)
-            .expect("Creation should succeed if can_create.");
+            .expect("Creation should succeed.");
         assert_eq!(preunit.round(), round);
         assert_eq!(parent_hashes.len(), 0);
     }
@@ -171,11 +168,9 @@ mod tests {
         add_units(creator, &new_units);
         let round = 1;
         assert_eq!(creator.current_round(), 0);
-        assert!(creator.can_create(round));
-        assert!(!creator.can_create(round + 1));
         let (preunit, parent_hashes) = creator
             .create_unit(round)
-            .expect("Creation should succeed if can_create.");
+            .expect("Creation should succeed.");
         assert_eq!(preunit.round(), round);
         assert_eq!(parent_hashes, expected_hashes);
     }
@@ -194,11 +189,9 @@ mod tests {
         add_units(creator, &new_units);
         let round = 1;
         assert_eq!(creator.current_round(), 0);
-        assert!(creator.can_create(round));
-        assert!(!creator.can_create(round + 1));
         let (preunit, parent_hashes) = creator
             .create_unit(round)
-            .expect("Creation should succeed if can_create.");
+            .expect("Creation should succeed.");
         assert_eq!(preunit.round(), round);
         assert_eq!(parent_hashes, expected_hashes);
     }
@@ -216,8 +209,7 @@ mod tests {
         add_units(creator, &new_units);
         let round = 1;
         assert_eq!(creator.current_round(), 0);
-        assert!(!creator.can_create(round));
-        assert!(creator.create_unit(round).is_err())
+        assert!(creator.create_unit(round).is_none())
     }
 
     #[test]
@@ -240,10 +232,9 @@ mod tests {
         let creator = &mut creators[0];
         assert_eq!(creator.current_round(), 1);
         for round in 0..3 {
-            assert!(creator.can_create(round));
             let (preunit, parent_hashes) = creator
                 .create_unit(round)
-                .expect("Creation should succeed if can_create.");
+                .expect("Creation should succeed.");
             assert_eq!(preunit.round(), round);
             let parent_hashes: HashSet<_> = parent_hashes.into_iter().collect();
             if round != 0 {
@@ -272,6 +263,6 @@ mod tests {
         let creator = &mut creators[0];
         add_units(creator, &new_units);
         let round = 1;
-        assert!(!creator.can_create(round));
+        assert!(creator.create_unit(round).is_none());
     }
 }
