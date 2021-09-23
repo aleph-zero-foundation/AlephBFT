@@ -220,7 +220,7 @@ async fn disconnected_creators_should_create_dag() {
     assert!(test_controller
         .max_round_per_creator
         .iter()
-        .all(|r| *r >= (max_round - 3)));
+        .all(|r| *r >= (max_round - 2)));
     assert!(
         test_controller
             .max_round_per_creator
@@ -280,7 +280,7 @@ async fn late_creators_should_create_dag() {
     assert!(test_controller
         .max_round_per_creator
         .iter()
-        .all(|r| *r >= (max_round - 3)));
+        .all(|r| *r >= (max_round - 2)));
     assert!(
         test_controller
             .max_round_per_creator

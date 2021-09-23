@@ -175,11 +175,10 @@ mod tests {
         assert_eq!(parent_hashes, expected_hashes);
     }
 
-    #[test]
-    fn creates_unit_with_minimal_parents() {
-        let n_members = NodeCount(7);
+    fn create_unit_with_minimal_parents(n_members: NodeCount) {
+        let n_parents = (n_members.0 * 2) / 3 + 1;
         let mut creators = creator_set(n_members);
-        let new_units = create_units(creators.iter().take(5), 0);
+        let new_units = create_units(creators.iter().take(n_parents), 0);
         let new_units: Vec<_> = new_units
             .into_iter()
             .map(|(pu, _)| preunit_to_unit(pu))
@@ -197,10 +196,29 @@ mod tests {
     }
 
     #[test]
-    fn cannot_create_unit_below_parents_threshold() {
-        let n_members = NodeCount(7);
+    fn creates_unit_with_minimal_parents_4() {
+        create_unit_with_minimal_parents(NodeCount(4));
+    }
+
+    #[test]
+    fn creates_unit_with_minimal_parents_5() {
+        create_unit_with_minimal_parents(NodeCount(5));
+    }
+
+    #[test]
+    fn creates_unit_with_minimal_parents_6() {
+        create_unit_with_minimal_parents(NodeCount(6));
+    }
+
+    #[test]
+    fn creates_unit_with_minimal_parents_7() {
+        create_unit_with_minimal_parents(NodeCount(7));
+    }
+
+    fn dont_create_unit_below_parents_threshold(n_members: NodeCount) {
+        let n_parents = (n_members.0 * 2) / 3;
         let mut creators = creator_set(n_members);
-        let new_units = create_units(creators.iter().take(4), 0);
+        let new_units = create_units(creators.iter().take(n_parents), 0);
         let new_units: Vec<_> = new_units
             .into_iter()
             .map(|(pu, _)| preunit_to_unit(pu))
@@ -210,6 +228,26 @@ mod tests {
         let round = 1;
         assert_eq!(creator.current_round(), 0);
         assert!(creator.create_unit(round).is_none())
+    }
+
+    #[test]
+    fn cannot_create_unit_below_parents_threshold_4() {
+        dont_create_unit_below_parents_threshold(NodeCount(4));
+    }
+
+    #[test]
+    fn cannot_create_unit_below_parents_threshold_5() {
+        dont_create_unit_below_parents_threshold(NodeCount(5));
+    }
+
+    #[test]
+    fn cannot_create_unit_below_parents_threshold_6() {
+        dont_create_unit_below_parents_threshold(NodeCount(6));
+    }
+
+    #[test]
+    fn cannot_create_unit_below_parents_threshold_7() {
+        dont_create_unit_below_parents_threshold(NodeCount(7));
     }
 
     #[test]

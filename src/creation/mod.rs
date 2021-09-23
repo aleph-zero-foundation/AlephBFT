@@ -115,9 +115,10 @@ pub async fn run<H: Hasher>(
     };
     debug!(target: "AlephBFT-creator", "Creator starting from round {}", starting_round);
     for round in starting_round..max_round {
-        // Skip waiting if we are way behind.
-        // We have to be two rounds behind, otherwise someone could force us to skip all delays.
-        let ignore_delay = creator.current_round() > round + 2;
+        // Skip waiting if someone created a unit of a higher round.
+        // In such a case at least 2/3 nodes created units from this round so we aren't skipping a
+        // delay we should observe.
+        let ignore_delay = creator.current_round() > round;
         let (unit, parent_hashes) = match create_unit(
             round,
             &mut creator,
