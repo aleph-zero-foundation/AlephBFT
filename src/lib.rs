@@ -15,7 +15,7 @@ pub use nodes::{NodeCount, NodeIndex};
 
 mod alerts;
 mod consensus;
-mod creator;
+mod creation;
 mod extender;
 mod member;
 mod network;

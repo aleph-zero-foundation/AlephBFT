@@ -1,6 +1,7 @@
 # IDEs
 /.idea
 /.vscode
+.*.swp
 
 # Rust
 .cargo/config

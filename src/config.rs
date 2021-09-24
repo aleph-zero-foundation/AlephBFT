@@ -8,7 +8,7 @@ pub type DelaySchedule = Arc<dyn Fn(usize) -> Duration + Sync + Send + 'static>;
 /// Configuration of several parameters related to delaying various tasks.
 #[derive(Clone)]
 pub struct DelayConfig {
-    /// Tick frequency of the Member. Govers internal task queue of the Member.
+    /// Tick frequency of the Member. Governs internal task queue of the Member.
     pub tick_interval: Duration,
     /// After what delay, we repeat a request for a coord or parents.
     pub requests_interval: Duration,
