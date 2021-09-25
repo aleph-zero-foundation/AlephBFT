@@ -237,6 +237,7 @@ where
 
     fn on_unit_received(&mut self, uu: UncheckedSignedUnit<H, D, MK::Signature>, alert: bool) {
         if let Some(su) = self.validate_unit(uu) {
+            self.resolve_missing_coord(&su.as_signable().coord());
             if alert {
                 // Units from alerts explicitly come from forkers, and we want them anyway.
                 self.store.add_unit(su, true);
@@ -478,6 +479,7 @@ where
             p_hashes_node_map[ix] = Some(p_hash);
             // There might be some optimization possible here to not validate twice, but overall
             // this piece of code should be executed extremely rarely.
+            self.resolve_missing_coord(&su.as_signable().coord());
             self.add_unit_to_store_unless_fork(su);
         }
 
@@ -580,12 +582,8 @@ where
         debug!(target: "AlephBFT-runway", "{:?} On create notification.", self.index());
         let data = self.data_io.get_data();
         let full_unit = FullUnit::new(u, data, self.session_id);
-        let hash: <H as Hasher>::Hash = full_unit.hash();
         let signed_unit = Signed::sign(full_unit, self.keybox).await;
         self.store.add_unit(signed_unit.clone(), false);
-
-        trace!(target: "AlephBFT-runway", "{:?} Sending a unit {:?}.", self.index(), hash);
-        self.send_message_for_network(RunwayNotificationOut::NewUnit(signed_unit.into()));
     }
 
     fn on_alert_notification(&mut self, notification: ForkingNotification<H, D, MK::Signature>) {
@@ -619,9 +617,11 @@ where
             NotificationOut::AddedToDag(h, p_hashes) => {
                 self.store.add_parents(h, p_hashes);
                 self.resolve_missing_parents(&h);
-                let coord = self.store.unit_by_hash(&h).map(|u| u.as_signable().coord());
-                if let Some(coord) = coord {
-                    self.resolve_missing_coord(&coord)
+                if let Some(su) = self.store.unit_by_hash(&h).cloned() {
+                    if su.as_signable().creator() == self.index() {
+                        trace!(target: "AlephBFT-runway", "{:?} Sending a unit {:?}.", self.index(), h);
+                        self.send_message_for_network(RunwayNotificationOut::NewUnit(su.into()));
+                    }
                 } else {
                     error!(target: "AlephBFT-runway", "{:?} A unit already added to DAG is not in our store: {:?}.", self.index(), h);
                 }
