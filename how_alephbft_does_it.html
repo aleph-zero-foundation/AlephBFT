@@ -1,0 +1,397 @@
+<!DOCTYPE HTML>
+<html lang="en" class="sidebar-visible no-js light">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>What is Aleph? - AlephBFT</title>
+        
+        
+
+
+        <!-- Custom HTML head -->
+        
+
+
+        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        <meta name="description" content="Documentation of the rust implementation of Aleph protocol">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff" />
+
+        
+        <link rel="icon" href="favicon.svg">
+        
+        
+        <link rel="shortcut icon" href="favicon.png">
+        
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        
+        <link rel="stylesheet" href="css/print.css" media="print">
+        
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        
+        <link rel="stylesheet" href="fonts/fonts.css">
+        
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        
+
+        
+    </head>
+    <body>
+        <!-- Provide site root to javascript -->
+        <script type="text/javascript">
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script type="text/javascript">
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script type="text/javascript">
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('no-js')
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add('js');
+        </script>
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script type="text/javascript">
+            var html = document.querySelector('html');
+            var sidebar = 'hidden';
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            }
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded "><a href="what_is_aleph_bft.html"><strong aria-hidden="true">1.</strong> What is AlephBFT?</a></li><li class="chapter-item expanded "><a href="how_alephbft_does_it.html" class="active"><strong aria-hidden="true">2.</strong> What is Aleph?</a></li><li class="chapter-item expanded "><a href="aleph_bft_api.html"><strong aria-hidden="true">3.</strong> API of AlephBFT</a></li><li class="chapter-item expanded "><a href="differences.html"><strong aria-hidden="true">4.</strong> Differences between Aleph and AlephBFT</a></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">5.</strong> AlephBFT Internals</a></li><li class="chapter-item expanded "><a href="reliable_broadcast.html"><strong aria-hidden="true">6.</strong> Reliable Broadcast</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky bordered">
+                    <div class="left-buttons">
+                        <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </button>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light (default)</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                        
+                    </div>
+
+                    <h1 class="menu-title">AlephBFT</h1>
+
+                    <div class="right-buttons">
+                        
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        
+                        
+                        
+
+                    </div>
+                </div>
+
+                
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+                
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script type="text/javascript">
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h2 id="2-how-alephbft-does-it"><a class="header" href="#2-how-alephbft-does-it">2 How AlephBFT Does it?</a></h2>
+<p>AlephBFT implements <a href="https://arxiv.org/abs/1908.05156">Aleph Consensus Protocol</a> -- we highly encourage you to read the original paper, as it offers the best explanation of the ideas and does not require much background to understand. In this documentation we try to offer a self-contained sketch of the protocol, although, because of its compactness it might be harder to understand. For those who have read the paper we would like to note that there are certain minor differences between the paper and the actual implementation that we highlight in a <a href="differences.html">dedicated section</a>. However, these do not affect any of the fundamental ideas behind AlephBFT or its security guarantees and are mostly tricks and implementation details.</p>
+<p><strong>Note:</strong> for clarity, given <code>N</code> we define <code>f</code> to be the maximum number of malicious nodes allowed in AlephBFT: <code>f=floor(N-1)/3</code>. For instance, for <code>N</code>'s equal to <code>(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)</code> the corresponding <code>f</code>s are <code>(0,0,0,1,1,1,2,2,2,3)</code>. Then the number of honest nodes is guaranteed to be at least <code>N-f = floor(2*N/3)+1</code> which is strictly more than <code>2*f</code>.</p>
+<h3 id="21-dag----the-main-idea-of-alephbft"><a class="header" href="#21-dag----the-main-idea-of-alephbft">2.1 Dag -- the main idea of AlephBFT.</a></h3>
+<p>Recall that in the model we are interested in, the nodes keep receiving new data items from their input streams <code>in_i</code> and would like to produce a single output stream <code>out</code> (i.e., the unique stream consistent with their local output streams <code>out_i</code>). The main idea of AlephBFT is for the nodes to produce a <strong>DAG</strong> (Directed Acyclic Graph) of vertices that we call <strong>Units</strong> where each such unit is created by one of the nodes <code>i</code> and carries one piece of data from the input stream <code>in_i</code>. Whenever a unit is created by a node <code>i</code> it is then dispersed among all other nodes with the intention that each node at any given time has a sufficiently up-to-date version of the Dag. AlephBFT then specifies a combinatorial algorithm that given a Dag <code>D</code> allows to compute (statically, without any need for communication) a certain prefix of the output stream <code>out</code>, with the property that as the Dag <code>D</code> is updated with new vertices to form <code>D'</code> then the new prefix computed out of <code>D'</code> is either the same or <strong>extends</strong> the one obtained from <code>D</code>. In other words, by growing the Dag, we cannot &quot;roll back&quot; the output sequence.</p>
+<h3 id="22-constructing-the-dag----units"><a class="header" href="#22-constructing-the-dag----units">2.2 Constructing the Dag -- Units.</a></h3>
+<h4 id="221-unit-structure"><a class="header" href="#221-unit-structure">2.2.1 Unit Structure.</a></h4>
+<p>The structure of the Dag in the AlephBFT implementation is especially simple (some simplification here w.r.t. to the <a href="https://arxiv.org/abs/1908.05156">Aleph Paper</a>). Each unit <code>U</code> (vertex in the Dag) holds the following fields:</p>
+<ol>
+<li>The <code>creator</code> of <code>U</code> is simply a node index in <code>[0, N-1]</code> specifying who created this unit.</li>
+<li>The <code>data</code> in <code>U</code> is an element of some <code>Data</code> type -- this is supposed to be the most recent data item <code>U.creator</code> received from its input stream prior to creation of <code>U</code>.</li>
+<li>The <code>round</code> of <code>U</code> is a non-negative integer specifying the sequential number of the unit among the ones created by <code>U.creator</code>. It is convenient to think that <code>round</code> can be arbitrarily large, but for technical reasons it is bounded by a fixed constant <code>MAX_ROUND</code>.</li>
+<li>The <code>parent_map</code> of <code>U</code> is simply a bitarray of length <code>N</code> that specifies some subset of nodes <code>{1, 2, ..., N}</code>. The meaning of this set is that if <code>i</code> belongs to <code>parent_map</code> then <code>U</code> has an edge to a unit <code>V</code> created by <code>i</code> in round <code>U.round - 1</code>.</li>
+<li>The <code>control_hash</code> of <code>U</code> or rather of parents of <code>U</code> is a fingerprint of the list of actual units being parents of <code>U</code>. While AlephBFT protocol instructs honest nodes to create exactly one unit per each round, this behavior cannot be enforced among malicious nodes. This is the reason why the <code>parent_map</code> array by itself does not necessarily uniquely specify the parents of <code>U</code> and we thus attach a <code>control_hash = Hash(U_1, U_2, ..., U_k)</code> where <code>U_1, ..., U_k</code> are the parents of <code>U</code>.</li>
+<li>The <code>signature</code> is a signature under the unit (as a collection of all the above fields) generated by <code>U.creator</code>. The signature is a proof that a given node indeed created such a unit, all units must be sent along with signatures.</li>
+</ol>
+<p>By <code>parents(U)</code> we denote the set of all units that <code>U</code> has edges to (these are always units of round one less than <code>U</code>'s round). By <code>Hash(U)</code> we mean the hash of a serialization of the fields of <code>U</code> not including the <code>signature</code>. Since <code>Hash(U)</code> is smaller than <code>U</code> and still uniquely specifies <code>U</code> we sometimes use hashes in the protocol instead of units.</p>
+<h4 id="222-unit-creation-rules"><a class="header" href="#222-unit-creation-rules">2.2.2 Unit Creation Rules.</a></h4>
+<p>Below we provide a pseudocode for creating units that the honest nodes are expected to follow. In what follows <code>D</code> is the local copy of the Dag, i.e., the set of units that a particular node holds. We assume that a node can add a unit to <code>D</code> only if <code>parents(U)</code> are all in <code>D</code> (this requirement of course creates some challenges in the implementation, but we disregard them here).</p>
+<pre><code>/* Written from the perspective of node k.  D is a global variable denoting the set of units held by k. */
+def can_create(r):
+	if round == 0:
+		return true
+	if D does not contain a unit created by k in round r-1:
+		return false
+	if D contains less than N-f units from different creators in round r-1:
+		return false
+	return true
+
+def creator_task():
+for r = 0, 1, 2, ...:
+	loop:
+		//since D is growing, the below if will eventually fire
+		if can_create(r):
+			Create a unit U of round r:
+				Pick as its parents at least N-f units (from different creators) of round (r-1), including node k previous unit.
+				Poll the input stream for a fresh data item `d` and place it in `U` in the `data` field
+			Send U to all other nodes
+			sleep(CREATE_DELAY)
+			break the inner loop
+</code></pre>
+<p>The <code>creator_task</code> keeps creating units of growing rounds, with the requirement that, roughly, there are at least <code>(2/3)*N</code> units in the previous round available in <code>D</code>. There is a certain delay after each unit is created -- this technicality allows us to make sure the Dag does not grow too quickly, which is problematic for pragmatic reasons: the nodes have limited bandwidth (which also varies between different nodes) and have bounded RAM memory, where we would like to store the Dag.</p>
+<h4 id="223-malicious-units-forks-equivocations"><a class="header" href="#223-malicious-units-forks-equivocations">2.2.3 Malicious Units: Forks (Equivocations).</a></h4>
+<p>Note that from the pseudocode of the <code>creator_task</code> it follows that each node is supposed to create exactly one unit per round, so ideally a Dag of &quot;height&quot; <code>R</code> should have <code>R*N</code> units in total. In the version of the AlephBFT protocol that is described in the main body of the <a href="https://arxiv.org/abs/1908.05156">paper</a>, this rule (one unit per node, per round) is enforced via a special broadcast protocol: Reliable Broadcast for disseminating units among other nodes. Roughly speaking, it guarantees that there will always be at most one unit per creator, per round. This is extremely convenient for making the protocol simple and clean, but unfortunately implementing the protocol this way (with reliable broadcast, which is quite heavy) is rather inefficient. For this reason AlephBFT implements a version of the protocol (referred to as <em>QuickAleph</em> in the <a href="https://arxiv.org/abs/1908.05156">paper</a>) that &quot;allows&quot; malicious nodes to create multiple versions of a unit for a given round (we call these forks). This makes the protocol slightly more complex, but much more efficient in practice. One can think of QuickAleph as an &quot;optimistic&quot; version of Aleph that assumes that all nodes typically behave honestly and fork only in extremely rare cases, at which time the protocol, in a sense, falls back to Reliable Broadcast in order to alert all the nodes that a forker has been detected (we give a little more details on that in the section on <a href="reliable_broadcast.html##6-reliable-broadcast">Reliable Broadcast</a>).</p>
+<h4 id="224-disseminating-units"><a class="header" href="#224-disseminating-units">2.2.4 Disseminating Units.</a></h4>
+<p>From now on we assume that whenever a unit <code>U</code> lands in a Dag <code>D</code> of an honest node <code>k</code> then all other honest nodes will eventually (maybe after some delay) receive <code>U</code> and place it in their copies of the Dag. To achieve this in practice there are several mechanisms in AlephBFT to guarantee robustness of the process of disseminating units. First of all the creator broadcasts the unit several times (with exponentially increasing delays). Secondly, there is a request-response mechanism that allows to fetch missing units from other nodes.</p>
+<h3 id="23-computing-the-ordering-from-dag"><a class="header" href="#23-computing-the-ordering-from-dag">2.3 Computing the Ordering from Dag.</a></h3>
+<p>So far (in Section 2.2) we learned that the main object in AlephBFT is the ever-growing Dag composed of units created by different nodes. We ensure (and thus assume this from now on) that all the honest nodes, at every moment in time, hold a reasonably up-to-date version of the Dag. We now proceed to describe an algorithm <code>OrderData</code>, which given a Dag <code>D</code> (a static object), computes a sequence (for instance <code>Vec&lt;Data&gt;</code> in Rust) of Data items (coming from some units in the Dag) which has the following fundamental <strong>monotonicity</strong> property:</p>
+<p><strong>If <code>D</code> is a subset of <code>D'</code> then <code>OrderData(D)</code> is a prefix of <code>OrderData(D')</code>.</strong></p>
+<p>Let us pause for a minute to realize how strong the property is, and that it already solves the consensus problem. Let us denote by <code>D_1</code>, <code>D_2</code>, ..., <code>D_N</code> the local Dags of nodes <code>1, 2, ..., N</code>, and by <code>order_1</code>, <code>order_2</code>, ..., <code>order_N</code> the results of applying the <code>OrderData</code> algorithm to these Dags. Further let <code>D</code> be the a dag being the union of all <code>D_i</code>'s for <code>i=1, 2, ..., N</code>. From the property above it follows that if <code>order = OrderData(D)</code> then each <code>order_i</code> is a prefix of <code>order</code>, and hence consequently <code>order_i</code> also agree with each other! Given now such an algorithm <code>OrderData</code> we can complete the description of the AlephBFT protocol: each node simply keeps its local dag <code>D</code> up-to-date and recomputes <code>OrderData(D)</code> over and over, the ever-growing sequence od Data items obtained from this procedure is this node's output stream.</p>
+<p><strong>Note:</strong> <em>The description of <code>OrderData</code> provided below is nowhere near to what happens in AlephBFT's code. This description is optimized for ease of understanding the main concept. An efficient implementation of the idea is another pair of shoes. In fact, the name <code>OrderData</code> is not even used in the code -- the ordered data instead lands in an output stream that is produced asynchronously.</em></p>
+<p>Before we dive into the details and the pseudocode, let us first sketch an overall picture of what is going to happen in <code>OrderData</code>. First of all, there is a procedure of choosing a <code>Head</code> for each round in the Dag -- it essentially picks a single unit out of each round. The heads are then used to order all the units in the Dag: simply go over all the rounds <code>r=0, 1, 2, ...</code> and place the head <code>head_r</code> for this round along with all the units &quot;below&quot; the head that have not been ordered yet in a new batch. To choose heads we use virtual voting: the idea is that for each unit <code>U</code> in the dag, the units with round <code>&gt;= U.round</code> cast virtual &quot;votes&quot; (computed deterministically from the dag structure) on whether <code>U</code> should be chosen as head or not. The voting rules are crafted in such a way that at a certain round (typically round 3 or 4) above <code>U</code>, all units votes are already unanimous: either all vote &quot;yes&quot; or all vote &quot;no&quot;. This determines the &quot;decision&quot; for <code>U</code>. Then the head for a given round is chosen to be the first unit in the round (according to some deterministic ordering) that was decided as &quot;yes&quot;. We strongly encourage the reader to inspect the <a href="https://arxiv.org/abs/1908.05156">paper</a> for more intuitions.</p>
+<h4 id="231-description-of-orderdata"><a class="header" href="#231-description-of-orderdata">2.3.1 Description of OrderData.</a></h4>
+<p>For a unit <code>U</code> in a certain dag let us denote by <code>below(U)</code> the set of all units that can be reached from <code>U</code> by following 0 or more forward edges from <code>U</code>, so this set consists of <code>U</code>, parents of <code>U</code>, parents of parents of <code>U</code>, and so on. Below we describe <code>OrderData(D)</code> based on a procedure <code>Head(r, D)</code> that given a round <code>r</code> and dag <code>D</code> outputs an element of type <code>Option&lt;Unit&gt;</code> thus either <code>None</code> or <code>Some(U)</code> where <code>U</code> is some unit in <code>D</code> of round <code>r</code>. The description of <code>Head(r, D)</code> follows later.</p>
+<pre><code>def OrderData(D):
+	order = []
+	batch = []
+	for r = 0, 1, 2, ... :
+		let head = Head(r, D)
+		if head is None:
+			break
+		let Some(U) = head
+		new_batch = below(U)
+		remove from new_batch the contents of batch[0], batch[1], ..., batch[r-1]
+		sort new_batch using any canonical ordering
+		batch[r] = new_batch
+		let [U_1, U_2, ..., U_k] = new_batch
+		order = order ++ [U_1.data, U_2.data, ..., U_k.data]
+	return order
+</code></pre>
+<p>The <code>OrderData</code> algorithm is indeed quite simple: we choose a <code>Head</code> unit from each consecutive round (until it is no more possible) and generate a new batch of units, by taking all units below the head, and removing units from previous batches. The ordering is simply the data items from the units in subsequent batches, where each batch is ordered arbitrarily (yet using some deterministic ordering). It is not hard to observe that <code>OrderData</code> has the desired monotonicity property as long as the black-box <code>Head(r, D)</code> is also &quot;monotone&quot;, in the sense that:</p>
+<p><strong>If <code>D</code> is a subset of <code>D'</code> and <code>Head(r, D)=Some(U)</code> then <code>Head(r, D')=Some(U)</code>.</strong></p>
+<p>We proceed to describing <code>Head(r, D)</code></p>
+<h4 id="232-description-of-head"><a class="header" href="#232-description-of-head">2.3.2 Description of Head.</a></h4>
+<p>We will again describe <code>Head</code> as a procedure using another black-box: <code>Decide(U, D)</code> which takes a unit <code>U</code> and a dag <code>D</code> and outputs a value of type <code>Option&lt;bool&gt;</code>, so either a boolean &quot;decision&quot; <code>Some(b)</code> or <code>None</code>. We assume here that <code>Decide(U, D)</code> satisfies an analogous property to the one mentioned for <code>Head</code> above.</p>
+<pre><code>def Head(r, D):
+	if the highest round of a unit in D is &lt; (r+3):
+		return None
+	let [U_1, U_2, ..., U_s] be the units in D of round r sorted according to some canonical order
+	// The order is allowed to depend on r and on Head(r-1, D)
+	for l = 1, 2, ..., s:
+		if Decide(U_l, D) == Some(b):
+			if b==true:
+				return Some(U_l)
+			else:
+				continue the loop
+		else:
+			return None
+	// The execution can never reach this line because at least one unit in round r must be decided true.
+</code></pre>
+<p>To compute the head for a given round <code>r</code> we test all the units of this round in the dag <code>D</code> in some arbitrary canonical order (ordering by unit hashes is fine, but more sophisticated orderings here might give additional defense against delays caused by malicious nodes). The first unit that is decided <code>true</code> in this list is decided to be the head, however if <code>Decide()</code> outputs <code>None</code> at any time, <code>Head</code> must output <code>None</code> as well.</p>
+<h4 id="233-description-of-decide"><a class="header" href="#233-description-of-decide">2.3.3 Description of Decide.</a></h4>
+<p>Finally we describe the <code>Decide</code> procedure which is the last remaining piece to have a working consensus protocol. Again, <code>Decide</code> is based on a black-box <code>DecideVia(U, V, D)</code> which we describe subsequently:</p>
+<pre><code>def Decide(U, D):
+	if there exists any unit V in D such that DecideVia(U, V, D) == Some(b):
+		// In this case it is guaranteed that all bs will be the same
+		return Some(b)
+	else:
+		return None
+</code></pre>
+<p>To explain <code>DecideVia</code> we first need to define &quot;virtual voting&quot; (we refer to the <a href="https://arxiv.org/abs/1908.05156">paper</a> for intuitions and clarifications) -- intuitively, the units that are &quot;beyond U&quot; (i.e. have higher round number) &quot;vote&quot; for whether we should decide <code>true</code> or <code>false</code> for <code>U</code>. It is good to think that this vote decides, whether &quot;<code>U</code> is well known among nodes&quot;. We again emphasize that the decision for <code>U</code> depends on the static structure of the dag <code>D</code> only and except from them impact <code>U.creator</code> had on the shape of <code>D</code> he cannot affect the decision in any other way.</p>
+<pre><code>def Vote(U, V, D):
+	// It is assumed that V.round &gt; U.round
+	round_diff = V.round - U.round
+	if round_diff == 1:
+		return [U belongs to parents(V)]
+	else:
+		let votes be the multiset of Vote(U, P, D) for P in parents(V)
+		if votes are all the same, and equal to b:
+			return b
+		else:
+			return CommonVote(round_diff)
+
+def CommonVote(round_diff):
+	if round_diff &lt;= 4:
+		if round_diff == 3:
+			return false
+		else:
+			return true
+	else:
+		return [(round_diff % 2) == 1]
+
+def DecideVia(U, V, D):
+	round_diff = V.round - U.round
+	if round_diff &lt; 3:
+		return None
+	threshold = N-f
+	cv = CommonVote(round_diff)
+	let votes be the multiset of Vote(U, P, D) for P in parents(V)
+	if among votes there are &gt;= threshold votes equal to cv:
+		return Some(cv)
+	return None
+</code></pre>
+<p>We are not going into details here why the above guarantees the kind of monotonicity properties that we defined above. For that we refer to the paper, let us however offer a quick argument why we should expect consistency among decisions. The idea here is that once the condition in <code>DecideVia</code> is satisfied, i.e., among parent votes there is at least <code>threshold</code> of them that agree with the CommonVote <code>cv</code>, then one can easily prove that starting from the next round, all units are going to vote for <code>cv</code>. Once that happens, it is easy to see that each unit beyond that will make a decision consistent with <code>cv</code>. For proper proofs we refer to the Appendix of the paper.</p>
+<h3 id="24-randomness-in-alephbft"><a class="header" href="#24-randomness-in-alephbft">2.4 Randomness In AlephBFT.</a></h3>
+<p>One of the differences between the paper and the AlephBFT implementation is in the use of randomness. The AlephBFT protocol in the paper uses randomness in two parts:</p>
+<ol>
+<li>The <code>CommonVote(round_diff)</code> for <code>round_diff &gt;= 5</code> is not deterministic, but is a random bit that is obtained from a seed that is generated as part of the protocol execution specifically for the unit <code>U</code> the CommonVote concerns (thus in particular the <code>CommonVote</code> function takes a unit <code>U</code> as an additional parameter).</li>
+<li>The ordering over units in <code>Head(r, D)</code> is also random and seed is generated specifically for the round <code>r</code>.</li>
+</ol>
+<p>The corresponding seeds are generated with an appropriate timing, so that the randomness cannot be predicted well in advance. In the AlephBFT implementation both the common votes and the permutation of units are deterministic. The consequence of this is that the version of the protocol implemented in AlephBFT does not have the theoretical property called <em>Asynchronous Liveness</em>. This property means that in a theoretical scenario when the whole network is under control of a powerful adversary, who can schedule all the packets (even from honest nodes) according to its liking, the protocol should still make progress in producing the output stream. That being said there are two imporant comments to be made here:</p>
+<ul>
+<li>Even without randomness AlephBFT is <em>Asynchronously Safe</em> and enjoys all the properties of the state-of-the art partially synchronous protocols such as <em>HotStuff</em>, <em>Tendermint</em> or <em>Streamlet</em>. Moreover the asynchronous design of the protocol makes AlephBFT especially robust and resistant against practical network issues that classical partially synchronous protocols might have troubles with. Asynchronous liveness is an important theoretical property and there is a lot of technical sophistication that comes in the design of the protocol in order to achieve it, however on the practical side there is still little evidence that performing such attacks against liveness in real-world scenarios is possible.</li>
+<li>Still, no matter how unlikely such attacks might be, we take them very seriously and plan to add randomness to AlephBFT in one of the future releases. We decided to go for a version without randomness first, as it gives an incredibly simple and at the same time secure and robust BFT consensus protocol. Adding randomness introduces some complexity into the protocol, so it makes sense to add it on top of a well-tested, working product. The API of the protocol will not change and we will make the use of randomness configurable.</li>
+</ul>
+<h3 id="25-alerts----dealing-with-fork-spam"><a class="header" href="#25-alerts----dealing-with-fork-spam">2.5 Alerts -- Dealing with Fork Spam.</a></h3>
+<p>We note that the <code>OrderData</code> algorithm as described in previous subsections <strong>is resistant to forks</strong>, meaning that as long as there are at most <code>f</code> forking nodes, then the resulting consensus protocol is still safe.
+That being said, there are <strong>practical</strong> issues when it comes to dealing with huge amounts of forks. These are extensively described in the <a href="https://arxiv.org/abs/1908.05156">paper</a> in the section on a &quot;Fork Bomb Attack&quot; -- we encourage the reader to take a look. We describe here a mitigation to this issue that is implemented in AlephBFT. It is based on the idea of &quot;Alerts&quot;, described in the paper, but significantly simplified and made viable for implementation.</p>
+<p>The main idea here is that we cannot afford to store an arbitrary amount of units that are forks -- most of them are useless, but without adding a specific mechanism to the protocol, there is no way to discard them. That's why we introduce <strong>Fork Alerts</strong>. A fork alert is a message</p>
+<p><strong><code>ForkAlert(sender, forker, proof, units)</code></strong></p>
+<p>where <code>sender</code> is the node index of the sender, <code>forker</code> is the node index of a forking node, <code>proof</code> is a pair of units created by forker that constitute a fork and <code>units</code> is simply some list of forker's units. Such a message is brodcast by <code>sender</code> to all other nodes:</p>
+<ol>
+<li>The broadcast is performed using a <strong>Reliable Broadcast</strong> primitive. Roughly speaking, this means that the node does not simply multicast this message to all the nodes but runs a specialized protocol that guarantees that all the nodes receive this message (if the sender is honest) and receive the exact same version of this message (even if the sender is <strong>dishonest</strong>). We give more details on the AlephBFT's implementation of reliable broadcast in the <a href="reliable_broadcast.html##6-reliable-broadcast">Reliable Broadcast</a> section.</li>
+<li>The intuitive meaning of such an alert is that: &quot;I, <code>sender</code>, am aware that <code>forker</code> forked and I attach a <code>proof</code> of that. Moreover, before I realized this fact, I accepted the following list of units from <code>forker</code> to my local copy of the Dag. Please accept these units as well.&quot;</li>
+<li>Each sender can send at most one alert regarding a specific <code>forker</code>. So in the worst case, sender would send roughly <code>f</code> alerts.</li>
+<li>Each node, right after it realizes about a new node forking, sends its own alert right away, attaching a list of units by forker that it added to its Dag.</li>
+<li>The <code>units</code> list cannot contain any forks and must consist of valid units (with correct signatures etc.).</li>
+</ol>
+<p>Having this mechanism in place we define the (semi-formal) notion of <strong>legit units</strong> as being the ones that are: either from a non-forking node, or were attached to one or more alerts (this notion is not entirely formal because it depends on the timing and on the view of the particular node, but still it carries some useful intuitions). We keep an invariant that</p>
+<p><strong>Each honest node adds to its Dag only legit units.</strong></p>
+<p>This ensures that there is a reasonable upper bound on the number of units a single node must hold and thus guarantees that AlephBFT will not run out of memory.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                        
+                            <a rel="prev" href="what_is_aleph_bft.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+                        
+
+                        
+                            <a rel="next" href="aleph_bft_api.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+                        
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                
+                    <a rel="prev" href="what_is_aleph_bft.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+                
+
+                
+                    <a rel="next" href="aleph_bft_api.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+                
+            </nav>
+
+        </div>
+
+        
+
+        
+
+        
+
+        
+        <script type="text/javascript">
+            window.playground_copyable = true;
+        </script>
+        
+
+        
+
+        
+        <script src="elasticlunr.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="mark.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="searcher.js" type="text/javascript" charset="utf-8"></script>
+        
+
+        <script src="clipboard.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="highlight.js" type="text/javascript" charset="utf-8"></script>
+        <script src="book.js" type="text/javascript" charset="utf-8"></script>
+
+        <!-- Custom JS scripts -->
+        
+
+        
+
+    </body>
+</html>

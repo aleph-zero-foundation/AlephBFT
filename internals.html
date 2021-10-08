@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>What is AlephBFT? - AlephBFT</title>
+        <title>AlephBFT Internals - AlephBFT</title>
         
         
 
@@ -95,7 +95,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="what_is_aleph_bft.html"><strong aria-hidden="true">1.</strong> What is AlephBFT?</a></li><li class="chapter-item expanded "><a href="how_alephbft_does_it.html"><strong aria-hidden="true">2.</strong> What is Aleph?</a></li><li class="chapter-item expanded "><a href="aleph_bft_api.html"><strong aria-hidden="true">3.</strong> API of AlephBFT</a></li><li class="chapter-item expanded "><a href="differences.html"><strong aria-hidden="true">4.</strong> Differences between Aleph and AlephBFT</a></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">5.</strong> AlephBFT Internals</a></li><li class="chapter-item expanded "><a href="reliable_broadcast.html"><strong aria-hidden="true">6.</strong> Reliable Broadcast</a></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="what_is_aleph_bft.html"><strong aria-hidden="true">1.</strong> What is AlephBFT?</a></li><li class="chapter-item expanded "><a href="how_alephbft_does_it.html"><strong aria-hidden="true">2.</strong> What is Aleph?</a></li><li class="chapter-item expanded "><a href="aleph_bft_api.html"><strong aria-hidden="true">3.</strong> API of AlephBFT</a></li><li class="chapter-item expanded "><a href="differences.html"><strong aria-hidden="true">4.</strong> Differences between Aleph and AlephBFT</a></li><li class="chapter-item expanded "><a href="internals.html" class="active"><strong aria-hidden="true">5.</strong> AlephBFT Internals</a></li><li class="chapter-item expanded "><a href="reliable_broadcast.html"><strong aria-hidden="true">6.</strong> Reliable Broadcast</a></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -165,35 +165,49 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h2 id="1-what-is-alephbft"><a class="header" href="#1-what-is-alephbft">1. What is AlephBFT?</a></h2>
-<p>AlephBFT is a Rust implementation of the <a href="https://arxiv.org/abs/1908.05156">Aleph Consensus Protocol</a> that offers a convenient API allowing it to be easily applied to various problems. The prime application of AlephBFT is to be the consensus engine (sometimes called the &quot;finality gadget&quot;) of the <a href="https://alephzero.org/">Aleph Zero blockchain</a>.</p>
-<h3 id="11-high-level-idea-of-what-alephbft-does"><a class="header" href="#11-high-level-idea-of-what-alephbft-does">1.1 High level idea of what AlephBFT does.</a></h3>
-<p>From the high level perspective AlephBFT allows a set of <code>N</code> prespecified nodes to agree on an ordering of items arriving in some unreliable streams of data that these nodes locally observe. An illustrative example to have in mind here is when these nodes all observe a growing blockchain that does not have a built-in notion of finality, and would like to finalize blocks. Then the above mentioned &quot;streams of data&quot; are simply the advancing sequences of blockchain &quot;tips&quot; that each of the nodes sees. Note that in this (and in all the interesting examples), because of possible forks, or network delays, the data streams of individual nodes might not be consistent.
-The goal of a consensus protocol, is to ensure consistency of the decisions, even though relying on an unreliable data source. Consequently, what AlephBFT produces is a single stream of data that &quot;combines&quot; all the individual streams of the <code>N</code> nodes and importantly <strong>is consistent</strong> among the nodes. Thus, in the example above, all the nodes would produce a unique sequence of <strong>finalized</strong> blocks (see also the corresponding <a href="aleph_bft_api.html#321-blockchain-finality-gadget">AlephBFT API section</a> for a more detailed description on how to use AlephBFT as a finality gadget for a blockchain).</p>
-<h3 id="12-high-level-idea-of-alephbft-requirements"><a class="header" href="#12-high-level-idea-of-alephbft-requirements">1.2 High level idea of AlephBFT requirements.</a></h3>
-<p>Let us index the nodes taking part in the protocol as <code>i = 0, 1, ..., N-1</code> and call them &quot;the committee&quot;, below we list some high-level requirements to be able to run AlephBFT among this nodes:</p>
+                        <h2 id="5-alephbft-internals"><a class="header" href="#5-alephbft-internals">5 AlephBFT Internals</a></h2>
+<p>To explain the inner workings of AlephBFT it is instructive to follow the path of a unit: from the very start when it is created to the moment when its round is decided and it's data is placed in one of the output batches. Here we give a brief overview and subsequently go more into details of specific components in dedicated subsections.</p>
 <ol>
-<li>The nodes are connected via a network (that is not assumed to be 100% reliable) allowing them to send arbitrary messages to each other,</li>
-<li>Each node knows the identities of all other nodes (via their public keys) and holds a private key allowing it to sign messages.</li>
-<li>Each node <code>i</code> holds a data source object (to be explained in detail in the <a href="aleph_bft_api.html#311-dataio">DataIO subsection of AlephBFT API section</a> -- see <code>DataIO</code>) that allows it 1) to receive fresh pieces of data (we refer to it as the input stream <code>in_i</code>), and 2) to check that a piece of data received from another node is &quot;available&quot;. The availability is best understood when thinking about the blockchain example and data being block hashes. Then the availability question for a blockhash is essentially whether we locally hold a block with such a hash.</li>
-<li>At most <code>(N-1)/3</code> of the nodes can be malicious (act with the intent to break the protocol guarantees).</li>
+<li>The unit is created by one of the node's <code>Creator</code> component -- implemented in <code>src/creator.rs</code>. Creator sends a notification to an outer component.</li>
+<li>The newly created unit is filled with data, session information and a signature. This is done in <code>src/runway.rs</code> which then sends it to <code>src/member.rs</code> Subsequently a recurring task of broadcasting this unit is put in the task queue. The unit will be broadcast to all other nodes a few times (with some delays in between).</li>
+<li>The unit is received by another node -- happens in <code>src/member.rs</code> and immediately send to <code>src/runway.rs</code> where it passes some validation (signature checks etc.). If all these checks pass and the unit is not detected to be a fork, then it is placed in the <code>UnitStore</code> -- the <code>store</code> field of the <code>Runway</code> struct.</li>
+<li>The idea is that this store keeps only <strong>legit units</strong> in the sense defined in <a href="how_alephbft_does_it.html#25-alerts----dealing-with-fork-spam">the section on alerts</a>. Thus no fork is ever be put there unless coming from an alert.</li>
+<li>At a suitable moment the units from the store are further moved to a component called <code>Terminal</code> -- implemented in <code>src/terminal.rs</code>.</li>
+<li>Roughly speaking, terminal is expected to &quot;unpack&quot; the unit, so that their parents become explicit (instead of being control hashes only).</li>
+<li>Each unit whose parents are successfully decoded, is added to the &quot;Dag&quot;. Each unit in the Dag is legit + has all its parents in the Dag.</li>
+<li>Dag units are passed to a component called the <code>Extender</code> -- see <code>src/extender.rs</code>. The role of the extender is to efficiently run the <code>OrderData</code> algorithm, described in the <a href="how_alephbft_does_it.html">section on AlephBFT</a>.</li>
+<li>Once a unit's data is placed in one of batches by the <code>Extender</code> then its path is over and can be safely discarded.</li>
 </ol>
-<h3 id="13-high-level-idea-of-alephbft-guarantees"><a class="header" href="#13-high-level-idea-of-alephbft-guarantees">1.3 High level idea of AlephBFT guarantees.</a></h3>
-<p>AlephBFT guarantees (as long as at most <code>(N-1)/3</code> nodes act maliciously) that each node <code>i</code> running the protocol produces a stream of data <code>out_i</code> such that:</p>
+<h3 id="51-creator"><a class="header" href="#51-creator">5.1 Creator</a></h3>
+<p>The creator produces units according to the AlephBFT protocol rules. It will wait until the prespecified delay has passed and attempt to create a unit using a maximal number of parents. If it is not possible yet, it will wait till the first moment enough parents are available. After creating the last unit, the creator stops producing new ones, although this is never expected to happen during correct execution.</p>
+<p>Since the creator does not have access to the <code>DataIO</code> object and to the <code>KeyBox</code> it is not able to create the unit &quot;fully&quot;, for this reason it only chooses parents, the rest is filled by the <code>Runway</code>.</p>
+<h3 id="52-unit-store-in-runway"><a class="header" href="#52-unit-store-in-runway">5.2 Unit Store in Runway</a></h3>
+<p>As mentioned, the idea is that this stores only legit units and passes them to the <code>Terminal</code>. In case a fork is detected by a node <code>i</code>, all <code>i</code>'s units are attached to the appropriate alert.</p>
+<h3 id="53-terminal"><a class="header" href="#53-terminal">5.3 Terminal</a></h3>
+<p>The <code>Terminal</code> receives legit units, yet there might be two issues with such units that would not allow them to be added to Dag:</p>
 <ol>
-<li>The output streams of any two nodes <code>out_i</code> and <code>out_j</code> are consistent, in the sense that at any given time one is a prefix of another. Moreover, none of the streams gets &quot;stuck&quot;, they keep producing items until the protocol is shut down. So, intuitively, all the streams produce the same items, but just at possibly different paces.</li>
-<li>Each item in the output stream is &quot;available&quot; to at least half the honest (= not malicious) nodes in the committee.</li>
-<li>Roughly speaking, most of the data items &quot;proposed&quot; by honest nodes (i.e., data coming from <code>in</code> streams of honest nodes) eventually land in the output stream.</li>
+<li>A unit <code>U</code> might have a &quot;wrong&quot; control hash. From the perspective of the <code>Terminal</code> this means that naively picking <code>U</code>'s parents as units from previous round determined by <code>U.parent_map</code> results in a failed control hash check. Note that in case <code>U.creator</code> is honest and there are no forkers among <code>U</code> parents creators then this cannot happen and the control hash check always succeeds. Fail can happen because:
+a) either <code>U</code>'s one or multiple parents are forks and the <code>Terminal</code> either does not have the correct variants yet, or just has them but performed the naive check on different variants (note that guessing the correct variants might require exponential time so there is no point for the terminal to even try it),
+b) or <code>U</code>'s creator is dishonest and just put a control hash in the unit that does not &quot;unhash&quot; to anything meaningful.
+In any case the terminal triggers a request to <code>Member</code> to download the full list of <code>U</code>'s parent hashes, so that the ambiguity is resolved. Once a correct reponse is received by <code>Member</code> then it is passed back to the terminal so that it can &quot;decode&quot; the parents and proceed.</li>
+<li>A unit <code>U</code> might have parents that are not legit. Before adding a unit <code>U</code> to the Dag, the terminal waits for all parents of <code>U</code> to be added to the Dag first.</li>
 </ol>
+<p>There is often a situation where the terminal receives a unit <code>U</code> and for some reason there is no unit yet for a particular slot in <code>U</code>'s parents, i.e., <code>U</code>'s parent map says that one of the parents was created by node <code>i</code> but terminal has no unit with &quot;coordinates&quot; <code>(U.round - 1, i)</code> (<code>UnitCoord</code> type in the implementation -- means a pair consising of <code>(V.round, V.creator)</code> for some unit <code>V</code>). In such a case terminal makes a request to the <code>Member</code> to get such a unit, which is then followed by <code>Member</code> sending a series of requests to random nodes in order to fetch such a unit.</p>
+<h3 id="54-extender"><a class="header" href="#54-extender">5.4 Extender</a></h3>
+<p>The <code>Extender</code>'s role is to receive Dag units (from <code>Terminal</code>) and extend the output stream. Towards this end it maintains the <code>round</code> for which the next <code>Head</code> must be chosen and the current unit <code>U</code> that is being decided for being <code>Head</code> or not. There is some caching made in the implementation so as to not recompute all the votes from scratch whenever a fresh unit arrives.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
                         
+                            <a rel="prev" href="differences.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+                        
 
                         
-                            <a rel="next" href="how_alephbft_does_it.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next" href="reliable_broadcast.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
                         
@@ -205,9 +219,13 @@ The goal of a consensus protocol, is to ensure consistency of the decisions, eve
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
                 
+                    <a rel="prev" href="differences.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+                
 
                 
-                    <a rel="next" href="how_alephbft_does_it.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next" href="reliable_broadcast.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
                 

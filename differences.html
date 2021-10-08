@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Chapter 1 - Rush - Aleph in Rust</title>
+        <title>Differences between Aleph and AlephBFT - AlephBFT</title>
         
         
 
@@ -95,7 +95,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="chapter_1.html" class="active"><strong aria-hidden="true">1.</strong> Chapter 1</a></li><li class="chapter-item expanded "><a href="chapter_2.html"><strong aria-hidden="true">2.</strong> Chapter 2</a></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="what_is_aleph_bft.html"><strong aria-hidden="true">1.</strong> What is AlephBFT?</a></li><li class="chapter-item expanded "><a href="how_alephbft_does_it.html"><strong aria-hidden="true">2.</strong> What is Aleph?</a></li><li class="chapter-item expanded "><a href="aleph_bft_api.html"><strong aria-hidden="true">3.</strong> API of AlephBFT</a></li><li class="chapter-item expanded "><a href="differences.html" class="active"><strong aria-hidden="true">4.</strong> Differences between Aleph and AlephBFT</a></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">5.</strong> AlephBFT Internals</a></li><li class="chapter-item expanded "><a href="reliable_broadcast.html"><strong aria-hidden="true">6.</strong> Reliable Broadcast</a></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -127,7 +127,7 @@
                         
                     </div>
 
-                    <h1 class="menu-title">Rush - Aleph in Rust</h1>
+                    <h1 class="menu-title">AlephBFT</h1>
 
                     <div class="right-buttons">
                         
@@ -165,17 +165,30 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="chapter-1"><a class="header" href="#chapter-1">Chapter 1</a></h1>
-<p>Rush overview, again</p>
+                        <h2 id="4-differences-between-the-implementation-and-the-paper"><a class="header" href="#4-differences-between-the-implementation-and-the-paper">4 Differences between the implementation and the paper.</a></h2>
+<p>There are several differences between the Aleph as described in the <a href="https://arxiv.org/abs/1908.05156">paper</a> and the version implemented in AlephBFT. Many of them are already described in previous sections but for completeness we briefly list the differences here.</p>
+<ol>
+<li>The main version of Aleph uses Reliable Broadcast to disseminate units. The AlephBFT implementation is closer to QuickAleph (in the Appendix of the paper) that uses Reliable Broadcast only for Alerts.</li>
+<li>The specifics of alerts are different in the AlephBFT implementation -- in particular they do not require to freeze the protocol at any moment and are generally simpler.</li>
+<li>AlephBFT uses its own variant of Reliable Broadcast -- see the section <a href="reliable_broadcast.html##reliable-broadcast">Reliable Broadcast</a>.</li>
+<li>Differences in the use of randomness -- see <a href="how_alephbft_does_it.html#24-randomness-in-alephbft">Randomness in AlephBFT</a>.</li>
+<li>The parent choice rule for units in the paper is different: it allows parents from older rounds as well, not only the previous round. The reason why the paper allows older rounds is to guarantee a theoretical censorship resistance property in the asynchronous setting. In practice this is irrelevant and getting rid of that makes the protocol simpler and more efficient.</li>
+<li>The main version in the paper uses a full list of parent hashes instead of control hashes -- the latter is described in the Appendix as an optimization.</li>
+<li>The paper's Appendix proposes the use of random gossip as a method of disseminating units -- AlephBFT uses repeated broadcast + a request/response mechanism instead, which according to our experience performs much better in practice.</li>
+</ol>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
                         
+                            <a rel="prev" href="aleph_bft_api.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+                        
 
                         
-                            <a rel="next" href="chapter_2.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next" href="internals.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
                         
@@ -187,9 +200,13 @@
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
                 
+                    <a rel="prev" href="aleph_bft_api.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+                
 
                 
-                    <a rel="next" href="chapter_2.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next" href="internals.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
                 

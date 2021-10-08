@@ -1,0 +1,385 @@
+<!DOCTYPE HTML>
+<html lang="en" class="sidebar-visible no-js light">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>API of AlephBFT - AlephBFT</title>
+        
+        
+
+
+        <!-- Custom HTML head -->
+        
+
+
+        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        <meta name="description" content="Documentation of the rust implementation of Aleph protocol">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff" />
+
+        
+        <link rel="icon" href="favicon.svg">
+        
+        
+        <link rel="shortcut icon" href="favicon.png">
+        
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        
+        <link rel="stylesheet" href="css/print.css" media="print">
+        
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        
+        <link rel="stylesheet" href="fonts/fonts.css">
+        
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        
+
+        
+    </head>
+    <body>
+        <!-- Provide site root to javascript -->
+        <script type="text/javascript">
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script type="text/javascript">
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script type="text/javascript">
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('no-js')
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add('js');
+        </script>
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script type="text/javascript">
+            var html = document.querySelector('html');
+            var sidebar = 'hidden';
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            }
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded "><a href="what_is_aleph_bft.html"><strong aria-hidden="true">1.</strong> What is AlephBFT?</a></li><li class="chapter-item expanded "><a href="how_alephbft_does_it.html"><strong aria-hidden="true">2.</strong> What is Aleph?</a></li><li class="chapter-item expanded "><a href="aleph_bft_api.html" class="active"><strong aria-hidden="true">3.</strong> API of AlephBFT</a></li><li class="chapter-item expanded "><a href="differences.html"><strong aria-hidden="true">4.</strong> Differences between Aleph and AlephBFT</a></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">5.</strong> AlephBFT Internals</a></li><li class="chapter-item expanded "><a href="reliable_broadcast.html"><strong aria-hidden="true">6.</strong> Reliable Broadcast</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky bordered">
+                    <div class="left-buttons">
+                        <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </button>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light (default)</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                        
+                    </div>
+
+                    <h1 class="menu-title">AlephBFT</h1>
+
+                    <div class="right-buttons">
+                        
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        
+                        
+                        
+
+                    </div>
+                </div>
+
+                
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+                
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script type="text/javascript">
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h2 id="3-api-of-alephbft"><a class="header" href="#3-api-of-alephbft">3 API of AlephBFT</a></h2>
+<h3 id="31-required-trait-implementations"><a class="header" href="#31-required-trait-implementations">3.1 Required Trait Implementations.</a></h3>
+<h4 id="311-dataio"><a class="header" href="#311-dataio">3.1.1 DataIO.</a></h4>
+<p>The DataIO trait is an abstraction for a component that provides data items and allows to input ordered data items. <code>DataIO</code> is parametrized with a <code>Data</code> generic type representing the type of items we would like to order. Below we give examples of what these might be.</p>
+<pre><pre class="playground"><code class="language-rust">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub trait DataIO&lt;Data&gt; {
+    type Error: Debug;
+    fn get_data(&amp;self) -&gt; Data;
+    fn send_ordered_batch(&amp;mut self, batch: Vec&lt;Data&gt;) -&gt; Result&lt;(), Self::Error&gt;;
+}
+<span class="boring">}
+</span></code></pre></pre>
+<p>AlephBFT internally calls <code>get_data()</code> whenever a new unit is created and data needs to be placed inside. The <code>send_ordered_batch</code> method is called whenever a new round has been decided and thus a new batch of units (or more precisely the data they carry) is available.</p>
+<h4 id="312-network"><a class="header" href="#312-network">3.1.2 Network.</a></h4>
+<p>The Network trait defines the functionality we expect the network layer to satisfy and is quite straightforward:</p>
+<pre><pre class="playground"><code class="language-rust">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub trait Network&lt;H: Hasher, D: Data, S: Encode + Decode&gt;: Send {
+    fn send(&amp;self, data: NetworkData&lt;H, D, S&gt;, recipient: Recipient);
+    async fn next_event(&amp;mut self) -&gt; Option&lt;NetworkData&lt;H, D, S&gt;&gt;;
+}
+<span class="boring">}
+</span></code></pre></pre>
+<p>Here <code>NetworkData</code> is a type representing possible network messages for the AlephBFT protocol. For the purpose of implementing the Network trait what matters the most is that they implement the <code>Encode</code> and <code>Decode</code> traits, i.e., allow for serialization/deserialization thus can be treated as byte arrays if that is more convenient. The <code>Recipient</code> represents who should receive the message, either everyone or a node with a specific index:</p>
+<pre><pre class="playground"><code class="language-rust">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub enum Recipient {
+    Everyone,
+    Node(NodeIndex),
+}
+<span class="boring">}
+</span></code></pre></pre>
+<p>Additionally <code>NetworkData</code> implements a <code>included_data</code> method which returns all the <code>Data</code> that might end up ordered as a result of this message being passed to AlephBFT. The implementation of <code>Network</code> should ensure that the user system is ready to have that <code>Data</code> be ordered. In the case of <code>Data</code> only representing actual data being ordered (e.g. hashes of blocks of transactions), this means ensuring data availability before passing the messages on.</p>
+<p>The <code>send</code> method has straightforward semantics: sending a message to a single or to all the nodes. <code>next_event</code> is an asynchronous method for receiving messages from other nodes.</p>
+<p><strong>Note on Rate Control</strong>: it is assumed that Network <strong>implements a rate control mechanism</strong> guaranteeing that no node is allowed to spam messages without limits. We do not specify details yet, but in future releases we plan to publish recommended upper bounds for the amounts of bandwidth and number of messages allowed per node per a unit of time. These bounds must be carefully crafted based upon the number of nodes <code>N</code> and the configured delays between subsequent Dag rounds, so that at the same time spammers are cut off but honest nodes are able function correctly within these bounds.</p>
+<p><strong>Note on Network Reliability</strong>: it is not assumed that each message that AlephBFT orders to send reaches its intended recipient, there are some built-in reliability mechanisms within AlephBFT that will automatically detect certain failures and resend messages as needed. Clearly, the less reliable the network is, the worse the performarmence of AlephBFT will be (generally slower to produce output). Also, not surprisingly if the percentage of dropped messages is too high AlephBFT might stop making progress, but from what we observe in tests, this happens only when the reliability is extremely bad, i.e., drops below 50% (which means there is some significant issue with the network).</p>
+<h4 id="313-keybox"><a class="header" href="#313-keybox">3.1.3 KeyBox.</a></h4>
+<p>The <code>KeyBox</code> trait is an abstraction for digitally signing arbitrary data and verifying signatures created by other nodes.</p>
+<pre><pre class="playground"><code class="language-rust">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub trait KeyBox: Index + Clone + Send {
+    type Signature: Signature;
+    fn sign(&amp;self, msg: &amp;[u8]) -&gt; Self::Signature;
+    fn verify(&amp;self, msg: &amp;[u8], sgn: &amp;Self::Signature, index: NodeIndex) -&gt; bool;
+}
+<span class="boring">}
+</span></code></pre></pre>
+<p>A typical implementation of KeyBox would be a collection of <code>N</code> public keys, an index <code>i</code> and a single private key corresponding to the public key number <code>i</code>. The meaning of <code>sign</code> is then to produce a signature using the given private key, and <code>verify(msg, s, j)</code> is to verify whether the signature <code>s</code> under the message <code>msg</code> is correct with respect to the public key of the <code>j</code>th node.</p>
+<h3 id="32-examples"><a class="header" href="#32-examples">3.2 Examples</a></h3>
+<p>While the implementations of <code>KeyBox</code> and <code>Network</code> are pretty much universal, the implementation of <code>DataIO</code> depends on the specific application. We consider two examples here.</p>
+<h4 id="321-blockchain-finality-gadget"><a class="header" href="#321-blockchain-finality-gadget">3.2.1 Blockchain Finality Gadget.</a></h4>
+<p>Consider a blockchain that does not have an intrinsic finality mechanism, so for instance it might be a PoW chain with probabilistic finality or a chain based on PoS that uses some probabilistic or round-robin block proposal mechanism. Each of the <code>N</code> nodes in the network has its own view of the chain and at certain moments in time there might be conflicts on what the given nodes consider as the &quot;tip&quot; of the blockchain (because of possible forks or network delays). We would like to design a finality mechanism based on AlephBFT that will allow the nodes to have agreement on what the &quot;tip&quot; is. Towards this end we just need to implement a suitable <code>DataIO</code> object and filtering of network messages for AlephBFT.</p>
+<p>For concreteness, suppose each node holds the genesis block <code>B[0]</code> and its hash <code>hash(B[0])</code> and treats it as the highest finalized block so far.</p>
+<p>We start by defining the <code>Data</code> type: this will be simply <code>Hash</code> representing the block hash in our blockchain. Subsequently, we implement <code>get_data</code> (note that we use pseudocode instead of Rust, for clarity)</p>
+<pre><code>def get_data():
+	let B be the tip of the longest chain extending from the most recently finalized block
+	return hash(B)
+</code></pre>
+<p>This is simply the hash of the block the node thinks is the current &quot;tip&quot;.</p>
+<p>Using the <code>included_data</code> method of <code>NetworkData</code> we can filter incoming network messages in our implementation of <code>Network</code>. The code handling incoming network messages could be</p>
+<pre><code>def handle_incoming_message(M):
+ let hashes = M.included_data()
+ if we have all the blocks referred to by hashes:
+	 if we have all the ancestors of these blocks:
+			add M to ready_messages
+			return
+	add M with it's required hashes to waiting_messages
+	request all the blocks we don't have from random nodes
+</code></pre>
+<p>We note that availability of a block alone is not quite enough for this case as, for instance, if the parent of a block is missing from out storage, we cannot really think of the block as available because we cannot finalize it.</p>
+<p>When we get a new block we can check all the messages in <code>wating_messages</code> and move the ones that now have all the hashes satisfied into <code>ready_messages</code>.</p>
+<pre><code>def handle_incoming_block(B):
+	block_hash = hash(B)
+	for M in waiting_messages:
+		if M depends on block_hash:
+			remove the dependency
+			if we don't have an ancestor B' of B:
+				add a dependency on hash(B') and request it from random nodes
+			if M has no more dependencies:
+				move M to ready_messages
+</code></pre>
+<p>The <code>next</code> method of <code>Network</code> simply returns messages from <code>ready_messages</code>.</p>
+<p>Now we can implement handling ordered batches.</p>
+<pre><code>def send_ordered_batch(batch):
+	let finalized = the highest finalized block so far
+	for block_hash in batch:
+	 // We have this block in local storage by the above filtering.
+		let B be the block such that hash(B) == block_hash
+		if finalized is an ancestor of B:
+			finalize all the blocks on the path from finalized to B
+			let finalized = B
+</code></pre>
+<p>Since (because of AlephBFT's guarantees) all the nodes locally observe the same ordered batches, the above implies that all the nodes will finalize the same blocks, with the only difference being possibly a slight difference in timing.</p>
+<h4 id="322-state-machine-replication-standalone-blockchain"><a class="header" href="#322-state-machine-replication-standalone-blockchain">3.2.2 State Machine Replication (Standalone Blockchain).</a></h4>
+<p>Suppose the set of <code>N</code> nodes would like to implement State Machine Replication, so roughly speaking, a blockchain. Each of the nodes keeps a local transaction pool: transactions it received from users, and the goal is to keep producing blocks with transactions, or in other words produce a linear ordering of these transactions. As previously, we demonstrate how one should go about implementing the <code>DataIO</code> object for this application.</p>
+<p>First of all, <code>Data</code> in this case is <code>Vec&lt;Transaction&gt;</code>, i.e., a list of transactions.</p>
+<pre><code>def get_data():
+	tx_list = []
+	while tx_pool.not_empty() and tx_list.len() &lt; 100:
+		tx = tx_pool.pop()
+		tx_list.append(tx)
+	return tx_list
+</code></pre>
+<p>We simply fetch at most 100 transactions from the local pool and return such a list of transactions.</p>
+<pre><code>def send_ordered_batch(batch):
+	let k be the number of the previous block
+	let tx_list = concatenation of all lists in batch
+	remove duplicated from tx_list
+	remove from tx_list all transactions that appeared in blocks B[0], B[1], ..., B[k]
+	form block B[k+1] using tx_list as its content
+	add B[k+1] to the blockchain
+</code></pre>
+<p>Whenever a new batch is received we simply create a new block out of the batch's content.</p>
+<p>When it comes to availability, in this case <code>Data</code> is not a cryptographic fingerprint of data, but the data itself, so no filtering of network messages is necessary. However, they can be inspected to precompute some operations as an optimization.</p>
+<h3 id="33-guarantees-of-alephbft"><a class="header" href="#33-guarantees-of-alephbft">3.3 Guarantees of AlephBFT.</a></h3>
+<p>Let <code>round_delay</code> be the average delay between two consecutive rounds in the Dag that can be configured in AlephBFT (default value: 0.5 sec). Under the assumption that there are at most <code>floor(N/3)</code> dishonest nodes in the committee and the network behaves reasonably well (we do not specify the details here, but roughly speaking, a weak form of partial synchrony is required) AlephBFT guarantees that:</p>
+<ol>
+<li>Each honest node will make progress in producing to the <code>out</code> stream at a pace of roughly <code>1</code> ordered batch per <code>round_delay</code> seconds (by default, two batches per second).</li>
+<li>For honest nodes that are not &quot;falling behind&quot; significantly (because of network delays or other issues) it is guaranteed that the data items they input in the protocol (from their local <code>DataIO</code> object) will be part of the output stream with a delay of roughly <code>~round_delay*4</code> from the time of inputting it. It is hard to define what &quot;falling behind&quot; exactly means, but think of a situation where a node's round <code>r</code> unit is always arriving much later then the expected time for round <code>r</code> to start. When a node is falling behind from time to time, then there is no issue and its data will be still included in the output stream, however if this problem is chronic, then this node's data might not find its way into the output stream at all. If something like that happens, it most likely means that the <code>round_delay</code> is configured too aggresively and one should consider extending the delay.</li>
+</ol>
+<p>We note that the issue of an honest node's data not being included in the stream is not too dangerous for most of the applications. For instance, for the two example scenarios:</p>
+<ol>
+<li>For the <strong>finality gadget</strong> example, most honest nodes see the same blocks and there is a high level of redundancy, so it does not quite matter that some of the nodes are possibly censored.</li>
+<li>For the <strong>state machine replication</strong> example one must assume that there is some redundancy in the way transactions are distributed among nodes. For instance if there is a gurantee (that one can easily achieve by randomly gossiping each transaction to a smal random subset of nodes) that each transaction appears in the pools of at least <code>5</code> nodes, then the issue of censorship essentially goes away.</li>
+</ol>
+<p>Still, the most important thing to take away from this section is that if censorship happens, then the configuration of AlephBFT is suboptimal and one should increase the <code>round_delay</code>.</p>
+<h3 id="331-what-happens-when-not-enough-nodes-are-honest"><a class="header" href="#331-what-happens-when-not-enough-nodes-are-honest">3.3.1 What happens when not enough nodes are honest.</a></h3>
+<p>If there are less than <code>floor(2/3N)+1</code> nodes that are online and are honestly following the protocol rules then certain failures might happen. There are two possibilities:</p>
+<ol>
+<li><strong>Stall</strong> -- the output streams of nodes stop producing data items. This is also what will happen when the nodes are generally honest, but there is either a significant network partition or lots of nodes crash. If this is not caused by malicious behavior but network issues, the protocol will recover by itself and eventually resume its normal execution.</li>
+<li><strong>Inconsistent Output</strong> -- this is the most extreme failure that can happen and can only be a result of malicious behavior of a significant fraction of all the nodes. It means that the honest nodes' output streams stop being consistent. In practice for this to happen the adversary must control <em>lots</em> of nodes, i.e., around <code>(2/3)N</code>. The type of failure that would usually happen if the adversary controls barely above <code>floor(1/3N)+1</code> is stall.</li>
+</ol>
+<h3 id="34-alephbft-sessions"><a class="header" href="#34-alephbft-sessions">3.4 AlephBFT Sessions.</a></h3>
+<p>Currently the API of AlephBFT allows to run a single Session that is expected to last a fixed number of rounds and thus to finalize a fixed number of output batches. By default a AlephBFT Session is <code>5000</code> rounds long but out of these <code>5000</code> there are <code>3000</code> rounds that the protocol proceeds at a regular speed (i.e., <code>500ms</code> per round) and after that starts to slow down (each round is <code>1.005</code> times slower than the previous one) so that round <code>5000</code> is virtually impossible to reach.</p>
+<p>There are essentially two ways to use AlephBFT:</p>
+<ol>
+<li><strong>Single Session</strong> -- just run a single session to make consensus regarding some specific one-time question. In this case one can run the default configuration and just terminate the protocol once the answer is in the output stream.</li>
+<li><strong>Multiple Sessions</strong> -- a mode of execution when AlephBFT is run several times sequentially. An important motivating example is the use of AlephBFT as a finality gadget for a blockchain. Think of session <code>k</code> as being responsible for finalizing blocks at heights <code>[100k, 100(k+1)-1]</code>. There should be then an external mechanism to run a new AlephBFT session when the last block of a session gets finalized (and stop inactive sessions as well). This example gives a clear answer for why we opted for the slowdown after round <code>3000</code> as explained above: this is to make sure that no matter the variance in block-time of the block production mechanism, and no matter whether there are stalls, network issues, crashes, etc it is guaranteed that the prespecified segment of blocks is guaranteed to be finalized in a given session. Readers who are experienced with consensus engines are surely aware of how problematic it would be if at the end of a session, say, only <code>70</code> out of the intended <code>100</code> blocks would be finalized. That's why it's better to slow down consensus but make sure it achieves the intended goal.</li>
+</ol>
+<p><strong>Why are there even sessions in AlephBFT?</strong> To answer this question one would need to make a deep dive into the internal workings of AlephBFT, but a high level summary is: we want to make AlephBFT blazing fast, hence we need to keep everything in RAM (no disk), hence we need to have a round limit, hence we need sessions. For every &quot;hence&quot; in the previous sentence there are extensive arguments to back it, but they are perhaps beyond the scope of this document. We are aware of the inconvenience that it brings -- being forced to implement a session manager, but:</p>
+<ol>
+<li>We feel that depending on the application there might be different ways to deal with sessions and its better if we leave the task of session managing to the user.</li>
+<li>In one of the future releases we plan to add an optional default session manager, but will still encourage the user to implement a custom one for a particular use-case.</li>
+</ol>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                        
+                            <a rel="prev" href="how_alephbft_does_it.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+                        
+
+                        
+                            <a rel="next" href="differences.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+                        
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                
+                    <a rel="prev" href="how_alephbft_does_it.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+                
+
+                
+                    <a rel="next" href="differences.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+                
+            </nav>
+
+        </div>
+
+        
+
+        
+
+        
+
+        
+        <script type="text/javascript">
+            window.playground_copyable = true;
+        </script>
+        
+
+        
+
+        
+        <script src="elasticlunr.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="mark.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="searcher.js" type="text/javascript" charset="utf-8"></script>
+        
+
+        <script src="clipboard.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="highlight.js" type="text/javascript" charset="utf-8"></script>
+        <script src="book.js" type="text/javascript" charset="utf-8"></script>
+
+        <!-- Custom JS scripts -->
+        
+
+        
+
+    </body>
+</html>
