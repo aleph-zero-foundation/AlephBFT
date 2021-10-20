@@ -5,8 +5,7 @@
 
 # Rust
 .cargo/config
-/target
-Cargo.lock
+*target
 **/*.rs.bk
 
 # Profiler

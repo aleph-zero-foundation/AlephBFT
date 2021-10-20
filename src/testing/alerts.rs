@@ -53,9 +53,11 @@ impl Segment {
     }
 
     fn check_output(&mut self, output: Output) {
-        if self.unexpected.contains(&output) {
-            panic!("Unexpected {:?} emitted by alerter.", output);
-        }
+        assert!(
+            !self.unexpected.contains(&output),
+            "Unexpected {:?} emitted by alerter.",
+            output
+        );
         match self.expected.get_mut(&output) {
             Some(count) => *count -= 1,
             None => trace!("Possibly unnecessary {:?} emitted by alerter.", output),
