@@ -225,7 +225,7 @@ pub(crate) async fn run<
 mod tests {
     use super::*;
     use crate::{
-        nodes::BoolNodeMap,
+        nodes::NodeSubset,
         testing::mock::{self, Data, Hasher64, PartialMultisignature, Signature},
         units::{ControlHash, FullUnit, PreUnit, UncheckedSignedUnit, UnitCoord},
         Round, UncheckedSigned,
@@ -237,7 +237,7 @@ mod tests {
         variant: u32,
     ) -> UncheckedSignedUnit<Hasher64, Data, Signature> {
         let control_hash = ControlHash {
-            parents_mask: BoolNodeMap::with_capacity(7.into()),
+            parents_mask: NodeSubset::with_size(7.into()),
             combined_hash: 0.using_encoded(Hasher64::hash),
         };
         let pu = PreUnit::new(creator, round, control_hash);

@@ -222,7 +222,7 @@ fn bad_signature() -> TestSignature {
 }
 
 fn bad_multisignature(node_count: NodeCount) -> TestPartialMultisignature {
-    SignatureSet::new(node_count)
+    SignatureSet::with_size(node_count)
 }
 
 /// 7 honest nodes and 3 dishonest nodes which emit bad signatures and multisignatures

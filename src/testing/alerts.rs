@@ -112,7 +112,7 @@ impl TestCase {
             PreUnit::new(
                 forker,
                 round,
-                ControlHash::new(&NodeMap::new_with_len(
+                ControlHash::new(&NodeMap::with_size(
                     self.keychain(NodeIndex(0)).node_count(),
                 )),
             ),

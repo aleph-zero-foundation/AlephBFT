@@ -28,7 +28,7 @@ pub struct TerminalUnit<H: Hasher> {
     // and hashes of parents are being added at the time we receive a given coord. Once the parents map is complete
     // we test whether the hash of parents agains the control_hash in the unit. If the check fails, we request hashes
     // of parents of this unit via a NotificationOut.
-    parents: NodeMap<Option<H::Hash>>,
+    parents: NodeMap<H::Hash>,
     n_miss_par_decoded: NodeCount,
     n_miss_par_dag: NodeCount,
     status: UnitStatus,
@@ -53,7 +53,7 @@ impl<H: Hasher> TerminalUnit<H> {
         let n_parents = unit.control_hash().n_parents();
         TerminalUnit {
             unit: unit.clone(),
-            parents: NodeMap::new_with_len(n_members),
+            parents: NodeMap::with_size(n_members),
             n_miss_par_decoded: n_parents,
             n_miss_par_dag: n_parents,
             status: UnitStatus::ReconstructingParents,
@@ -153,7 +153,7 @@ impl<H: Hasher> Terminal<H> {
         let u = self.unit_store.get_mut(u_hash).unwrap();
         // the above unwraps must succeed, should probably add some debug messages here...
 
-        u.parents[pid] = Some(*p_hash);
+        u.parents.insert(pid, *p_hash);
         u.n_miss_par_decoded -= NodeCount(1);
         if u.n_miss_par_decoded == NodeCount(0) {
             self.event_queue
@@ -247,8 +247,8 @@ impl<H: Hasher> Terminal<H> {
             }
         }
         let mut parent_hashes = Vec::new();
-        for p_hash in u.parents.iter().flatten() {
-            parent_hashes.push(*p_hash);
+        for p_hash in u.parents.into_values() {
+            parent_hashes.push(p_hash);
         }
 
         self.send_notification(NotificationOut::AddedToDag(*u_hash, parent_hashes));
@@ -265,7 +265,7 @@ impl<H: Hasher> Terminal<H> {
             return;
         }
         for (counter, i) in u.unit.control_hash().parents().enumerate() {
-            u.parents[i] = Some(p_hashes[counter]);
+            u.parents.insert(i, p_hashes[counter]);
         }
         trace!(target: "AlephBFT-terminal", "{:?} Updating parent hashes for wrong control hash unit {:?}", self.node_id, u_hash);
         u.n_miss_par_decoded = NodeCount(0);
@@ -283,7 +283,7 @@ impl<H: Hasher> Terminal<H> {
     fn inspect_parents_in_dag(&mut self, u_hash: &H::Hash) {
         let u_parents = self.unit_store.get(u_hash).unwrap().parents.clone();
         let mut n_parents_in_dag = NodeCount(0);
-        for p_hash in u_parents.into_iter().flatten() {
+        for p_hash in u_parents.into_values() {
             let maybe_p = self.unit_store.get(&p_hash);
             // p might not be even in store because u might be a unit with wrong control hash
             match maybe_p {

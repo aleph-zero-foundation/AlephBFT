@@ -1,6 +1,5 @@
 use crate::{
     creation::{run, IO},
-    nodes::NodeMap,
     runway::NotificationOut as GenericNotificationOut,
     testing::mock::{gen_config, Data, Hasher64},
     units::{
@@ -30,7 +29,7 @@ fn preunit_to_unit(preunit: PreUnit) -> Unit {
 }
 
 struct TestController {
-    max_round_per_creator: NodeMap<Round>,
+    max_round_per_creator: Vec<Round>,
     parents_for_creators: Sender<Unit>,
     units_from_creators: Receiver<NotificationOut>,
 }
@@ -42,7 +41,7 @@ impl TestController {
         n_members: NodeCount,
     ) -> Self {
         TestController {
-            max_round_per_creator: NodeMap::new_with_len(n_members),
+            max_round_per_creator: vec![0; n_members.0],
             parents_for_creators,
             units_from_creators,
         }
@@ -64,7 +63,7 @@ impl TestController {
             if unit.round() > round_reached {
                 round_reached = unit.round();
             }
-            self.max_round_per_creator[unit.creator()] += 1;
+            self.max_round_per_creator[unit.creator().0] += 1;
             self.parents_for_creators
                 .unbounded_send(unit.clone())
                 .expect("Creator input channel isn't closed.");

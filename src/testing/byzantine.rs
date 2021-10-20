@@ -56,9 +56,9 @@ impl<'a> MaliciousMember<'a> {
         NetworkDataT(Units(NewUnit(su.into())))
     }
 
-    fn pick_parents(&self, round: Round) -> Option<NodeMap<Option<Hash64>>> {
+    fn pick_parents(&self, round: Round) -> Option<NodeMap<Hash64>> {
         // Outputs a parent map if there are enough of them to create a new unit.
-        let mut parents = NodeMap::new_with_len(self.n_members);
+        let mut parents = NodeMap::with_size(self.n_members);
         if round == 0 {
             return Some(parents);
         }
@@ -72,7 +72,7 @@ impl<'a> MaliciousMember<'a> {
             let coord = UnitCoord::new(round - 1, ix);
             if let Some(su) = self.unit_store.get(&coord) {
                 let hash: <Hasher64 as Hasher>::Hash = su.as_signable().hash();
-                parents[ix] = Some(hash);
+                parents.insert(ix, hash);
                 count += 1;
             }
         }

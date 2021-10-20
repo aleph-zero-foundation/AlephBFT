@@ -1,6 +1,6 @@
 use crate::{
     consensus,
-    nodes::{NodeCount, NodeIndex, NodeMap},
+    nodes::{NodeCount, NodeIndex, NodeMap, NodeSubset},
     runway::{NotificationIn, NotificationOut},
     testing::mock::{gen_config, Hash64, Hasher64, Spawner},
     units::{ControlHash, PreUnit, Unit},
@@ -22,7 +22,7 @@ use std::collections::HashMap;
 #[derive(Clone)]
 struct UnitWithParents {
     unit: Unit<Hasher64>,
-    parent_hashes: NodeMap<Option<Hash64>>,
+    parent_hashes: NodeMap<Hash64>,
 }
 
 fn unit_hash(round: Round, creator: NodeIndex, variant: usize) -> Hash64 {
@@ -38,7 +38,7 @@ impl UnitWithParents {
         round: Round,
         creator: NodeIndex,
         variant: usize,
-        parent_hashes: NodeMap<Option<Hash64>>,
+        parent_hashes: NodeMap<Hash64>,
     ) -> Self {
         let control_hash = ControlHash::new(&parent_hashes);
         let pre_unit = PreUnit::new(creator, round, control_hash);
@@ -54,7 +54,7 @@ impl UnitWithParents {
     }
 
     fn parent_hashes_vec(&self) -> Vec<Hash64> {
-        self.parent_hashes.iter().cloned().flatten().collect()
+        self.parent_hashes.values().cloned().collect()
     }
 }
 
@@ -170,13 +170,13 @@ fn generate_random_dag(n_members: NodeCount, height: Round, seed: u64) -> Vec<Un
     let mut rng = StdRng::seed_from_u64(seed);
     let max_forkers = NodeCount((n_members.0 - 1) / 3);
     let n_forkers = NodeCount(rng.gen_range(0..=max_forkers.0));
-    let mut forker_bitmap = NodeMap::<bool>::new_with_len(n_members);
+    let mut forker_bitmap = NodeSubset::with_size(n_members);
     // below we select n_forkers forkers at random
     for forker_ix in n_members
         .into_iterator()
         .choose_multiple(&mut rng, n_forkers.into())
     {
-        forker_bitmap[forker_ix] = true;
+        forker_bitmap.insert(forker_ix);
     }
     // The probability that a node stops creating units at a given round.
     // For a fixed node the probability that it will terminate before height is a constant around 0.1
@@ -205,7 +205,7 @@ fn generate_random_dag(n_members: NodeCount, height: Round, seed: u64) -> Vec<Un
                 n_variants = 0;
             }
             for variant in 0..n_variants {
-                let mut parents = NodeMap::new_with_len(n_members);
+                let mut parents = NodeMap::with_size(n_members);
                 if r != 0 {
                     let previous_round_index = (r - 1) as usize;
                     if dag[previous_round_index][node_ix.0].is_empty() {
@@ -243,7 +243,7 @@ fn generate_random_dag(n_members: NodeCount, height: Round, seed: u64) -> Vec<Un
                         let parent = dag[previous_round_index][parent_ix.0]
                             .choose(&mut rng)
                             .unwrap();
-                        parents[*parent_ix] = Some(parent.hash());
+                        parents.insert(*parent_ix, parent.hash());
                         curr_n_parents += 1.into();
                         if curr_n_parents == n_parents {
                             break;

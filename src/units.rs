@@ -1,5 +1,5 @@
 use crate::{
-    nodes::BoolNodeMap,
+    nodes::NodeSubset,
     signed::{Signable, Signed, UncheckedSigned},
     Data, Hasher, Index, KeyBox, NodeCount, NodeIndex, NodeMap, Round, SessionId,
 };
@@ -34,27 +34,24 @@ impl UnitCoord {
 /// parents
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Encode, Decode)]
 pub(crate) struct ControlHash<H: Hasher> {
-    pub(crate) parents_mask: BoolNodeMap,
+    pub(crate) parents_mask: NodeSubset,
     pub(crate) combined_hash: H::Hash,
 }
 
 impl<H: Hasher> ControlHash<H> {
-    pub(crate) fn new(parent_map: &NodeMap<Option<H::Hash>>) -> Self {
-        let hash = Self::combine_hashes(parent_map);
-        let parents = parent_map.iter().map(Option::is_some).collect();
-
+    pub(crate) fn new(parent_map: &NodeMap<H::Hash>) -> Self {
         ControlHash {
-            parents_mask: parents,
-            combined_hash: hash,
+            parents_mask: parent_map.to_subset(),
+            combined_hash: Self::combine_hashes(parent_map),
         }
     }
 
-    pub(crate) fn combine_hashes(parent_map: &NodeMap<Option<H::Hash>>) -> H::Hash {
+    pub(crate) fn combine_hashes(parent_map: &NodeMap<H::Hash>) -> H::Hash {
         parent_map.using_encoded(H::hash)
     }
 
     pub(crate) fn parents(&self) -> impl Iterator<Item = NodeIndex> + '_ {
-        self.parents_mask.true_indices()
+        self.parents_mask.elements()
     }
 
     pub(crate) fn n_parents(&self) -> NodeCount {
@@ -62,7 +59,7 @@ impl<H: Hasher> ControlHash<H> {
     }
 
     pub(crate) fn n_members(&self) -> NodeCount {
-        NodeCount(self.parents_mask.capacity())
+        NodeCount(self.parents_mask.size())
     }
 }
 

@@ -3,7 +3,7 @@ use crate::{
     Index,
 };
 use async_trait::async_trait;
-use codec::{Decode, Encode, Error, Input, Output};
+use codec::{Decode, Encode};
 use log::warn;
 use std::{fmt::Debug, marker::PhantomData};
 /// The type used as a signature.
@@ -435,50 +435,13 @@ impl<'a, T: Signable, MK: MultiKeychain> PartiallyMultisigned<'a, T, MK> {
 }
 
 /// A set of signatures of a subset of nodes serving as a (partial) multisignature
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SignatureSet<S: Signature> {
-    signatures: NodeMap<Option<S>>,
-}
-
-impl<S: Signature> Encode for SignatureSet<S> {
-    fn size_hint(&self) -> usize {
-        self.signatures.size_hint()
-    }
-
-    fn encode_to<T: Output + ?Sized>(&self, dest: &mut T) {
-        self.signatures.encode_to(dest);
-    }
-
-    fn encode(&self) -> Vec<u8> {
-        self.signatures.encode()
-    }
-
-    fn using_encoded<R, F: FnOnce(&[u8]) -> R>(&self, f: F) -> R {
-        self.signatures.using_encoded(f)
-    }
-}
-
-impl<S: Signature> Decode for SignatureSet<S> {
-    fn decode<I: Input>(input: &mut I) -> Result<Self, Error> {
-        let signatures = NodeMap::decode(input)?;
-        Ok(SignatureSet { signatures })
-    }
-}
-
-impl<S: Signature> SignatureSet<S> {
-    /// Construct an empty set of signatures for a committee of a given size.
-    pub(crate) fn new(len: NodeCount) -> Self {
-        SignatureSet {
-            signatures: NodeMap::new_with_len(len),
-        }
-    }
-}
+pub type SignatureSet<S> = NodeMap<S>;
 
 impl<S: Signature> PartialMultisignature for SignatureSet<S> {
     type Signature = S;
 
     fn add_signature(mut self, signature: &Self::Signature, index: NodeIndex) -> Self {
-        self.signatures[index] = Some(signature.clone());
+        self.insert(index, signature.clone());
         self
     }
 }
@@ -534,17 +497,16 @@ impl<KB: KeyBox> MultiKeychain for DefaultMultiKeychain<KB> {
         signature: &Self::Signature,
         index: NodeIndex,
     ) -> Self::PartialMultisignature {
-        SignatureSet::add_signature(SignatureSet::new(self.node_count()), signature, index)
+        SignatureSet::add_signature(SignatureSet::with_size(self.node_count()), signature, index)
     }
 
     fn is_complete(&self, msg: &[u8], partial: &Self::PartialMultisignature) -> bool {
-        let signature_count = partial.signatures.iter().flatten().count();
+        let signature_count = partial.iter().count();
         if signature_count < self.quorum() {
             return false;
         }
-        partial.signatures.enumerate().all(|(i, sgn)| {
-            sgn.as_ref()
-                .map_or(true, |sgn| self.key_box.verify(msg, sgn, i))
-        })
+        partial
+            .iter()
+            .all(|(i, sgn)| self.key_box.verify(msg, sgn, i))
     }
 }
