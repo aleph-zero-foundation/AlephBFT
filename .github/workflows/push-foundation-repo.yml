@@ -2,7 +2,7 @@ name: Sync Cardinal-Cryptography repo with Aleph-Zero-Foundation repo
 
 on:
   push:
-    branches: [main]
+    branches: [AZ-62-fix-sync-with-foundation-repo]
 
 jobs:
   sync:
@@ -11,4 +11,6 @@ jobs:
       - name: checkout
         uses: actions/checkout@v2
       - name: Push to Aleph-Zero-Foundation
-        run: git push https://x-access-token:${{ secrets.SYNCAZF }}@github.com/aleph-zero-foundation/AlephBFT
+        run: |
+          echo "${{ secrets.SYNCAZF }}"
+          git push https://x-access-token:${{ secrets.SYNCAZF }}@github.com/aleph-zero-foundation/AlephBFT
