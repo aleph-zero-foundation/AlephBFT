@@ -12,5 +12,5 @@ jobs:
         uses: actions/checkout@v2
       - name: Push to Aleph-Zero-Foundation
         run: |
-          git remote set-url alephzero https://x-access-token:${{ secrets.SYNC_FOUNDATION }}@github.com/aleph-zero-foundation/AlephBFT
+          git remote add alephzero https://x-access-token:${{ secrets.SYNC_FOUNDATION }}@github.com/aleph-zero-foundation/AlephBFT
           git push alephzero
