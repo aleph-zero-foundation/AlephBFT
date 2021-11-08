@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@AZ-62-fix-sync-with-foundation-repo
       - name: Push to Aleph-Zero-Foundation
         run: |
           git remote add alephzero https://x-access-token:${{ secrets.SYNC_FOUNDATION }}@github.com/aleph-zero-foundation/AlephBFT
