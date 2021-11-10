@@ -14,5 +14,7 @@ jobs:
       - name: Push to Aleph-Zero-Foundation
         run: |
           git config -l
+          git config -l | grep 'http\..*\.extraheader' | cut -d= -f1 | \
+            xargs -L1 git config --unset-all
           git remote add alephzero https://maciejnems:${{ secrets.SYNC_FOUNDATION }}@github.com/aleph-zero-foundation/AlephBFT.git
           git push alephzero
