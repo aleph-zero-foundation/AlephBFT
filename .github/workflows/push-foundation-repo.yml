@@ -14,5 +14,5 @@ jobs:
       - name: Push to Aleph-Zero-Foundation
         run: |
           git config -l
-          git remote add alephzero https://syncABF:${{ secrets.SYNC_FOUNDATION }}@github.com/aleph-zero-foundation/AlephBFT.git
+          git remote add alephzero https://maciejnems:${{ secrets.SYNC_FOUNDATION }}@github.com/aleph-zero-foundation/AlephBFT.git
           git push alephzero
