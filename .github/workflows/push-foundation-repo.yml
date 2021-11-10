@@ -13,6 +13,4 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.SYNC_FOUNDATION }}
       - name: Push to Aleph-Zero-Foundation
-        run: |
-          git remote add alephzero https://maciejnems:${{ secrets.SYNC_FOUNDATION }}@github.com/aleph-zero-foundation/AlephBFT.git
-          git push alephzero
+        run: git push https://x-access-token:${{ secrets.SYNC_FOUNDATION }}@github.com/aleph-zero-foundation/AlephBFT.git
