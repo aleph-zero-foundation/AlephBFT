@@ -11,6 +11,6 @@ jobs:
       - uses: actions/checkout@v2
         with:
           fetch-depth: 0
-          token: ${{ secrets.SYNC_FOUNDATION }}
+          token: ${{ secrets.SYNCAZF }}
       - name: Push to Aleph-Zero-Foundation
-        run: git push https://x-access-token:${{ secrets.SYNC_FOUNDATION }}@github.com/aleph-zero-foundation/AlephBFT.git
+        run: git push https://x-access-token:${{ secrets.SYNCAZF }}@github.com/aleph-zero-foundation/AlephBFT.git
