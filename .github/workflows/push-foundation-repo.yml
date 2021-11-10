@@ -14,5 +14,5 @@ jobs:
         run: |
           git config --global user.name 'sync-foundation'
           git config --global user.email 'sync@alephzero.org'
-          git remote add alephzero https://x-access-token:${{ secrets.SYNCAZF }}@github.com/aleph-zero-foundation/AlephBFT
+          git remote add alephzero https://syncABF:${{ secrets.SYNCAZF }}@github.com/aleph-zero-foundation/AlephBFT
           git push alephzero
