@@ -8,11 +8,11 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: checkout
-        uses: actions/checkout@main
+      - uses: actions/checkout@main
+        with:
+          fetch-depth: 0
       - name: Push to Aleph-Zero-Foundation
         run: |
-          git config --global user.name 'sync-foundation'
-          git config --global user.email 'sync@alephzero.org'
+          git config -l
           git remote add alephzero https://syncABF:${{ secrets.SYNCAZF }}@github.com/aleph-zero-foundation/AlephBFT.git
           git push alephzero
