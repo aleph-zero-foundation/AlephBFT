@@ -7,8 +7,11 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    if: ${{ github.repository == 'Cardinal-Cryptography/AlephBFT'}}
     steps:
-      - name: checkout
-        uses: actions/checkout@v2
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SYNCAZF }}
       - name: Push to Aleph-Zero-Foundation
-        run: git push https://x-access-token:${{ secrets.SYNCAZF }}@github.com/aleph-zero-foundation/AlephBFT
+        run: git push https://x-access-token:${{ secrets.SYNCAZF }}@github.com/aleph-zero-foundation/AlephBFT.git
