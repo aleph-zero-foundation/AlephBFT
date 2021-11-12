@@ -9,6 +9,7 @@ jobs:
   autobump:
     environment: Autobump version
     runs-on: ubuntu-latest
+    if: ${{ github.repository == 'Cardinal-Cryptography/AlephBFT'}}
     steps:
       - name: checkout
         uses: actions/checkout@v2
