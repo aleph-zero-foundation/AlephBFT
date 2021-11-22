@@ -75,6 +75,10 @@ impl<T> NodeMap<T> {
         NodeMap(v)
     }
 
+    pub fn size(&self) -> NodeCount {
+        self.0.len().into()
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = (NodeIndex, &T)> {
         self.0
             .iter()
