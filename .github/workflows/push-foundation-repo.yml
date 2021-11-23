@@ -1,8 +1,11 @@
 name: Sync Cardinal-Cryptography repo with Aleph-Zero-Foundation repo
 
 on:
-  push:
+  workflow_run:
+    workflows: ["Autobump version"]
     branches: [main]
+    types:
+      - completed
 
 jobs:
   sync:
@@ -12,6 +15,7 @@ jobs:
       - uses: actions/checkout@v2
         with:
           fetch-depth: 0
+          ref: "main"
           token: ${{ secrets.SYNCAZF }}
       - name: Push to Aleph-Zero-Foundation
         run: git push https://x-access-token:${{ secrets.SYNCAZF }}@github.com/aleph-zero-foundation/AlephBFT.git
