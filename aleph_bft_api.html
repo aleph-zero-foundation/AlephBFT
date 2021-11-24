@@ -167,19 +167,27 @@
                     <main>
                         <h2 id="3-api-of-alephbft"><a class="header" href="#3-api-of-alephbft">3 API of AlephBFT</a></h2>
 <h3 id="31-required-trait-implementations"><a class="header" href="#31-required-trait-implementations">3.1 Required Trait Implementations.</a></h3>
-<h4 id="311-dataio"><a class="header" href="#311-dataio">3.1.1 DataIO.</a></h4>
-<p>The DataIO trait is an abstraction for a component that provides data items and allows to input ordered data items. <code>DataIO</code> is parametrized with a <code>Data</code> generic type representing the type of items we would like to order. Below we give examples of what these might be.</p>
+<h4 id="311-dataprovider--finalizationhandler"><a class="header" href="#311-dataprovider--finalizationhandler">3.1.1 DataProvider &amp; FinalizationHandler.</a></h4>
+<p>The DataProvider trait is an abstraction for a component that provides data items. <code>DataProvider</code> is parametrized with a <code>Data</code> generic type representing the type of items we would like to order. Below we give examples of what these might be.</p>
 <pre><pre class="playground"><code class="language-rust">
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>pub trait DataIO&lt;Data&gt; {
-    type Error: Debug;
-    fn get_data(&amp;self) -&gt; Data;
-    fn send_ordered_batch(&amp;mut self, batch: Vec&lt;Data&gt;) -&gt; Result&lt;(), Self::Error&gt;;
+</span>pub trait DataProvider&lt;Data&gt; {
+    async fn get_data(&amp;mut self) -&gt; Data;
 }
 <span class="boring">}
 </span></code></pre></pre>
-<p>AlephBFT internally calls <code>get_data()</code> whenever a new unit is created and data needs to be placed inside. The <code>send_ordered_batch</code> method is called whenever a new round has been decided and thus a new batch of units (or more precisely the data they carry) is available.</p>
+<p>AlephBFT internally calls <code>get_data()</code> whenever a new unit is created and data needs to be placed inside.</p>
+<p>The FinalizationHandler trait is an abstraction for a component that should handle finalized items. Same as <code>DataProvider</code> is parametrized with a <code>Data</code> generic type.</p>
+<pre><pre class="playground"><code class="language-rust">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub trait FinalizationHandler&lt;Data&gt; {
+    async fn data_finalized(&amp;mut self, data: Data);
+}
+<span class="boring">}
+</span></code></pre></pre>
+<p>Calls to function <code>data_finalized</code> represent the order of the units that AlephBft produced.</p>
 <h4 id="312-network"><a class="header" href="#312-network">3.1.2 Network.</a></h4>
 <p>The Network trait defines the functionality we expect the network layer to satisfy and is quite straightforward:</p>
 <pre><pre class="playground"><code class="language-rust">
@@ -219,9 +227,9 @@
 </span></code></pre></pre>
 <p>A typical implementation of KeyBox would be a collection of <code>N</code> public keys, an index <code>i</code> and a single private key corresponding to the public key number <code>i</code>. The meaning of <code>sign</code> is then to produce a signature using the given private key, and <code>verify(msg, s, j)</code> is to verify whether the signature <code>s</code> under the message <code>msg</code> is correct with respect to the public key of the <code>j</code>th node.</p>
 <h3 id="32-examples"><a class="header" href="#32-examples">3.2 Examples</a></h3>
-<p>While the implementations of <code>KeyBox</code> and <code>Network</code> are pretty much universal, the implementation of <code>DataIO</code> depends on the specific application. We consider two examples here.</p>
+<p>While the implementations of <code>KeyBox</code> and <code>Network</code> are pretty much universal, the implementation of <code>DataProvider</code> and <code>FinalizationHandler</code> depends on the specific application. We consider two examples here.</p>
 <h4 id="321-blockchain-finality-gadget"><a class="header" href="#321-blockchain-finality-gadget">3.2.1 Blockchain Finality Gadget.</a></h4>
-<p>Consider a blockchain that does not have an intrinsic finality mechanism, so for instance it might be a PoW chain with probabilistic finality or a chain based on PoS that uses some probabilistic or round-robin block proposal mechanism. Each of the <code>N</code> nodes in the network has its own view of the chain and at certain moments in time there might be conflicts on what the given nodes consider as the &quot;tip&quot; of the blockchain (because of possible forks or network delays). We would like to design a finality mechanism based on AlephBFT that will allow the nodes to have agreement on what the &quot;tip&quot; is. Towards this end we just need to implement a suitable <code>DataIO</code> object and filtering of network messages for AlephBFT.</p>
+<p>Consider a blockchain that does not have an intrinsic finality mechanism, so for instance it might be a PoW chain with probabilistic finality or a chain based on PoS that uses some probabilistic or round-robin block proposal mechanism. Each of the <code>N</code> nodes in the network has its own view of the chain and at certain moments in time there might be conflicts on what the given nodes consider as the &quot;tip&quot; of the blockchain (because of possible forks or network delays). We would like to design a finality mechanism based on AlephBFT that will allow the nodes to have agreement on what the &quot;tip&quot; is. Towards this end we just need to implement a suitable <code>DataProvider</code> object and filtering of network messages for AlephBFT.</p>
 <p>For concreteness, suppose each node holds the genesis block <code>B[0]</code> and its hash <code>hash(B[0])</code> and treats it as the highest finalized block so far.</p>
 <p>We start by defining the <code>Data</code> type: this will be simply <code>Hash</code> representing the block hash in our blockchain. Subsequently, we implement <code>get_data</code> (note that we use pseudocode instead of Rust, for clarity)</p>
 <pre><code>def get_data():
@@ -252,19 +260,17 @@
 				move M to ready_messages
 </code></pre>
 <p>The <code>next</code> method of <code>Network</code> simply returns messages from <code>ready_messages</code>.</p>
-<p>Now we can implement handling ordered batches.</p>
-<pre><code>def send_ordered_batch(batch):
+<p>Now we can implement handling block finalization by implementing trait <code>FinalizationHandler</code>.</p>
+<pre><code>def data_finalized(block_hash):
 	let finalized = the highest finalized block so far
-	for block_hash in batch:
-	 // We have this block in local storage by the above filtering.
-		let B be the block such that hash(B) == block_hash
-		if finalized is an ancestor of B:
-			finalize all the blocks on the path from finalized to B
-			let finalized = B
+ // We have this block in local storage by the above filtering.
+    let B be the block such that hash(B) == block_hash
+    if finalized is an ancestor of B:
+        finalize all the blocks on the path from finalized to B
 </code></pre>
-<p>Since (because of AlephBFT's guarantees) all the nodes locally observe the same ordered batches, the above implies that all the nodes will finalize the same blocks, with the only difference being possibly a slight difference in timing.</p>
+<p>Since (because of AlephBFT's guarantees) all the nodes locally observe hashes in the same order, the above implies that all the nodes will finalize the same blocks, with the only difference being possibly a slight difference in timing.</p>
 <h4 id="322-state-machine-replication-standalone-blockchain"><a class="header" href="#322-state-machine-replication-standalone-blockchain">3.2.2 State Machine Replication (Standalone Blockchain).</a></h4>
-<p>Suppose the set of <code>N</code> nodes would like to implement State Machine Replication, so roughly speaking, a blockchain. Each of the nodes keeps a local transaction pool: transactions it received from users, and the goal is to keep producing blocks with transactions, or in other words produce a linear ordering of these transactions. As previously, we demonstrate how one should go about implementing the <code>DataIO</code> object for this application.</p>
+<p>Suppose the set of <code>N</code> nodes would like to implement State Machine Replication, so roughly speaking, a blockchain. Each of the nodes keeps a local transaction pool: transactions it received from users, and the goal is to keep producing blocks with transactions, or in other words produce a linear ordering of these transactions. As previously, we demonstrate how one should go about implementing the <code>DataProvider</code> and <code>FinalizationHandler</code> objects for this application.</p>
 <p>First of all, <code>Data</code> in this case is <code>Vec&lt;Transaction&gt;</code>, i.e., a list of transactions.</p>
 <pre><code>def get_data():
 	tx_list = []
@@ -274,9 +280,8 @@
 	return tx_list
 </code></pre>
 <p>We simply fetch at most 100 transactions from the local pool and return such a list of transactions.</p>
-<pre><code>def send_ordered_batch(batch):
+<pre><code>def data_finalized(tx_list):
 	let k be the number of the previous block
-	let tx_list = concatenation of all lists in batch
 	remove duplicated from tx_list
 	remove from tx_list all transactions that appeared in blocks B[0], B[1], ..., B[k]
 	form block B[k+1] using tx_list as its content
@@ -288,7 +293,7 @@
 <p>Let <code>round_delay</code> be the average delay between two consecutive rounds in the Dag that can be configured in AlephBFT (default value: 0.5 sec). Under the assumption that there are at most <code>floor(N/3)</code> dishonest nodes in the committee and the network behaves reasonably well (we do not specify the details here, but roughly speaking, a weak form of partial synchrony is required) AlephBFT guarantees that:</p>
 <ol>
 <li>Each honest node will make progress in producing to the <code>out</code> stream at a pace of roughly <code>1</code> ordered batch per <code>round_delay</code> seconds (by default, two batches per second).</li>
-<li>For honest nodes that are not &quot;falling behind&quot; significantly (because of network delays or other issues) it is guaranteed that the data items they input in the protocol (from their local <code>DataIO</code> object) will be part of the output stream with a delay of roughly <code>~round_delay*4</code> from the time of inputting it. It is hard to define what &quot;falling behind&quot; exactly means, but think of a situation where a node's round <code>r</code> unit is always arriving much later then the expected time for round <code>r</code> to start. When a node is falling behind from time to time, then there is no issue and its data will be still included in the output stream, however if this problem is chronic, then this node's data might not find its way into the output stream at all. If something like that happens, it most likely means that the <code>round_delay</code> is configured too aggresively and one should consider extending the delay.</li>
+<li>For honest nodes that are not &quot;falling behind&quot; significantly (because of network delays or other issues) it is guaranteed that the data items they input in the protocol (from their local <code>DataProvider</code> object) will have <code>FinalizationHandler::data_finalized</code> called on them with a delay of roughly <code>~round_delay*4</code> from the time of inputting it. It is hard to define what &quot;falling behind&quot; exactly means, but think of a situation where a node's round <code>r</code> unit is always arriving much later then the expected time for round <code>r</code> to start. When a node is falling behind from time to time, then there is no issue and its data will be still included in the output stream, however if this problem is chronic, then this node's data might not find its way into the output stream at all. If something like that happens, it most likely means that the <code>round_delay</code> is configured too aggresively and one should consider extending the delay.</li>
 </ol>
 <p>We note that the issue of an honest node's data not being included in the stream is not too dangerous for most of the applications. For instance, for the two example scenarios:</p>
 <ol>
