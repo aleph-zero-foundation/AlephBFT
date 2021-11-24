@@ -12,7 +12,7 @@ use futures::{
 };
 
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
     collections::{hash_map::DefaultHasher, HashMap},
     hash::Hasher as StdHasher,
     pin::Pin,
@@ -25,9 +25,11 @@ use crate::{
     exponential_slowdown, run_session,
     runway::{NotificationIn, NotificationOut},
     units::{Unit, UnitCoord},
-    Config, DataIO as DataIOT, DelayConfig, Hasher, Index, KeyBox as KeyBoxT,
-    MultiKeychain as MultiKeychainT, Network as NetworkT, NodeCount, NodeIndex, OrderedBatch,
-    PartialMultisignature as PartialMultisignatureT, Recipient, Round, SpawnHandle, TaskHandle,
+    Config, DataProvider as DataProviderT, DelayConfig,
+    FinalizationHandler as FinalizationHandlerT, Hasher, Index, KeyBox as KeyBoxT,
+    MultiKeychain as MultiKeychainT, Network as NetworkT, NodeCount, NodeIndex,
+    PartialMultisignature as PartialMultisignatureT, Receiver, Recipient, Round, Sender,
+    SpawnHandle, TaskHandle,
 };
 
 pub fn init_log() {
@@ -448,35 +450,47 @@ impl PartialMultisignatureT for PartialMultisignature {
     }
 }
 
-pub(crate) struct DataIO {
+pub(crate) struct DataProvider {
     ix: NodeIndex,
-    round_counter: Cell<Round>,
-    tx: UnboundedSender<OrderedBatch<Data>>,
+    round_counter: Round,
 }
 
-impl DataIOT<Data> for DataIO {
-    type Error = ();
-    fn get_data(&self) -> Data {
-        let coord = UnitCoord::new(self.round_counter.get(), self.ix);
-        self.round_counter.set(self.round_counter.get() + 1);
+#[async_trait]
+impl DataProviderT<Data> for DataProvider {
+    async fn get_data(&mut self) -> Data {
+        let coord = UnitCoord::new(self.round_counter, self.ix);
+        self.round_counter += 1;
         Data { coord, variant: 0 }
     }
-    fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), ()> {
-        self.tx.unbounded_send(data).map_err(|e| {
-            error!(target: "data-io", "Error when sending data from DataIO {:?}.", e);
-        })
+}
+
+impl DataProvider {
+    pub(crate) fn new(ix: NodeIndex) -> Self {
+        Self {
+            ix,
+            round_counter: 0,
+        }
     }
 }
 
-impl DataIO {
-    pub(crate) fn new(ix: NodeIndex) -> (Self, UnboundedReceiver<OrderedBatch<Data>>) {
+pub(crate) struct FinalizationHandler {
+    tx: Sender<Data>,
+}
+
+#[async_trait]
+impl FinalizationHandlerT<Data> for FinalizationHandler {
+    async fn data_finalized(&mut self, d: Data) {
+        if let Err(e) = self.tx.unbounded_send(d) {
+            error!(target: "finalization-provider", "Error when sending data from FinalizationProvider {:?}.", e);
+        }
+    }
+}
+
+impl FinalizationHandler {
+    pub(crate) fn new() -> (Self, Receiver<Data>) {
         let (tx, rx) = unbounded();
-        let data_io = DataIO {
-            ix,
-            round_counter: Cell::new(0),
-            tx,
-        };
-        (data_io, rx)
+
+        (Self { tx }, rx)
     }
 }
 
@@ -531,12 +545,22 @@ pub(crate) async fn run_honest_member<
 >(
     config: Config,
     network: N,
-    data_io: DataIO,
+    data_provider: DataProvider,
+    finalization_provider: FinalizationHandler,
     keybox: KeyBox,
     spawn_handle: Spawner,
     exit: oneshot::Receiver<()>,
 ) {
-    run_session(config, network, data_io, keybox, spawn_handle, exit).await
+    run_session(
+        config,
+        network,
+        data_provider,
+        finalization_provider,
+        keybox,
+        spawn_handle,
+        exit,
+    )
+    .await
 }
 
 pub fn configure_network(
@@ -558,12 +582,10 @@ pub fn spawn_honest_member(
     node_index: NodeIndex,
     n_members: NodeCount,
     network: impl 'static + NetworkT<Hasher64, Data, Signature, PartialMultisignature>,
-) -> (
-    UnboundedReceiver<OrderedBatch<Data>>,
-    oneshot::Sender<()>,
-    TaskHandle,
-) {
-    let (data_io, rx_batch) = DataIO::new(node_index);
+) -> (UnboundedReceiver<Data>, oneshot::Sender<()>, TaskHandle) {
+    let data_provider = DataProvider::new(node_index);
+
+    let (finalization_provider, finalization_rx) = FinalizationHandler::new();
     let config = gen_config(node_index, n_members);
     let (exit_tx, exit_rx) = oneshot::channel();
     let spawner_inner = spawner.clone();
@@ -572,7 +594,8 @@ pub fn spawn_honest_member(
         run_honest_member(
             config,
             network,
-            data_io,
+            data_provider,
+            finalization_provider,
             keybox,
             spawner_inner.clone(),
             exit_rx,
@@ -580,7 +603,7 @@ pub fn spawn_honest_member(
         .await
     };
     let handle = spawner.spawn_essential("member", member_task);
-    (rx_batch, exit_tx, handle)
+    (finalization_rx, exit_tx, handle)
 }
 
 pub fn complete_oneshot<T: std::fmt::Debug>(t: T) -> oneshot::Receiver<T> {

@@ -2,7 +2,7 @@ use futures::{channel::oneshot, StreamExt};
 use log::{debug, info};
 
 use aleph_bft::{run_session, NodeIndex};
-use chain::{gen_chain_config, run_blockchain, DataIO, DataStore};
+use chain::{gen_chain_config, run_blockchain, DataProvider, DataStore, FinalizationProvider};
 use chrono::Local;
 use crypto::KeyBox;
 use network::{Network, Spawner};
@@ -68,7 +68,8 @@ async fn main() {
     ) = Network::new(my_node_ix)
         .await
         .expect("Libp2p network set-up should succeed.");
-    let (data_io, mut batch_rx, current_block) = DataIO::new();
+    let (data_provider, current_block) = DataProvider::new();
+    let (finalization_provider, mut finalized_rx) = FinalizationProvider::new();
     let data_store = DataStore::new(current_block.clone(), message_for_network);
 
     let (close_network, exit) = oneshot::channel();
@@ -103,15 +104,22 @@ async fn main() {
             index: my_id.into(),
         };
         let config = aleph_bft::default_config(n_members.into(), my_id.into(), 0);
-        run_session(config, network, data_io, keybox, Spawner {}, exit).await
+        run_session(
+            config,
+            network,
+            data_provider,
+            finalization_provider,
+            keybox,
+            Spawner {},
+            exit,
+        )
+        .await
     });
 
     let mut max_block_finalized = 0;
-    while let Some(batch) = batch_rx.next().await {
-        for block_num in batch {
-            if max_block_finalized < block_num {
-                max_block_finalized = block_num;
-            }
+    while let Some(block_num) = finalized_rx.next().await {
+        if max_block_finalized < block_num {
+            max_block_finalized = block_num;
         }
         debug!(target: "Blockchain-main",
             "Got new batch. Highest finalized = {:?}",

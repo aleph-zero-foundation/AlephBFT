@@ -4,8 +4,8 @@ use crate::{
     runway::{self, Request, Response, RunwayIO, RunwayNotificationIn, RunwayNotificationOut},
     signed::Signature,
     units::{UncheckedSignedUnit, UnitCoord},
-    Data, DataIO, Hasher, MultiKeychain, Network, NodeCount, NodeIndex, Receiver, Sender, Signable,
-    SpawnHandle, UncheckedSigned,
+    Data, DataProvider, FinalizationHandler, Hasher, MultiKeychain, Network, NodeCount, NodeIndex,
+    Receiver, Sender, Signable, SpawnHandle, UncheckedSigned,
 };
 use codec::{Decode, Encode};
 use futures::{
@@ -423,14 +423,16 @@ where
 pub async fn run_session<
     H: Hasher,
     D: Data,
-    DP: DataIO<D>,
+    DP: DataProvider<D>,
+    FH: FinalizationHandler<D>,
     N: Network<H, D, MK::Signature, MK::PartialMultisignature> + 'static,
     SH: SpawnHandle,
     MK: MultiKeychain,
 >(
     config: Config,
     network: N,
-    data_io: DP,
+    data_provider: DP,
+    finalization_handler: FH,
     keybox: MK,
     spawn_handle: SH,
     mut exit: oneshot::Receiver<()>,
@@ -476,7 +478,8 @@ pub async fn run_session<
     let runway_handle = runway::run(
         config.clone(),
         keybox.clone(),
-        data_io,
+        data_provider,
+        finalization_handler,
         spawn_handle.clone(),
         runway_io,
         exit_stream,

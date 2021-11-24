@@ -16,7 +16,7 @@ use std::{
     time::{self, Duration},
 };
 
-pub(crate) use data::{Data, DataIO, DataStore};
+pub(crate) use data::{Data, DataProvider, DataStore, FinalizationProvider};
 
 mod data;
 

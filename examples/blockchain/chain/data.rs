@@ -1,7 +1,10 @@
 use crate::{chain::BlockNum, network::NetworkData};
-use aleph_bft::OrderedBatch;
-use futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use log::debug;
+use async_trait::async_trait;
+use futures::channel::{
+    mpsc,
+    mpsc::{UnboundedReceiver, UnboundedSender},
+};
+use log::{debug, error};
 use parking_lot::Mutex;
 use std::{
     collections::{HashMap, HashSet},
@@ -106,39 +109,46 @@ impl DataStore {
 }
 
 #[derive(Clone)]
-pub(crate) struct DataIO {
+pub(crate) struct DataProvider {
     current_block: Arc<Mutex<BlockNum>>,
-    finalized_for_world: UnboundedSender<OrderedBatch<Data>>,
 }
 
-impl aleph_bft::DataIO<Data> for DataIO {
-    type Error = ();
-    fn get_data(&self) -> Data {
+#[async_trait]
+impl aleph_bft::DataProvider<Data> for DataProvider {
+    async fn get_data(&mut self) -> Data {
         *self.current_block.lock()
     }
+}
 
-    fn send_ordered_batch(&mut self, data: OrderedBatch<Data>) -> Result<(), Self::Error> {
-        self.finalized_for_world
-            .unbounded_send(data)
-            .map_err(|_| ())
+impl DataProvider {
+    pub(crate) fn new() -> (Self, Arc<Mutex<BlockNum>>) {
+        let current_block = Arc::new(Mutex::new(0));
+        (
+            DataProvider {
+                current_block: current_block.clone(),
+            },
+            current_block,
+        )
     }
 }
 
-impl DataIO {
-    pub(crate) fn new() -> (
-        Self,
-        UnboundedReceiver<OrderedBatch<Data>>,
-        Arc<Mutex<BlockNum>>,
-    ) {
-        let (finalized_for_world, finalized_from_consensus) = mpsc::unbounded();
-        let current_block = Arc::new(Mutex::new(0));
-        (
-            DataIO {
-                current_block: current_block.clone(),
-                finalized_for_world,
-            },
-            finalized_from_consensus,
-            current_block,
-        )
+pub(crate) struct FinalizationProvider {
+    tx: UnboundedSender<Data>,
+}
+
+#[async_trait]
+impl aleph_bft::FinalizationHandler<Data> for FinalizationProvider {
+    async fn data_finalized(&mut self, d: Data) {
+        if let Err(e) = self.tx.unbounded_send(d) {
+            error!(target: "finalization-provider", "Error when sending data from FinalizationProvider {:?}.", e);
+        }
+    }
+}
+
+impl FinalizationProvider {
+    pub(crate) fn new() -> (Self, UnboundedReceiver<Data>) {
+        let (tx, rx) = mpsc::unbounded();
+
+        (Self { tx }, rx)
     }
 }
