@@ -209,7 +209,6 @@ where
     }
 
     fn on_request_newest(&mut self, salt: u64) {
-        error!(target: "AlephBFT-DEBUG", "RECEIVED NEWESTUNIT WITH SALT {:?} FROM {:?}", salt, self.index());
         let curr_time = time::Instant::now();
         let task = ScheduledTask::new(Task::RequestNewest(salt), curr_time);
         self.task_queue.push(task);
@@ -247,8 +246,6 @@ where
     }
 
     fn send_unit_message(&mut self, message: UnitMessage<H, D, S>, recipient: Recipient) {
-        error!(target: "AlephBFT-DEBUG", "RESPONDING WITH {:?} {:?} {:?}", message, self.index(), recipient);
-
         if self
             .unit_messages_for_network
             .unbounded_send((message, recipient))
@@ -293,7 +290,6 @@ where
                 (message, preferred_recipient)
             }
             Task::RequestNewest(salt) => {
-                error!(target: "AlephBFT-DEBUG", "TASK NEWESTUNIT WITH SALT {:?} FROM {:?} ({:?})", *salt, self.index(), self.newest_unit_resolved);
                 if self.newest_unit_resolved {
                     return None;
                 }
@@ -369,7 +365,6 @@ where
                         Request::Coord(coord) => { self.not_resolved_coords.remove(&coord); },
                         Request::Parents(u_hash) => { self.not_resolved_parents.remove(&u_hash); },
                         Request::NewestUnit(_) => {
-                            error!(target: "AlephBFT-DEBUG", "NEWESTUNIT RESOLVED FROM {:?}", self.index());
                             self.newest_unit_resolved = true;
                         }
                     },
