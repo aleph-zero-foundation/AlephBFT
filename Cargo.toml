@@ -26,7 +26,7 @@ codec = { package = "parity-scale-codec", version = "2", default-features = fals
 parking_lot = "0.11"
 
 [dev-dependencies]
-sha3 = "0.9.1"
+sha3 = "0.10.0"
 unsigned-varint = { version = "0.7.0", features = ["futures", "asynchronous_codec"] }
 tokio = { version = "1.6.1", features = ["macros", "rt", "rt-multi-thread"] }
 libp2p = { version ="0.39", features = ["mdns", "tcp-tokio"]}
