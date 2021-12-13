@@ -225,6 +225,7 @@ where
                     self.on_request_parents(node_id, u_hash)
                 }
                 Request::NewestUnit(salt) => {
+                    error!(target: "AlephBFT-DEBUG", "{:?} Newest unit request received {:?}.", self.index(), salt);
                     trace!(target: "AlephBFT-runway", "{:?} Newest unit request received {:?}.", self.index(), salt);
                     self.on_request_newest(node_id, salt).await
                 }
@@ -241,6 +242,7 @@ where
                 Response::NewestUnit(response) => {
                     let salt = response.as_signable().salt;
                     trace!(target: "AlephBFT-runway", "{:?} Response parents received {:?}.", self.index(), salt);
+                    error!(target: "AlephBFT-DEBUG", "{:?} Response parents received {:?}.", self.index(), salt);
                     self.on_newest_response(response);
                 }
             },
@@ -424,6 +426,7 @@ where
             unit,
             salt,
         };
+        error!(target: "AlephBFT-DEBUG", "RESPONDING WITH {:?} {:?} {:?} {:?}", requester, self.index(), unit, salt);
 
         let signed_response = Signed::sign(response, self.keybox).await.into_unchecked();
 
@@ -511,18 +514,21 @@ where
     ) {
         if self.starting_round_sender.is_none() {
             log::debug!(target: "AlephBFT-member", "Starting round already sent, ignoring newest unit response");
+            log::error!(target: "AlephBFT-DEBUG", "Starting round already sent, ignoring newest unit response");
             return;
         }
         let response = match unchecked_response.check(self.keybox) {
             Ok(checked) => checked.into_signable(),
             Err(e) => {
                 log::debug!(target: "AlephBFT-member", "incorrectly signed response: {:?}", e);
+                log::error!(target: "AlephBFT-DEBUG", "incorrectly signed response: {:?}", e);
                 return;
             }
         };
 
         if response.salt != self.salt {
             debug!(target: "AlephBFT-member", "Ignoring newest unit response with an unknown salt: {:?}", response);
+            error!(target: "AlephBFT-DEBUG", "Ignoring newest unit response with an unknown salt: {:?}", response);
             return;
         }
 
@@ -531,11 +537,13 @@ where
                 Some(unit) => unit,
                 None => {
                     log::debug!(target: "AlephBFT-member", "ivalid unit in response");
+                    log::error!(target: "AlephBFT-DEBUG", "ivalid unit in response");
                     return;
                 }
             };
             if checked_unit.as_signable().creator() != self.index() {
                 log::debug!(target: "AlephBFT-member", "Not our unit in a response:  {:?}", checked_unit.into_signable());
+                log::error!(target: "AlephBFT-DEBUG", "Not our unit in a response:  {:?}", checked_unit.into_signable());
                 return;
             }
             if self
@@ -548,6 +556,7 @@ where
                 if starting_round_candidate > self.starting_round_value {
                     self.starting_round_value = starting_round_candidate;
                 }
+                log::error!(target: "AlephBFT-DEBUG", "Best round: {:?} {:?}", self.index(), self.starting_round_value);
             }
         }
         self.newest_unit_responders.insert(response.responder);
@@ -743,6 +752,7 @@ where
 
         info!(target: "AlephBFT-runway", "{:?} Runway starting.", index);
 
+        error!(target: "AlephBFT-DEBUG", "SENDING NEWESTUNIT WITH SALT {:?} FROM {:?}", self.salt, index);
         let notification =
             RunwayNotificationOut::Request(Request::NewestUnit(self.salt), Recipient::Everyone);
         if let Err(e) = self.unit_messages_for_network.unbounded_send(notification) {
