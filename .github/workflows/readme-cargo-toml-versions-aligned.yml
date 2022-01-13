@@ -1,0 +1,19 @@
+name: Versions are aligned
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'Cargo.toml'
+      - 'README.md'
+
+jobs:
+  check-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: cargo-toml-match-readme-version
+        run: ./.github/scripts/cargo-toml-match-readme-version.sh
+        shell: bash

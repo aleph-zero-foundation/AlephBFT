@@ -42,6 +42,7 @@ pub trait KeyBox: Index + Clone + Send + Sync + 'static {
 pub trait PartialMultisignature: Signature {
     type Signature: Signature;
     /// Adds the signature.
+    #[must_use]
     fn add_signature(self, signature: &Self::Signature, index: NodeIndex) -> Self;
 }
 
@@ -408,6 +409,7 @@ impl<'a, T: Signable, MK: MultiKeychain> PartiallyMultisigned<'a, T, MK> {
     }
 
     /// Adds a signature and checks if multisignature is complete.
+    #[must_use]
     pub fn add_signature(self, signed: Signed<'a, Indexed<T>, MK>, keychain: &'a MK) -> Self {
         if self.as_signable().hash().as_ref() != signed.as_signable().hash().as_ref() {
             warn!(target: "AlephBFT-signed", "Tried to add a signature of a different object");
@@ -440,6 +442,7 @@ pub type SignatureSet<S> = NodeMap<S>;
 impl<S: Signature> PartialMultisignature for SignatureSet<S> {
     type Signature = S;
 
+    #[must_use]
     fn add_signature(mut self, signature: &Self::Signature, index: NodeIndex) -> Self {
         self.insert(index, signature.clone());
         self

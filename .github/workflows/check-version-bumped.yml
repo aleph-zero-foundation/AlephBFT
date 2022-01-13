@@ -1,0 +1,24 @@
+name: Version bump check for code changes
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+
+jobs:
+  check-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: check-cargo-toml-version-bumped
+        run: |
+          if ! git diff HEAD origin/main -- Cargo.toml | grep -q '^+version ='; then
+            echo "None of commits in this PR has changed version in Cargo.toml!"
+            exit 1
+          fi
+        shell: bash

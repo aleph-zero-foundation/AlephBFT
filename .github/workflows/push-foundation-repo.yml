@@ -1,11 +1,9 @@
 name: Sync Cardinal-Cryptography repo with Aleph-Zero-Foundation repo
 
 on:
-  workflow_run:
-    workflows: ["Autobump version"]
-    branches: [main]
-    types:
-      - completed
+  push:
+    branches:
+      main
 
 jobs:
   sync:
