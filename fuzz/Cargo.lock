@@ -17,7 +17,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft"
-version = "0.8.0"
+version = "0.8.4"
 dependencies = [
  "async-trait",
  "bit-vec",

@@ -520,11 +520,13 @@ pub async fn run_session<
         },
     }
 
+    info!(target: "AlephBFT-member", "{:?} Run ending.", index);
     if runway_exit.send(()).is_err() {
         debug!(target: "AlephBFT-member", "{:?} Runway already stopped.", index);
     }
     if !runway_handle.is_terminated() {
         runway_handle.await;
+        debug!(target: "AlephBFT-member", "{:?} Runway stopped.", index);
     }
 
     if member_exit.send(()).is_err() {
@@ -532,6 +534,7 @@ pub async fn run_session<
     }
     if !member_handle.is_terminated() {
         member_handle.await;
+        debug!(target: "AlephBFT-member", "{:?} Member stopped.", index);
     }
 
     if network_exit.send(()).is_err() {
@@ -541,6 +544,7 @@ pub async fn run_session<
         if let Err(()) = network_handle.await {
             warn!(target: "AlephBFT-member", "{:?} Network task stopped with an error", index);
         }
+        debug!(target: "AlephBFT-member", "{:?} Network stopped.", index);
     }
 
     info!(target: "AlephBFT-member", "{:?} Run ended.", index);
