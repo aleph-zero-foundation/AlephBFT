@@ -29,7 +29,7 @@ parking_lot = "0.11"
 sha3 = "0.9.1"
 unsigned-varint = { version = "0.7.0", features = ["futures", "asynchronous_codec"] }
 tokio = { version = "1.6.1", features = ["macros", "rt", "rt-multi-thread"] }
-libp2p = { version ="0.39", features = ["mdns", "tcp-tokio"]}
+libp2p = { version ="0.41", features = ["mdns", "tcp-tokio"]}
 parking_lot = "0.11"
 env_logger = "0.9"
 chrono = "0.4"
