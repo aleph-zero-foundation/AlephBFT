@@ -19,8 +19,6 @@ jobs:
         with:
           fetch-depth: 2
       - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
       - name: credentials
         uses: actions-rs/cargo@v1
         with:

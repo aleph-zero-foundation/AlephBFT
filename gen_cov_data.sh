@@ -4,7 +4,7 @@ set -e
 
 RUSTFLAGS="-Z instrument-coverage" \
     LLVM_PROFILE_FILE="aleph_bft-%m.profraw" \
-    cargo +nightly test --tests $1 2> covtest.out
+    cargo test --tests $1 2> covtest.out
 
 version=$(grep Running covtest.out | sed -e "s/.*aleph_bft-\(.*\))/\1/")
 rm covtest.out

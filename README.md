@@ -98,6 +98,11 @@ The repository is mainly self-contained. It is implemented using Rust's async fe
 `log` and `rand` and one bigger for encoding, namely `parity-scale-codec`. In future work, we plan to get
 rid of this dependency.
 
+### Toolchain
+
+This release was built and tested against the `nightly-2021-10-24` rust toolchain.
+If you want to use another version, edit the `rust-toolchain` file, or use an [override](https://rust-lang.github.io/rustup/overrides.html) with higher priority.
+
 ### Examples
 
 Currently we provide two basic examples of running AlephBFT. The first one: `dummy-honest` implements a committee member that is not
