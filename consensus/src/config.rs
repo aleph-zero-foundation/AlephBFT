@@ -1,7 +1,7 @@
 use crate::{Round, SessionId};
 use std::{sync::Arc, time::Duration};
 
-use crate::nodes::{NodeCount, NodeIndex};
+use crate::{NodeCount, NodeIndex};
 
 pub type DelaySchedule = Arc<dyn Fn(usize) -> Duration + Sync + Send + 'static>;
 

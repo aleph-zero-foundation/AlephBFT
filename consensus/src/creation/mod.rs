@@ -1,9 +1,8 @@
 use crate::{
     config::{Config as GeneralConfig, DelaySchedule},
-    nodes::{NodeCount, NodeIndex},
     runway::NotificationOut,
     units::{PreUnit, Unit},
-    Hasher, Receiver, Round, Sender,
+    Hasher, NodeCount, NodeIndex, Receiver, Round, Sender,
 };
 use futures::{channel::oneshot, FutureExt, StreamExt};
 use futures_timer::Delay;

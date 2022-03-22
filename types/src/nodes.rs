@@ -93,7 +93,7 @@ impl<T> NodeMap<T> {
             .filter_map(|(idx, maybe_value)| Some((NodeIndex(idx), maybe_value.as_mut()?)))
     }
 
-    pub fn into_iter(self) -> impl Iterator<Item = (NodeIndex, T)>
+    fn into_iter(self) -> impl Iterator<Item = (NodeIndex, T)>
     where
         T: 'static,
     {
@@ -122,7 +122,7 @@ impl<T> NodeMap<T> {
         self.0[node_id.0] = Some(value)
     }
 
-    pub(crate) fn to_subset(&self) -> NodeSubset {
+    pub fn to_subset(&self) -> NodeSubset {
         NodeSubset(self.0.iter().map(Option::is_some).collect())
     }
 }
@@ -152,22 +152,22 @@ impl<'a, T> IntoIterator for &'a mut NodeMap<T> {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub(crate) struct NodeSubset(bit_vec::BitVec<u32>);
+pub struct NodeSubset(bit_vec::BitVec<u32>);
 
 impl NodeSubset {
-    pub(crate) fn with_size(capacity: NodeCount) -> Self {
+    pub fn with_size(capacity: NodeCount) -> Self {
         NodeSubset(bit_vec::BitVec::from_elem(capacity.0, false))
     }
 
-    pub(crate) fn insert(&mut self, i: NodeIndex) {
+    pub fn insert(&mut self, i: NodeIndex) {
         self.0.set(i.0, true);
     }
 
-    pub(crate) fn size(&self) -> usize {
+    pub fn size(&self) -> usize {
         self.0.len()
     }
 
-    pub(crate) fn elements(&self) -> impl Iterator<Item = NodeIndex> + '_ {
+    pub fn elements(&self) -> impl Iterator<Item = NodeIndex> + '_ {
         self.0
             .iter()
             .enumerate()

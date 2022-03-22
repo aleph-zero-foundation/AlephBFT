@@ -127,10 +127,9 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        nodes::NodeMap,
         testing::mock::{Data, Hasher64, KeyBox},
         units::{ControlHash, FullUnit, PreUnit, SignedUnit, UnitCoord, UnitStore},
-        NodeCount, NodeIndex, Round, Signed,
+        NodeCount, NodeIndex, NodeMap, Round, Signed,
     };
 
     async fn create_unit<'a>(

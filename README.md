@@ -61,7 +61,7 @@ please refer to the [detailed version][reference-link].
 - Import AlephBFT in your crate
   ```toml
   [dependencies]
-  aleph-bft = "^0.8"
+  aleph-bft = "^0.9"
   ```
 - AlephBFT requires user to provide it with an implementation of the following traits:
   - The [DataIO][dataio-link] trait is an abstraction for a component that provides data items and allows to input ordered data items. `DataIO` is parametrized with a `Data` generic type representing the type of items we would like to order.

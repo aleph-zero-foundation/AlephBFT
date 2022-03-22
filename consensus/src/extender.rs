@@ -3,10 +3,7 @@ use std::collections::{HashMap, VecDeque};
 
 use log::{debug, info, warn};
 
-use crate::{
-    nodes::{NodeCount, NodeIndex, NodeMap},
-    Hasher, Receiver, Round, Sender,
-};
+use crate::{Hasher, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender};
 
 pub(crate) struct ExtenderUnit<H: Hasher> {
     creator: NodeIndex,
@@ -323,7 +320,7 @@ impl<H: Hasher> Extender<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{nodes::NodeCount, testing::mock::Hasher64};
+    use crate::{testing::mock::Hasher64, NodeCount};
     use futures::channel::mpsc;
 
     fn coord_to_number(creator: NodeIndex, round: Round, n_members: NodeCount) -> u64 {

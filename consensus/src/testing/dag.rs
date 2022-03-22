@@ -1,10 +1,9 @@
 use crate::{
     consensus,
-    nodes::{NodeCount, NodeIndex, NodeMap, NodeSubset},
     runway::{NotificationIn, NotificationOut},
     testing::mock::{gen_config, Hash64, Hasher64, Spawner},
     units::{ControlHash, PreUnit, Unit},
-    Receiver, Round, Sender, SpawnHandle,
+    NodeCount, NodeIndex, NodeMap, NodeSubset, Receiver, Round, Sender, SpawnHandle,
 };
 use futures::{
     channel::{mpsc, oneshot},

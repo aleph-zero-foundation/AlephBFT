@@ -21,7 +21,7 @@ function check_versions() {
   fi
 }
 
-cargo_toml_version=$(trim_version '^version =' "Cargo.toml")
+cargo_toml_version=$(trim_version '^version =' "consensus/Cargo.toml")
 cargo_toml_major_version=$(get_major_version "${cargo_toml_version}")
 cargo_toml_minor_version=$(get_minor_version "${cargo_toml_version}")
 

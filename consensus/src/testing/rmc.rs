@@ -1,11 +1,10 @@
 use crate::{
-    nodes::NodeCount,
     rmc::*,
     signed::*,
     testing::signed::{
         test_multi_keychain, TestMultiKeychain, TestPartialMultisignature, TestSignature,
     },
-    NodeIndex,
+    NodeCount, NodeIndex, Signable, SignatureSet,
 };
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},

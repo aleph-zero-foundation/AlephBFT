@@ -1,7 +1,7 @@
 use crate::{
-    nodes::NodeSubset,
-    signed::{Signable, Signed, UncheckedSigned},
-    Data, Hasher, Index, KeyBox, NodeCount, NodeIndex, NodeMap, Round, SessionId,
+    signed::{Signed, UncheckedSigned},
+    Data, Hasher, Index, KeyBox, NodeCount, NodeIndex, NodeMap, NodeSubset, Round, SessionId,
+    Signable,
 };
 use codec::{Decode, Encode};
 use derivative::Derivative;
@@ -222,10 +222,9 @@ pub(crate) use store::*;
 #[cfg(test)]
 mod tests {
     use crate::{
-        nodes::NodeIndex,
         testing::mock::Hasher64,
         units::{ControlHash, FullUnit, PreUnit},
-        Hasher,
+        Hasher, NodeIndex,
     };
     use codec::{Decode, Encode};
 

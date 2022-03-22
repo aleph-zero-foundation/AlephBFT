@@ -11,14 +11,14 @@ use crate::{
     extender::Extender,
     runway::{NotificationIn, NotificationOut},
     terminal::Terminal,
-    Hasher, OrderedBatch, Receiver, Round, Sender, SpawnHandle,
+    Hasher, Receiver, Round, Sender, SpawnHandle,
 };
 
 pub(crate) async fn run<H: Hasher + 'static>(
     conf: Config,
     incoming_notifications: Receiver<NotificationIn<H>>,
     outgoing_notifications: Sender<NotificationOut<H>>,
-    ordered_batch_tx: Sender<OrderedBatch<H::Hash>>,
+    ordered_batch_tx: Sender<Vec<H::Hash>>,
     spawn_handle: impl SpawnHandle,
     starting_round: oneshot::Receiver<Round>,
     mut exit: oneshot::Receiver<()>,

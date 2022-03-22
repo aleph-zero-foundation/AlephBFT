@@ -1,7 +1,6 @@
 use crate::{
-    nodes::{NodeCount, NodeIndex, NodeMap},
     units::{ControlHash, PreUnit, Unit},
-    Hasher, Round,
+    Hasher, NodeCount, NodeIndex, NodeMap, Round,
 };
 use log::trace;
 

@@ -1,11 +1,10 @@
 use crate::{
     config::Config,
-    network::{self, Recipient},
+    network,
     runway::{self, Request, Response, RunwayIO, RunwayNotificationIn, RunwayNotificationOut},
-    signed::Signature,
     units::{UncheckedSignedUnit, UnitCoord},
     Data, DataProvider, FinalizationHandler, Hasher, MultiKeychain, Network, NodeCount, NodeIndex,
-    Receiver, Sender, Signable, SpawnHandle, UncheckedSigned,
+    Receiver, Recipient, Sender, Signable, Signature, SpawnHandle, UncheckedSigned,
 };
 use codec::{Decode, Encode};
 use futures::{
@@ -15,6 +14,7 @@ use futures::{
 };
 use futures_timer::Delay;
 use log::{debug, error, info, trace, warn};
+use network::NetworkData;
 use rand::Rng;
 use std::{
     cmp::Ordering,
@@ -425,7 +425,7 @@ pub async fn run_session<
     D: Data,
     DP: DataProvider<D>,
     FH: FinalizationHandler<D>,
-    N: Network<H, D, MK::Signature, MK::PartialMultisignature> + 'static,
+    N: Network<NetworkData<H, D, MK::Signature, MK::PartialMultisignature>> + 'static,
     SH: SpawnHandle,
     MK: MultiKeychain,
 >(
