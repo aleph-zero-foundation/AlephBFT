@@ -27,7 +27,7 @@ rand = "0.8"
 [dev-dependencies]
 chrono = "0.4"
 env_logger = "0.9"
-libp2p = { version ="0.39", features = ["mdns", "tcp-tokio"]}
+libp2p = { version ="0.43", features = ["mdns", "tcp-tokio"]}
 tokio = { version = "1.6.1", features = ["macros", "rt", "rt-multi-thread"] }
 sha3 = "0.9.1"
 unsigned-varint = { version = "0.7.0", features = ["futures", "asynchronous_codec"] }
