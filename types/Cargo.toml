@@ -1,7 +1,7 @@
 [package]
 name = "aleph-bft-types"
-version = "0.1.0"
-edition = "2018"
+version = "0.2.0"
+edition = "2021"
 authors = ["Cardinal Cryptography"]
 categories = ["algorithms", "data-structures", "cryptography", "database"]
 documentation = "https://docs.rs/?"
@@ -12,8 +12,7 @@ license = "Apache-2.0"
 readme = "../README.md"
 
 [dependencies]
+aleph-bft-crypto = { path = "../crypto" }
 async-trait = "0.1"
-bit-vec = "0.6"
 codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive"] }
-derive_more = "0.99"
 futures = "0.3"

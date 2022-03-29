@@ -1,6 +1,6 @@
 [package]
-name = "aleph-bft"
-version = "0.10.0"
+name = "aleph-bft-crypto"
+version = "0.1.0"
 edition = "2021"
 authors = ["Cardinal Cryptography"]
 categories = ["algorithms", "data-structures", "cryptography", "database"]
@@ -11,20 +11,12 @@ keywords = ["asynchronous", "consensus", "bft", "blockchain", "distributed-syste
 license = "Apache-2.0"
 readme = "../README.md"
 
-description = """AlephBFT is an asynchronous and Byzantine fault tolerant consensus protocol aimed at ordering arbitrary messages (transactions). It has been designed to continuously operate even in the harshest conditions: with no bounds on message-delivery delays and in the presence of malicious actors. This makes it an excellent fit for blockchain-related applications."""
-
 [dependencies]
-aleph-bft-rmc = { path = "../rmc" }
-aleph-bft-types = { path = "../types" }
 async-trait = "0.1"
+bit-vec = "0.6"
 codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive"] }
-derivative = "2.2.0"
-futures = "0.3"
-futures-timer = "3.0"
+derive_more = "0.99"
 log = "0.4"
-parking_lot = "0.11"
-rand = "0.8"
 
 [dev-dependencies]
-env_logger = "0.9"
 tokio = { version = "1.6.1", features = ["macros", "rt", "rt-multi-thread"] }

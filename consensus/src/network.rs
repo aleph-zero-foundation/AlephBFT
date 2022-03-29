@@ -187,12 +187,12 @@ pub(crate) async fn run<
 mod tests {
     use super::*;
     use crate::{
-        testing::mock::{self, Data, Hasher64, PartialMultisignature, Signature},
+        testing::mock::{self, Data, Hasher64, KeyBox, PartialMultisignature, Signature},
         units::{ControlHash, FullUnit, PreUnit, UncheckedSignedUnit, UnitCoord},
-        NodeIndex, NodeSubset, Round, UncheckedSigned,
+        NodeIndex, NodeSubset, Round, Signed,
     };
 
-    fn test_unchecked_unit(
+    async fn test_unchecked_unit(
         creator: NodeIndex,
         round: Round,
         variant: u32,
@@ -203,15 +203,18 @@ mod tests {
         };
         let pu = PreUnit::new(creator, round, control_hash);
         let data = Data::new(UnitCoord::new(7, 13.into()), variant);
-        UncheckedSigned::new(FullUnit::new(pu, data, 0), Signature {})
+        let signable = FullUnit::new(pu, data, 0);
+        Signed::sign(signable, &KeyBox::new(0.into(), creator))
+            .await
+            .into_unchecked()
     }
 
-    #[test]
-    fn decoding_network_data_units_new_unit() {
+    #[tokio::test]
+    async fn decoding_network_data_units_new_unit() {
         use NetworkDataInner::Units;
         use UnitMessage::NewUnit;
 
-        let uu = test_unchecked_unit(5.into(), 43, 1729);
+        let uu = test_unchecked_unit(5.into(), 43, 1729).await;
         let included_data = vec![uu.as_signable().data().clone()];
         let nd = NetworkData::<Hasher64, Data, Signature, PartialMultisignature>(Units(NewUnit(
             uu.clone(),
@@ -259,12 +262,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn decoding_network_data_units_response_coord() {
+    #[tokio::test]
+    async fn decoding_network_data_units_response_coord() {
         use NetworkDataInner::Units;
         use UnitMessage::ResponseCoord;
 
-        let uu = test_unchecked_unit(5.into(), 43, 1729);
+        let uu = test_unchecked_unit(5.into(), 43, 1729).await;
         let included_data = vec![uu.as_signable().data().clone()];
         let nd = NetworkData::<Hasher64, Data, Signature, PartialMultisignature>(Units(
             ResponseCoord(uu.clone()),
@@ -312,15 +315,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn decoding_network_data_units_response_parents() {
+    #[tokio::test]
+    async fn decoding_network_data_units_response_parents() {
         use NetworkDataInner::Units;
         use UnitMessage::ResponseParents;
 
         let h = 43.using_encoded(Hasher64::hash);
-        let p1 = test_unchecked_unit(5.into(), 43, 1729);
-        let p2 = test_unchecked_unit(13.into(), 43, 1729);
-        let p3 = test_unchecked_unit(17.into(), 43, 1729);
+        let p1 = test_unchecked_unit(5.into(), 43, 1729).await;
+        let p2 = test_unchecked_unit(13.into(), 43, 1729).await;
+        let p3 = test_unchecked_unit(17.into(), 43, 1729).await;
         let included_data = vec![
             p1.as_signable().data().clone(),
             p2.as_signable().data().clone(),
@@ -358,24 +361,27 @@ mod tests {
         }
     }
 
-    #[test]
-    fn decoding_network_data_alert_fork_alert() {
+    #[tokio::test]
+    async fn decoding_network_data_alert_fork_alert() {
         use AlertMessage::ForkAlert;
         use NetworkDataInner::Alert;
 
         let forker = 9.into();
-        let f1 = test_unchecked_unit(forker, 10, 0);
-        let f2 = test_unchecked_unit(forker, 10, 1);
-        let lu1 = test_unchecked_unit(forker, 11, 0);
-        let lu2 = test_unchecked_unit(forker, 12, 0);
+        let f1 = test_unchecked_unit(forker, 10, 0).await;
+        let f2 = test_unchecked_unit(forker, 10, 1).await;
+        let lu1 = test_unchecked_unit(forker, 11, 0).await;
+        let lu2 = test_unchecked_unit(forker, 12, 0).await;
         let included_data = vec![
             lu1.as_signable().data().clone(),
             lu2.as_signable().data().clone(),
         ];
-        let alert = crate::alerts::Alert::new(7.into(), (f1, f2), vec![lu1, lu2]);
+        let sender: NodeIndex = 7.into();
+        let alert = crate::alerts::Alert::new(sender, (f1, f2), vec![lu1, lu2]);
 
         let nd = NetworkData::<Hasher64, Data, Signature, PartialMultisignature>(Alert(ForkAlert(
-            UncheckedSigned::new(alert.clone(), Signature {}),
+            Signed::sign(alert.clone(), &KeyBox::new(0.into(), sender))
+                .await
+                .into_unchecked(),
         )));
         let decoded = mock::NetworkData::decode(&mut &nd.encode()[..]);
         assert!(decoded.is_ok(), "Bug in encode/decode for ForkAlert");

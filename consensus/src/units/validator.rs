@@ -1,7 +1,6 @@
 use crate::{
-    signed::SignatureError,
     units::{FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit},
-    Data, Hasher, KeyBox, NodeCount, Round, SessionId, Signature,
+    Data, Hasher, KeyBox, NodeCount, Round, SessionId, Signature, SignatureError,
 };
 use std::{
     fmt::{Display, Formatter, Result as FmtResult},

@@ -1,15 +1,16 @@
-use std::sync::Arc;
-
 use crate::{
     member::UnitMessage,
     network::NetworkDataInner,
     testing::mock::{
-        configure_network, init_log, spawn_honest_member, NetworkData, NetworkHook, Spawner,
+        configure_network, init_log, spawn_honest_member, NetworkData, NetworkHook, Signature,
+        Spawner,
     },
-    NodeCount, NodeIndex, Round, SpawnHandle,
+    Index, KeyBox, NodeCount, NodeIndex, Round, Signed, SpawnHandle,
 };
+use async_trait::async_trait;
 use futures::StreamExt;
 use parking_lot::Mutex;
+use std::sync::Arc;
 
 struct CorruptPacket {
     recipient: NodeIndex,
@@ -18,16 +19,56 @@ struct CorruptPacket {
     round: Round,
 }
 
+#[async_trait]
 impl NetworkHook for CorruptPacket {
-    fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, recipient: NodeIndex) {
+    async fn update_state(
+        &mut self,
+        data: &mut NetworkData,
+        sender: NodeIndex,
+        recipient: NodeIndex,
+    ) {
+        #[derive(Clone, Debug)]
+        struct BadKeyBox {
+            index: NodeIndex,
+            signature: Signature,
+        }
+
+        impl Index for BadKeyBox {
+            fn index(&self) -> NodeIndex {
+                self.index
+            }
+        }
+
+        #[async_trait]
+        impl KeyBox for BadKeyBox {
+            type Signature = Signature;
+
+            fn node_count(&self) -> NodeCount {
+                0.into()
+            }
+
+            async fn sign(&self, _msg: &[u8]) -> Self::Signature {
+                self.signature.clone()
+            }
+
+            fn verify(&self, _msg: &[u8], _sgn: &Self::Signature, _index: NodeIndex) -> bool {
+                true
+            }
+        }
+
         if self.recipient != recipient || self.sender != sender {
             return;
         }
         if let crate::NetworkData(NetworkDataInner::Units(UnitMessage::NewUnit(us))) = data {
-            let full_unit = &mut us.as_signable_mut();
+            let mut full_unit = us.clone().into_signable();
+            let signature = us.signature();
+            let index = full_unit.index();
             if full_unit.round() == self.round && full_unit.creator() == self.creator {
                 full_unit.set_round(0);
             }
+            *us = Signed::sign(full_unit, &BadKeyBox { index, signature })
+                .await
+                .into();
         }
     }
 }
@@ -39,8 +80,9 @@ struct NoteRequest {
     requested: Arc<Mutex<bool>>,
 }
 
+#[async_trait]
 impl NetworkHook for NoteRequest {
-    fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, _: NodeIndex) {
+    async fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, _: NodeIndex) {
         use NetworkDataInner::Units;
         use UnitMessage::RequestCoord;
         if sender == self.sender {

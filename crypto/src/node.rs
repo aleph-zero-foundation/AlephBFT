@@ -1,7 +1,7 @@
 use codec::{Decode, Encode, Error, Input, Output};
 use derive_more::{Add, AddAssign, From, Into, Sub, SubAssign, Sum};
 use std::{
-    ops::{Div, Index, Mul},
+    ops::{Div, Index as StdIndex, Mul},
     vec,
 };
 
@@ -24,6 +24,11 @@ impl Decode for NodeIndex {
         let val: u64 = u64::from_le_bytes(arr);
         Ok(NodeIndex(val as usize))
     }
+}
+
+/// Indicates that an implementor has been assigned some index.
+pub trait Index {
+    fn index(&self) -> NodeIndex;
 }
 
 /// Node count. Right now it doubles as node weight in many places in the code, in the future we
@@ -205,7 +210,7 @@ impl Decode for NodeSubset {
     }
 }
 
-impl Index<NodeIndex> for NodeSubset {
+impl StdIndex<NodeIndex> for NodeSubset {
     type Output = bool;
 
     fn index(&self, vidx: NodeIndex) -> &bool {
@@ -216,7 +221,7 @@ impl Index<NodeIndex> for NodeSubset {
 #[cfg(test)]
 mod tests {
 
-    use crate::nodes::{NodeIndex, NodeSubset};
+    use crate::node::{NodeIndex, NodeSubset};
     use codec::{Decode, Encode};
     #[test]
     fn decoding_node_index_works() {

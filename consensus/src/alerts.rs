@@ -1,11 +1,9 @@
 use crate::{
-    rmc,
-    rmc::{DoublingDelayScheduler, ReliableMulticast},
-    signed::{Multisigned, Signed, UncheckedSigned},
-    units::UncheckedSignedUnit,
-    Data, Hasher, Index, MultiKeychain, NodeCount, NodeIndex, PartialMultisignature, Receiver,
-    Recipient, Sender, SessionId, Signable, Signature,
+    units::UncheckedSignedUnit, Data, Hasher, Index, MultiKeychain, Multisigned, NodeCount,
+    NodeIndex, PartialMultisignature, Receiver, Recipient, Sender, SessionId, Signable, Signature,
+    Signed, UncheckedSigned,
 };
+use aleph_bft_rmc::{DoublingDelayScheduler, Message as RmcMessage, ReliableMulticast};
 use codec::{Decode, Encode};
 use derivative::Derivative;
 use futures::{
@@ -108,7 +106,7 @@ pub(crate) enum AlertMessage<H: Hasher, D: Data, S: Signature, MS: PartialMultis
     /// Alert regarding forks, signed by the person claiming misconduct.
     ForkAlert(UncheckedSigned<Alert<H, D, S>, S>),
     /// An internal RMC message, together with the id of the sender.
-    RmcMessage(NodeIndex, rmc::Message<H::Hash, S, MS>),
+    RmcMessage(NodeIndex, RmcMessage<H::Hash, S, MS>),
     /// A request by a node for a fork alert identified by the given hash.
     AlertRequest(NodeIndex, H::Hash),
 }
@@ -149,8 +147,8 @@ struct Alerter<'a, H: Hasher, D: Data, MK: MultiKeychain> {
     known_alerts: HashMap<H::Hash, Signed<'a, Alert<H, D, MK::Signature>, MK>>,
     known_rmcs: HashMap<(NodeIndex, NodeIndex), H::Hash>,
     rmc: ReliableMulticast<'a, H::Hash, MK>,
-    messages_from_rmc: Receiver<rmc::Message<H::Hash, MK::Signature, MK::PartialMultisignature>>,
-    messages_for_rmc: Sender<rmc::Message<H::Hash, MK::Signature, MK::PartialMultisignature>>,
+    messages_from_rmc: Receiver<RmcMessage<H::Hash, MK::Signature, MK::PartialMultisignature>>,
+    messages_for_rmc: Sender<RmcMessage<H::Hash, MK::Signature, MK::PartialMultisignature>>,
     exiting: bool,
 }
 
@@ -347,7 +345,7 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
     fn on_rmc_message(
         &mut self,
         sender: NodeIndex,
-        message: rmc::Message<H::Hash, MK::Signature, MK::PartialMultisignature>,
+        message: RmcMessage<H::Hash, MK::Signature, MK::PartialMultisignature>,
     ) {
         let hash = message.hash();
         if let Some(alert) = self.known_alerts.get(hash) {
@@ -402,7 +400,7 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
 
     fn rmc_message_to_network(
         &mut self,
-        message: rmc::Message<H::Hash, MK::Signature, MK::PartialMultisignature>,
+        message: RmcMessage<H::Hash, MK::Signature, MK::PartialMultisignature>,
     ) {
         self.send_message_for_network(
             AlertMessage::RmcMessage(self.index(), message),

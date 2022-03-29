@@ -359,7 +359,14 @@ impl Future for UnreliableRouter {
 
             if let Some(peer) = this.peers.borrow().get(&recipient) {
                 for hook in this.hook_list.borrow_mut().iter_mut() {
-                    hook.update_state(&mut data, sender, recipient);
+                    match hook
+                        .update_state(&mut data, sender, recipient)
+                        .as_mut()
+                        .poll(cx)
+                    {
+                        Poll::Ready(()) => (),
+                        Poll::Pending => panic!(),
+                    }
                 }
                 peer.tx
                     .unbounded_send((data, sender))
@@ -374,8 +381,16 @@ impl Future for UnreliableRouter {
     }
 }
 
+#[async_trait]
 pub trait NetworkHook: Send {
-    fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, recipient: NodeIndex);
+    /// This must complete during a single poll - the current implementation
+    /// of UnreliableRouter will panic if polling this method returns Poll::Pending.
+    async fn update_state(
+        &mut self,
+        data: &mut NetworkData,
+        sender: NodeIndex,
+        recipient: NodeIndex,
+    );
 }
 
 #[derive(Clone)]
@@ -402,8 +417,14 @@ impl AlertHook {
     }
 }
 
+#[async_trait]
 impl NetworkHook for AlertHook {
-    fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, recipient: NodeIndex) {
+    async fn update_state(
+        &mut self,
+        data: &mut NetworkData,
+        sender: NodeIndex,
+        recipient: NodeIndex,
+    ) {
         use crate::{alerts::AlertMessage::*, network::NetworkDataInner::*};
         if let crate::NetworkData(Alert(ForkAlert(_))) = data {
             *self

@@ -1,7 +1,6 @@
 use crate::{
-    signed::{Signed, UncheckedSigned},
     Data, Hasher, Index, KeyBox, NodeCount, NodeIndex, NodeMap, NodeSubset, Round, SessionId,
-    Signable,
+    Signable, Signed, UncheckedSigned,
 };
 use codec::{Decode, Encode};
 use derivative::Derivative;

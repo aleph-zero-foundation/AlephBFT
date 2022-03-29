@@ -1,22 +1,17 @@
-use log::{debug, error, trace};
-
-use futures::{channel::oneshot, StreamExt};
-
-use std::collections::HashMap;
-
 use crate::{
+    member::UnitMessage::NewUnit,
     network::NetworkDataInner::Units,
-    signed::Signed,
     testing::mock::{
         configure_network, init_log, spawn_honest_member, AlertHook, Data, Hash64, Hasher64,
         KeyBox, Network, NetworkData, Spawner,
     },
     units::{ControlHash, FullUnit, PreUnit, SignedUnit, UnitCoord},
     Hasher, Network as NetworkT, NetworkData as NetworkDataT, NodeCount, NodeIndex, NodeMap,
-    Recipient, Round, SessionId, SpawnHandle, TaskHandle,
+    Recipient, Round, SessionId, Signed, SpawnHandle, TaskHandle,
 };
-
-use crate::member::UnitMessage::NewUnit;
+use futures::{channel::oneshot, StreamExt};
+use log::{debug, error, trace};
+use std::collections::HashMap;
 
 struct MaliciousMember<'a> {
     node_ix: NodeIndex,
