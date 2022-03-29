@@ -118,10 +118,6 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
     pub(crate) fn get_parents(&mut self, hash: H::Hash) -> Option<&Vec<H::Hash>> {
         self.parents.get(&hash)
     }
-
-    pub(crate) fn limit_per_node(&self) -> Round {
-        self.max_round
-    }
 }
 
 #[cfg(test)]

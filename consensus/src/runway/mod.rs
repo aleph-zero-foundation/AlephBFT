@@ -1,16 +1,16 @@
-use std::{collections::HashSet, convert::TryFrom};
-
 use crate::{
     alerts::{self, Alert, AlertConfig, AlertMessage, ForkProof, ForkingNotification},
     consensus,
-    member::{NewestUnitResponse, UnitMessage},
+    member::UnitMessage,
     units::{
-        ControlHash, FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore,
+        ControlHash, FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit, Unit, UnitCoord,
+        UnitStore, Validator,
     },
     Config, Data, DataProvider, FinalizationHandler, Hasher, Index, MultiKeychain, NodeCount,
-    NodeIndex, NodeMap, Receiver, Recipient, Round, Sender, SessionId, Signature, Signed,
+    NodeIndex, NodeMap, Receiver, Recipient, Round, Sender, SessionId, Signable, Signature, Signed,
     SpawnHandle, UncheckedSigned,
 };
+use codec::{Decode, Encode};
 use futures::{
     channel::{mpsc, oneshot},
     future::FusedFuture,
@@ -18,10 +18,60 @@ use futures::{
 };
 use log::{debug, error, info, trace, warn};
 use std::{
-    collections::hash_map::DefaultHasher,
+    collections::{hash_map::DefaultHasher, HashSet},
+    convert::TryFrom,
     hash::{Hash, Hasher as _},
     time::Duration,
 };
+
+#[derive(Debug, Encode, Decode, Clone)]
+pub struct NewestUnitResponse<H: Hasher, D: Data, S: Signature> {
+    requester: NodeIndex,
+    responder: NodeIndex,
+    unit: Option<UncheckedSignedUnit<H, D, S>>,
+    salt: u64,
+}
+
+impl<H: Hasher, D: Data, S: Signature> Signable for NewestUnitResponse<H, D, S> {
+    type Hash = Vec<u8>;
+
+    fn hash(&self) -> Self::Hash {
+        self.encode()
+    }
+}
+
+impl<H: Hasher, D: Data, S: Signature> crate::Index for NewestUnitResponse<H, D, S> {
+    fn index(&self) -> NodeIndex {
+        self.responder
+    }
+}
+
+impl<H: Hasher, D: Data, S: Signature> NewestUnitResponse<H, D, S> {
+    pub fn new(
+        requester: NodeIndex,
+        responder: NodeIndex,
+        unit: Option<UncheckedSignedUnit<H, D, S>>,
+        salt: u64,
+    ) -> Self {
+        NewestUnitResponse {
+            requester,
+            responder,
+            unit,
+            salt,
+        }
+    }
+
+    pub fn included_data(&self) -> Vec<D> {
+        match &self.unit {
+            Some(u) => vec![u.as_signable().data().clone()],
+            None => Vec::new(),
+        }
+    }
+
+    pub fn requester(&self) -> NodeIndex {
+        self.requester
+    }
+}
 
 /// Type for incoming notifications: Runway to Consensus.
 #[derive(Clone, PartialEq)]
@@ -117,6 +167,7 @@ where
     threshold: NodeCount,
     store: UnitStore<'a, H, D, MK>,
     keybox: &'a MK,
+    validator: Validator<'a, MK>,
     alerts_for_alerter: Sender<Alert<H, D, MK::Signature>>,
     notifications_from_alerter: Receiver<ForkingNotification<H, D, MK::Signature>>,
     unit_messages_from_network: Receiver<RunwayNotificationIn<H, D, MK::Signature>>,
@@ -175,11 +226,15 @@ where
         let threshold = (n_members * 2) / 3 + NodeCount(1);
         let max_round = config.max_round;
         let store = UnitStore::new(n_members, max_round);
+        let session_id = config.session_id;
+        let keybox = config.keychain;
+        let validator = Validator::new(session_id, keybox, max_round, threshold);
 
         Runway {
             threshold,
             store,
-            keybox: config.keychain,
+            keybox,
+            validator,
             missing_coords: HashSet::new(),
             missing_parents: HashSet::new(),
             resolved_requests: config.resolved_requests,
@@ -196,7 +251,7 @@ where
             starting_round_sender: Some(config.starting_round_sender),
             starting_round_value: 0,
             node_ix: config.node_ix,
-            session_id: config.session_id,
+            session_id,
             n_members: config.n_members,
             newest_unit_responders: HashSet::new(),
             salt: config.salt,
@@ -238,8 +293,7 @@ where
                     self.on_parents_response(u_hash, parents)
                 }
                 Response::NewestUnit(response) => {
-                    let salt = response.as_signable().salt;
-                    trace!(target: "AlephBFT-runway", "{:?} Response parents received {:?}.", self.index(), salt);
+                    trace!(target: "AlephBFT-runway", "{:?} Response newest unit received from {:?}.", self.index(), response.index());
                     self.on_newest_response(response);
                 }
             },
@@ -247,14 +301,17 @@ where
     }
 
     fn on_unit_received(&mut self, uu: UncheckedSignedUnit<H, D, MK::Signature>, alert: bool) {
-        if let Some(su) = self.validate_unit(uu) {
-            self.resolve_missing_coord(&su.as_signable().coord());
-            if alert {
-                // Units from alerts explicitly come from forkers, and we want them anyway.
-                self.store.add_unit(su, true);
-            } else {
-                self.add_unit_to_store_unless_fork(su);
+        match self.validator.validate_unit(uu) {
+            Ok(su) => {
+                self.resolve_missing_coord(&su.as_signable().coord());
+                if alert {
+                    // Units from alerts explicitly come from forkers, and we want them anyway.
+                    self.store.add_unit(su, true);
+                } else {
+                    self.add_unit_to_store_unless_fork(su);
+                }
             }
+            Err(e) => warn!(target: "AlephBFT-member", "Received unit failing validation: {}", e),
         }
     }
 
@@ -262,40 +319,6 @@ where
         if self.missing_coords.remove(coord) {
             self.send_resolved_request_notification(Request::Coord(*coord));
         }
-    }
-
-    // TODO: we should return an error and handle it outside
-    fn validate_unit(
-        &self,
-        uu: UncheckedSignedUnit<H, D, MK::Signature>,
-    ) -> Option<SignedUnit<'a, H, D, MK>> {
-        let su = match uu.check(self.keybox) {
-            Ok(su) => su,
-            Err(uu) => {
-                warn!(target: "AlephBFT-runway", "{:?} Wrong signature received {:?}.", self.index(), &uu);
-                return None;
-            }
-        };
-        let full_unit = su.as_signable();
-        if full_unit.session_id() != self.session_id {
-            // NOTE: this implies malicious behavior as the unit's session_id
-            // is incompatible with session_id of the message it arrived in.
-            warn!(target: "AlephBFT-runway", "{:?} A unit with incorrect session_id! {:?}", self.index(), full_unit);
-            return None;
-        }
-        if full_unit.round() > self.store.limit_per_node() {
-            warn!(target: "AlephBFT-runway", "{:?} A unit with too high round {}! {:?}", self.index(), full_unit.round(), full_unit);
-            return None;
-        }
-        if full_unit.creator().0 >= self.n_members.0 {
-            warn!(target: "AlephBFT-runway", "{:?} A unit with too high creator index {}! {:?}", self.index(), full_unit.creator().0, full_unit);
-            return None;
-        }
-        if !self.validate_unit_parents(&su) {
-            warn!(target: "AlephBFT-runway", "{:?} A unit did not pass parents validation. {:?}", self.index(), full_unit);
-            return None;
-        }
-        Some(su)
     }
 
     fn add_unit_to_store_unless_fork(&mut self, su: SignedUnit<'a, H, D, MK>) {
@@ -317,37 +340,6 @@ where
             return;
         }
         self.store.add_unit(su, false);
-    }
-
-    fn validate_unit_parents(&self, su: &SignedUnit<H, D, MK>) -> bool {
-        // NOTE: at this point we cannot validate correctness of the control hash, in principle it could be
-        // just a random hash, but we still would not be able to deduce that by looking at the unit only.
-        let pre_unit = su.as_signable().as_pre_unit();
-        if pre_unit.n_members() != self.n_members {
-            warn!(target: "AlephBFT-runway", "{:?} Unit with wrong length of parents map.", self.index());
-            return false;
-        }
-        let round = pre_unit.round();
-        let n_parents = pre_unit.n_parents();
-        if round == 0 && n_parents > NodeCount(0) {
-            warn!(target: "AlephBFT-runway", "{:?} Unit of round zero with non-zero number of parents.", self.index());
-            return false;
-        }
-        let threshold = self.threshold();
-        if round > 0 && n_parents < threshold {
-            warn!(target: "AlephBFT-runway", "{:?} Unit of non-zero round with only {:?} parents while at least {:?} are required.", self.index(), n_parents, threshold);
-            return false;
-        }
-        let control_hash = &pre_unit.control_hash();
-        if round > 0 && !control_hash.parents_mask[pre_unit.creator()] {
-            warn!(target: "AlephBFT-runway", "{:?} Unit does not have its creator's previous unit as parent.", self.index());
-            return false;
-        }
-        true
-    }
-
-    fn threshold(&self) -> NodeCount {
-        self.threshold
     }
 
     fn on_new_forker_detected(&mut self, forker: NodeIndex, proof: ForkProof<H, D, MK::Signature>) {
@@ -417,12 +409,7 @@ where
 
     async fn on_request_newest(&mut self, requester: NodeIndex, salt: u64) {
         let unit = self.store.newest_unit(requester);
-        let response = NewestUnitResponse {
-            requester,
-            responder: self.index(),
-            unit,
-            salt,
-        };
+        let response = NewestUnitResponse::new(requester, self.index(), unit, salt);
 
         let signed_response = Signed::sign(response, self.keybox).await.into_unchecked();
 
@@ -469,12 +456,12 @@ where
 
         let mut p_hashes_node_map = NodeMap::with_size(self.n_members);
         for (i, uu) in parents.into_iter().enumerate() {
-            let su = match self.validate_unit(uu) {
-                None => {
-                    warn!(target: "AlephBFT-runway", "{:?} In received parent response received a unit that does not pass validation.", self.index());
+            let su = match self.validator.validate_unit(uu) {
+                Ok(su) => su,
+                Err(e) => {
+                    warn!(target: "AlephBFT-runway", "{:?} In received parent response received a unit that does not pass validation: {}", self.index(), e);
                     return;
                 }
-                Some(su) => su,
             };
             let full_unit = su.as_signable();
             if full_unit.round() + 1 != u_round {
@@ -526,10 +513,10 @@ where
         }
 
         if let Some(unchecked_unit) = response.unit {
-            let checked_unit = match self.validate_unit(unchecked_unit) {
-                Some(unit) => unit,
-                None => {
-                    log::debug!(target: "AlephBFT-member", "ivalid unit in response");
+            let checked_unit = match self.validator.validate_unit(unchecked_unit) {
+                Ok(unit) => unit,
+                Err(e) => {
+                    warn!(target: "AlephBFT-member", "Invalid unit in response: {}", e);
                     return;
                 }
             };

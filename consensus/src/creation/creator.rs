@@ -4,7 +4,7 @@ use crate::{
 };
 use log::trace;
 
-pub(super) struct Creator<H: Hasher> {
+pub struct Creator<H: Hasher> {
     node_id: NodeIndex,
     n_members: NodeCount,
     candidates_by_round: Vec<NodeMap<H::Hash>>,
@@ -12,7 +12,7 @@ pub(super) struct Creator<H: Hasher> {
 }
 
 impl<H: Hasher> Creator<H> {
-    pub(super) fn new(node_id: NodeIndex, n_members: NodeCount) -> Self {
+    pub fn new(node_id: NodeIndex, n_members: NodeCount) -> Self {
         Creator {
             node_id,
             n_members,
@@ -21,7 +21,7 @@ impl<H: Hasher> Creator<H> {
         }
     }
 
-    pub(super) fn current_round(&self) -> Round {
+    pub fn current_round(&self) -> Round {
         (self.n_candidates_by_round.len() - 1) as Round
     }
 
@@ -38,7 +38,7 @@ impl<H: Hasher> Creator<H> {
     /// Returns `None` if a unit cannot be created.
     /// To create a new unit, we need to have at least floor(2*N/3) + 1 parents available in previous round.
     /// Additionally, our unit from previous round must be available.
-    pub(super) fn create_unit(&self, round: Round) -> Option<(PreUnit<H>, Vec<H::Hash>)> {
+    pub fn create_unit(&self, round: Round) -> Option<(PreUnit<H>, Vec<H::Hash>)> {
         if !self.can_create(round) {
             return None;
         }
@@ -58,7 +58,7 @@ impl<H: Hasher> Creator<H> {
         Some((new_preunit, parent_hashes))
     }
 
-    pub(super) fn add_unit(&mut self, unit: &Unit<H>) {
+    pub fn add_unit(&mut self, unit: &Unit<H>) {
         let round = unit.round();
         let pid = unit.creator();
         let hash = unit.hash();

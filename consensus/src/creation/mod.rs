@@ -11,7 +11,7 @@ use std::time::Duration;
 
 mod creator;
 
-use creator::Creator;
+pub use creator::Creator;
 
 /// The configuration needed for the process creating new units.
 pub struct Config {

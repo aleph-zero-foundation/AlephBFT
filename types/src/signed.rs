@@ -26,6 +26,7 @@ pub trait KeyBox: Index + Clone + Send + Sync + 'static {
     /// Signs a message `msg`.
     async fn sign(&self, msg: &[u8]) -> Self::Signature;
     /// Verifies whether a node with `index` correctly signed the message `msg`.
+    /// Should always return false for indices outside the node range.
     fn verify(&self, msg: &[u8], sgn: &Self::Signature, index: NodeIndex) -> bool;
 }
 

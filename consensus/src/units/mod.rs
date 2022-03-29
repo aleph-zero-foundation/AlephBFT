@@ -5,7 +5,13 @@ use crate::{
 };
 use codec::{Decode, Encode};
 use derivative::Derivative;
+use parking_lot::RwLock;
 use std::collections::HashMap;
+
+mod store;
+mod validator;
+pub(crate) use store::*;
+pub use validator::Validator;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Encode, Decode, Hash)]
 pub(crate) struct UnitCoord {
@@ -33,7 +39,7 @@ impl UnitCoord {
 /// Combined hashes of the parents of a unit together with the set of indices of creators of the
 /// parents
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Encode, Decode)]
-pub(crate) struct ControlHash<H: Hasher> {
+pub struct ControlHash<H: Hasher> {
     pub(crate) parents_mask: NodeSubset,
     pub(crate) combined_hash: H::Hash,
 }
@@ -65,7 +71,7 @@ impl<H: Hasher> ControlHash<H> {
 
 /// The simplest type representing a unit, consisting of coordinates and a control hash
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Encode, Decode)]
-pub(crate) struct PreUnit<H: Hasher> {
+pub struct PreUnit<H: Hasher> {
     coord: UnitCoord,
     control_hash: ControlHash<H>,
 }
@@ -102,7 +108,7 @@ impl<H: Hasher> PreUnit<H> {
 ///
 #[derive(Debug, Encode, Decode, Derivative)]
 #[derivative(PartialEq, Eq, Hash)]
-pub(crate) struct FullUnit<H: Hasher, D: Data> {
+pub struct FullUnit<H: Hasher, D: Data> {
     pre_unit: PreUnit<H>,
     data: D,
     session_id: SessionId,
@@ -192,7 +198,7 @@ pub(crate) type UncheckedSignedUnit<H, D, S> = UncheckedSigned<FullUnit<H, D>, S
 pub(crate) type SignedUnit<'a, H, D, KB> = Signed<'a, FullUnit<H, D>, KB>;
 
 #[derive(Clone, Debug, PartialEq, Encode, Decode)]
-pub(crate) struct Unit<H: Hasher> {
+pub struct Unit<H: Hasher> {
     pre_unit: PreUnit<H>,
     hash: H::Hash,
 }
@@ -214,10 +220,6 @@ impl<H: Hasher> Unit<H> {
         self.hash
     }
 }
-
-mod store;
-use parking_lot::RwLock;
-pub(crate) use store::*;
 
 #[cfg(test)]
 mod tests {

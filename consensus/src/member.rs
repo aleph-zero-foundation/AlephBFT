@@ -1,10 +1,13 @@
 use crate::{
     config::Config,
     network,
-    runway::{self, Request, Response, RunwayIO, RunwayNotificationIn, RunwayNotificationOut},
+    runway::{
+        self, NewestUnitResponse, Request, Response, RunwayIO, RunwayNotificationIn,
+        RunwayNotificationOut,
+    },
     units::{UncheckedSignedUnit, UnitCoord},
     Data, DataProvider, FinalizationHandler, Hasher, MultiKeychain, Network, NodeCount, NodeIndex,
-    Receiver, Recipient, Sender, Signable, Signature, SpawnHandle, UncheckedSigned,
+    Receiver, Recipient, Sender, Signature, SpawnHandle, UncheckedSigned,
 };
 use codec::{Decode, Encode};
 use futures::{
@@ -23,28 +26,6 @@ use std::{
     fmt::Debug,
     time,
 };
-
-#[derive(Debug, Encode, Decode, Clone)]
-pub(crate) struct NewestUnitResponse<H: Hasher, D: Data, S: Signature> {
-    pub(crate) requester: NodeIndex,
-    pub(crate) responder: NodeIndex,
-    pub(crate) unit: Option<UncheckedSignedUnit<H, D, S>>,
-    pub(crate) salt: u64,
-}
-
-impl<H: Hasher, D: Data, S: Signature> Signable for NewestUnitResponse<H, D, S> {
-    type Hash = Vec<u8>;
-
-    fn hash(&self) -> Self::Hash {
-        self.encode()
-    }
-}
-
-impl<H: Hasher, D: Data, S: Signature> crate::Index for NewestUnitResponse<H, D, S> {
-    fn index(&self) -> NodeIndex {
-        self.responder
-    }
-}
 
 /// A message concerning units, either about new units or some requests for them.
 #[derive(Debug, Encode, Decode, Clone)]
@@ -77,12 +58,7 @@ impl<H: Hasher, D: Data, S: Signature> UnitMessage<H, D, S> {
                 .map(|uu| uu.as_signable().data().clone())
                 .collect(),
             UnitMessage::RequestNewest(_, _) => Vec::new(),
-            UnitMessage::ResponseNewest(response) => response
-                .as_signable()
-                .unit
-                .iter()
-                .map(|uu| uu.as_signable().data().clone())
-                .collect(),
+            UnitMessage::ResponseNewest(response) => response.as_signable().included_data(),
         }
     }
 }
@@ -336,7 +312,7 @@ where
                     self.send_unit_message(message, Recipient::Node(recipient))
                 }
                 Response::NewestUnit(response) => {
-                    let requester = response.as_signable().requester;
+                    let requester = response.as_signable().requester();
                     let message = UnitMessage::ResponseNewest(response);
                     self.send_unit_message(message, Recipient::Node(requester))
                 }
