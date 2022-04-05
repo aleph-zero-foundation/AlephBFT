@@ -7,71 +7,22 @@ use crate::{
         UnitStore, Validator,
     },
     Config, Data, DataProvider, FinalizationHandler, Hasher, Index, MultiKeychain, NodeCount,
-    NodeIndex, NodeMap, Receiver, Recipient, Round, Sender, SessionId, Signable, Signature, Signed,
+    NodeIndex, NodeMap, Receiver, Recipient, Round, Sender, SessionId, Signature, Signed,
     SpawnHandle, UncheckedSigned,
 };
-use codec::{Decode, Encode};
 use futures::{
     channel::{mpsc, oneshot},
     future::FusedFuture,
-    pin_mut, FutureExt, StreamExt,
+    pin_mut, Future, FutureExt, StreamExt,
 };
 use log::{debug, error, info, trace, warn};
-use std::{
-    collections::{hash_map::DefaultHasher, HashSet},
-    convert::TryFrom,
-    hash::{Hash, Hasher as _},
-    time::Duration,
-};
+use std::{collections::HashSet, convert::TryFrom};
 
-#[derive(Debug, Encode, Decode, Clone)]
-pub struct NewestUnitResponse<H: Hasher, D: Data, S: Signature> {
-    requester: NodeIndex,
-    responder: NodeIndex,
-    unit: Option<UncheckedSignedUnit<H, D, S>>,
-    salt: u64,
-}
+mod collection;
 
-impl<H: Hasher, D: Data, S: Signature> Signable for NewestUnitResponse<H, D, S> {
-    type Hash = Vec<u8>;
-
-    fn hash(&self) -> Self::Hash {
-        self.encode()
-    }
-}
-
-impl<H: Hasher, D: Data, S: Signature> crate::Index for NewestUnitResponse<H, D, S> {
-    fn index(&self) -> NodeIndex {
-        self.responder
-    }
-}
-
-impl<H: Hasher, D: Data, S: Signature> NewestUnitResponse<H, D, S> {
-    pub fn new(
-        requester: NodeIndex,
-        responder: NodeIndex,
-        unit: Option<UncheckedSignedUnit<H, D, S>>,
-        salt: u64,
-    ) -> Self {
-        NewestUnitResponse {
-            requester,
-            responder,
-            unit,
-            salt,
-        }
-    }
-
-    pub fn included_data(&self) -> Vec<D> {
-        match &self.unit {
-            Some(u) => vec![u.as_signable().data().clone()],
-            None => Vec::new(),
-        }
-    }
-
-    pub fn requester(&self) -> NodeIndex {
-        self.requester
-    }
-}
+#[cfg(feature = "initial_unit_collection")]
+use collection::{Collection, IO as CollectionIO};
+pub use collection::{NewestUnitResponse, Salt};
 
 /// Type for incoming notifications: Runway to Consensus.
 #[derive(Clone, PartialEq)]
@@ -98,10 +49,11 @@ pub(crate) enum NotificationOut<H: Hasher> {
     AddedToDag(H::Hash, Vec<H::Hash>),
 }
 
-pub(crate) enum Request<H: Hasher> {
+/// Possible requests for information from other nodes.
+pub enum Request<H: Hasher> {
     Coord(UnitCoord),
     Parents(H::Hash),
-    NewestUnit(u64),
+    NewestUnit(Salt),
 }
 
 pub(crate) enum Response<H: Hasher, D: Data, S: Signature> {
@@ -161,44 +113,34 @@ where
 {
     missing_coords: HashSet<UnitCoord>,
     missing_parents: HashSet<H::Hash>,
-    node_ix: NodeIndex,
     session_id: SessionId,
-    n_members: NodeCount,
-    threshold: NodeCount,
     store: UnitStore<'a, H, D, MK>,
-    keybox: &'a MK,
-    validator: Validator<'a, MK>,
+    keychain: &'a MK,
+    validator: &'a Validator<'a, MK>,
     alerts_for_alerter: Sender<Alert<H, D, MK::Signature>>,
     notifications_from_alerter: Receiver<ForkingNotification<H, D, MK::Signature>>,
     unit_messages_from_network: Receiver<RunwayNotificationIn<H, D, MK::Signature>>,
     unit_messages_for_network: Sender<RunwayNotificationOut<H, D, MK::Signature>>,
+    responses_for_collection:
+        Sender<UncheckedSigned<NewestUnitResponse<H, D, MK::Signature>, MK::Signature>>,
     resolved_requests: Sender<Request<H>>,
     tx_consensus: Sender<NotificationIn<H>>,
     rx_consensus: Receiver<NotificationOut<H>>,
     ordered_batch_rx: Receiver<Vec<H::Hash>>,
     data_provider: DP,
     finalization_handler: FH,
-    after_catch_up_delay: bool,
-    starting_round_sender: Option<oneshot::Sender<Round>>,
-    starting_round_value: Round,
-    newest_unit_responders: HashSet<NodeIndex>,
-    salt: u64,
     exiting: bool,
 }
 
 struct RunwayConfig<
-    'a,
     H: Hasher,
     D: Data,
     DP: DataProvider<D>,
     FH: FinalizationHandler<D>,
     MK: MultiKeychain,
 > {
-    node_ix: NodeIndex,
     session_id: SessionId,
-    n_members: NodeCount,
     max_round: Round,
-    keychain: &'a MK,
     data_provider: DP,
     finalization_handler: FH,
     alerts_for_alerter: Sender<Alert<H, D, MK::Signature>>,
@@ -207,10 +149,10 @@ struct RunwayConfig<
     rx_consensus: Receiver<NotificationOut<H>>,
     unit_messages_from_network: Receiver<RunwayNotificationIn<H, D, MK::Signature>>,
     unit_messages_for_network: Sender<RunwayNotificationOut<H, D, MK::Signature>>,
+    responses_for_collection:
+        Sender<UncheckedSigned<NewestUnitResponse<H, D, MK::Signature>, MK::Signature>>,
     ordered_batch_rx: Receiver<Vec<H::Hash>>,
     resolved_requests: Sender<Request<H>>,
-    starting_round_sender: oneshot::Sender<Round>,
-    salt: u64,
 }
 
 impl<'a, H, D, MK, DP, FH> Runway<'a, H, D, MK, DP, FH>
@@ -221,46 +163,57 @@ where
     DP: DataProvider<D>,
     FH: FinalizationHandler<D>,
 {
-    fn new(config: RunwayConfig<'a, H, D, DP, FH, MK>) -> Self {
-        let n_members = config.n_members;
-        let threshold = (n_members * 2) / 3 + NodeCount(1);
-        let max_round = config.max_round;
+    fn new(
+        config: RunwayConfig<H, D, DP, FH, MK>,
+        keychain: &'a MK,
+        validator: &'a Validator<'a, MK>,
+    ) -> Self {
+        let n_members = keychain.node_count();
+        let RunwayConfig {
+            session_id,
+            max_round,
+            data_provider,
+            finalization_handler,
+            alerts_for_alerter,
+            notifications_from_alerter,
+            tx_consensus,
+            rx_consensus,
+            unit_messages_from_network,
+            unit_messages_for_network,
+            responses_for_collection,
+            ordered_batch_rx,
+            resolved_requests,
+        } = config;
         let store = UnitStore::new(n_members, max_round);
-        let session_id = config.session_id;
-        let keybox = config.keychain;
-        let validator = Validator::new(session_id, keybox, max_round, threshold);
 
         Runway {
-            threshold,
             store,
-            keybox,
+            keychain,
             validator,
             missing_coords: HashSet::new(),
             missing_parents: HashSet::new(),
-            resolved_requests: config.resolved_requests,
-            alerts_for_alerter: config.alerts_for_alerter,
-            notifications_from_alerter: config.notifications_from_alerter,
-            unit_messages_from_network: config.unit_messages_from_network,
-            unit_messages_for_network: config.unit_messages_for_network,
-            tx_consensus: config.tx_consensus,
-            rx_consensus: config.rx_consensus,
-            ordered_batch_rx: config.ordered_batch_rx,
-            data_provider: config.data_provider,
-            finalization_handler: config.finalization_handler,
-            after_catch_up_delay: false,
-            starting_round_sender: Some(config.starting_round_sender),
-            starting_round_value: 0,
-            node_ix: config.node_ix,
+            resolved_requests,
+            alerts_for_alerter,
+            notifications_from_alerter,
+            unit_messages_from_network,
+            unit_messages_for_network,
+            tx_consensus,
+            rx_consensus,
+            ordered_batch_rx,
+            data_provider,
+            finalization_handler,
+            responses_for_collection,
             session_id,
-            n_members: config.n_members,
-            newest_unit_responders: HashSet::new(),
-            salt: config.salt,
             exiting: false,
         }
     }
 
     fn index(&self) -> NodeIndex {
-        self.node_ix
+        self.keychain.index()
+    }
+
+    fn node_count(&self) -> NodeCount {
+        self.keychain.node_count()
     }
 
     async fn on_unit_message(&mut self, message: RunwayNotificationIn<H, D, MK::Signature>) {
@@ -294,7 +247,16 @@ where
                 }
                 Response::NewestUnit(response) => {
                     trace!(target: "AlephBFT-runway", "{:?} Response newest unit received from {:?}.", self.index(), response.index());
-                    self.on_newest_response(response);
+                    if let Some(unit) = response.as_signable().included_unit() {
+                        self.on_unit_received(unit.clone(), false)
+                    }
+                    if self
+                        .responses_for_collection
+                        .unbounded_send(response)
+                        .is_err()
+                    {
+                        debug!(target: "AlephBFT-runway", "{:?} Could not send response to collection.", self.index())
+                    }
                 }
             },
         }
@@ -357,7 +319,7 @@ where
         units: Vec<SignedUnit<H, D, MK>>,
     ) -> Alert<H, D, MK::Signature> {
         Alert::new(
-            self.node_ix,
+            self.index(),
             proof,
             units.into_iter().map(|signed| signed.into()).collect(),
         )
@@ -411,7 +373,7 @@ where
         let unit = self.store.newest_unit(requester);
         let response = NewestUnitResponse::new(requester, self.index(), unit, salt);
 
-        let signed_response = Signed::sign(response, self.keybox).await.into_unchecked();
+        let signed_response = Signed::sign(response, self.keychain).await.into_unchecked();
 
         if let Err(e) =
             self.unit_messages_for_network
@@ -454,7 +416,7 @@ where
             return;
         }
 
-        let mut p_hashes_node_map = NodeMap::with_size(self.n_members);
+        let mut p_hashes_node_map = NodeMap::with_size(self.node_count());
         for (i, uu) in parents.into_iter().enumerate() {
             let su = match self.validator.validate_unit(uu) {
                 Ok(su) => su,
@@ -491,85 +453,6 @@ where
         self.send_consensus_notification(NotificationIn::UnitParents(u_hash, p_hashes));
     }
 
-    fn on_newest_response(
-        &mut self,
-        unchecked_response: UncheckedSigned<NewestUnitResponse<H, D, MK::Signature>, MK::Signature>,
-    ) {
-        if self.starting_round_sender.is_none() {
-            log::debug!(target: "AlephBFT-member", "Starting round already sent, ignoring newest unit response");
-            return;
-        }
-        let response = match unchecked_response.check(self.keybox) {
-            Ok(checked) => checked.into_signable(),
-            Err(e) => {
-                log::debug!(target: "AlephBFT-member", "incorrectly signed response: {:?}", e);
-                return;
-            }
-        };
-
-        if response.salt != self.salt {
-            debug!(target: "AlephBFT-member", "Ignoring newest unit response with an unknown salt: {:?}", response);
-            return;
-        }
-
-        if let Some(unchecked_unit) = response.unit {
-            let checked_unit = match self.validator.validate_unit(unchecked_unit) {
-                Ok(unit) => unit,
-                Err(e) => {
-                    warn!(target: "AlephBFT-member", "Invalid unit in response: {}", e);
-                    return;
-                }
-            };
-            if checked_unit.as_signable().creator() != self.index() {
-                log::debug!(target: "AlephBFT-member", "Not our unit in a response:  {:?}", checked_unit.into_signable());
-                return;
-            }
-            if self
-                .store
-                .unit_by_hash(&checked_unit.as_signable().hash())
-                .is_none()
-            {
-                let starting_round_candidate = checked_unit.as_signable().round() + 1;
-                self.on_unit_received(checked_unit.into(), false);
-                if starting_round_candidate > self.starting_round_value {
-                    self.starting_round_value = starting_round_candidate;
-                }
-            }
-        }
-        self.newest_unit_responders.insert(response.responder);
-        if self.is_starting_round_ready() {
-            self.resolve_starting_round();
-        }
-    }
-
-    fn is_starting_round_ready(&self) -> bool {
-        self.after_catch_up_delay && self.newest_unit_responders.len() + 1 >= self.threshold.0
-    }
-
-    fn resolve_starting_round(&mut self) {
-        let starting_round_sender = match self.starting_round_sender.take() {
-            Some(sender) => sender,
-            None => {
-                warn!(target: "AlephBFT-runway", "Trying to resolve starting round after resolving it earlier");
-                return;
-            }
-        };
-        if starting_round_sender
-            .send(self.starting_round_value)
-            .is_err()
-        {
-            error!(target: "AlephBFT-runway", "unable to send starting round to creator");
-            self.exiting = true;
-            return;
-        }
-        if let Err(e) = self
-            .resolved_requests
-            .unbounded_send(Request::NewestUnit(self.salt))
-        {
-            error!(target: "AlephBFT-runway", "unable to send resolved request:  {}", e);
-        }
-    }
-
     fn resolve_missing_parents(&mut self, u_hash: &H::Hash) {
         if self.missing_parents.remove(u_hash) {
             self.send_resolved_request_notification(Request::Parents(*u_hash));
@@ -580,7 +463,7 @@ where
         debug!(target: "AlephBFT-runway", "{:?} On create notification.", self.index());
         let data = self.data_provider.get_data().await;
         let full_unit = FullUnit::new(u, data, self.session_id);
-        let signed_unit = Signed::sign(full_unit, self.keybox).await;
+        let signed_unit = Signed::sign(full_unit, self.keychain).await;
         self.store.add_unit(signed_unit.clone(), false);
     }
 
@@ -726,18 +609,6 @@ where
 
     async fn run(mut self, mut exit: oneshot::Receiver<()>) {
         let index = self.index();
-
-        info!(target: "AlephBFT-runway", "{:?} Runway starting.", index);
-
-        let notification =
-            RunwayNotificationOut::Request(Request::NewestUnit(self.salt), Recipient::Everyone);
-        if let Err(e) = self.unit_messages_for_network.unbounded_send(notification) {
-            error!(target: "AlephBFT-runway", "{:?} Unable to send the newest unit request: {}", index, e);
-            self.exiting = true
-        };
-
-        let mut catch_up_delay = futures_timer::Delay::new(Duration::from_secs(5)).fuse();
-
         info!(target: "AlephBFT-runway", "{:?} Runway started.", index);
         loop {
             futures::select! {
@@ -775,13 +646,6 @@ where
                     }
                 },
 
-                _ = catch_up_delay => {
-                    self.after_catch_up_delay = true;
-                    if self.is_starting_round_ready() {
-                        self.resolve_starting_round();
-                    }
-                }
-
                 _ = &mut exit => {
                     info!(target: "AlephBFT-runway", "{:?} received exit signal", self.index());
                     self.exiting = true;
@@ -809,6 +673,45 @@ pub(crate) struct RunwayIO<H: Hasher, D: Data, MK: MultiKeychain> {
     pub(crate) unit_messages_for_network: Sender<RunwayNotificationOut<H, D, MK::Signature>>,
     pub(crate) unit_messages_from_network: Receiver<RunwayNotificationIn<H, D, MK::Signature>>,
     pub(crate) resolved_requests: Sender<Request<H>>,
+}
+
+#[cfg(feature = "initial_unit_collection")]
+fn initial_unit_collection<'a, H: Hasher, D: Data, MK: MultiKeychain>(
+    keychain: &'a MK,
+    validator: &'a Validator<'a, MK>,
+    threshold: NodeCount,
+    unit_messages_for_network: &Sender<RunwayNotificationOut<H, D, MK::Signature>>,
+    starting_round_sender: oneshot::Sender<Round>,
+    responses_from_runway: Receiver<
+        UncheckedSigned<NewestUnitResponse<H, D, MK::Signature>, MK::Signature>,
+    >,
+    resolved_requests: Sender<Request<H>>,
+) -> Result<impl Future<Output = ()> + 'a, ()> {
+    let (collection, salt) = Collection::new(keychain, validator, threshold);
+    let notification =
+        RunwayNotificationOut::Request(Request::NewestUnit(salt), Recipient::Everyone);
+    if let Err(e) = unit_messages_for_network.unbounded_send(notification) {
+        error!(target: "AlephBFT-runway", "Unable to send the newest unit request: {}", e);
+        return Err(());
+    };
+    let collection = CollectionIO::new(
+        starting_round_sender,
+        responses_from_runway,
+        resolved_requests,
+        collection,
+    );
+    Ok(collection.run())
+}
+
+#[cfg(not(feature = "initial_unit_collection"))]
+fn trivial_start(
+    starting_round_sender: oneshot::Sender<Round>,
+) -> Result<impl Future<Output = ()>, ()> {
+    if let Err(e) = starting_round_sender.send(0) {
+        error!(target: "AlephBFT-runway", "Unable to send the starting round: {}", e);
+        return Err(());
+    }
+    Ok(async {})
 }
 
 pub(crate) async fn run<H, D, MK, DP, FH, SH>(
@@ -874,16 +777,32 @@ pub(crate) async fn run<H, D, MK, DP, FH, SH>(
     });
     let mut consensus_handle = consensus_handle.fuse();
 
-    let index = config.node_ix;
+    let index = keychain.index();
 
-    let salt = {
-        let mut hasher = DefaultHasher::new();
-        std::time::Instant::now().hash(&mut hasher);
-        hasher.finish()
+    let threshold = (keychain.node_count() * 2) / 3 + NodeCount(1);
+    let validator = Validator::new(config.session_id, &keychain, config.max_round, threshold);
+    let (responses_for_collection, responses_from_runway) = mpsc::unbounded();
+    #[cfg(feature = "initial_unit_collection")]
+    let starting_round_handle = match initial_unit_collection(
+        &keychain,
+        &validator,
+        threshold,
+        &runway_io.unit_messages_for_network,
+        starting_round_sender,
+        responses_from_runway,
+        runway_io.resolved_requests.clone(),
+    ) {
+        Ok(handle) => handle.fuse(),
+        Err(_) => return,
     };
+    #[cfg(not(feature = "initial_unit_collection"))]
+    let starting_round_handle = match trivial_start(starting_round_sender) {
+        Ok(handle) => handle.fuse(),
+        Err(_) => return,
+    };
+    pin_mut!(starting_round_handle);
 
     let runway_config = RunwayConfig {
-        keychain: &keychain,
         data_provider,
         finalization_handler,
         alerts_for_alerter,
@@ -893,30 +812,35 @@ pub(crate) async fn run<H, D, MK, DP, FH, SH>(
         unit_messages_from_network: runway_io.unit_messages_from_network,
         unit_messages_for_network: runway_io.unit_messages_for_network,
         ordered_batch_rx,
+        responses_for_collection,
         resolved_requests: runway_io.resolved_requests,
-        starting_round_sender,
-        node_ix: config.node_ix,
         session_id: config.session_id,
-        n_members: config.n_members,
         max_round: config.max_round,
-        salt,
     };
     let (runway_exit, exit_stream) = oneshot::channel();
-    let runway = Runway::new(runway_config);
+    let runway = Runway::new(runway_config, &keychain, &validator);
     let runway_handle = runway.run(exit_stream).fuse();
     pin_mut!(runway_handle);
 
-    futures::select! {
-        _ = runway_handle => {
-            debug!(target: "AlephBFT-runway", "{:?} Runway task terminated early.", index);
-        },
-        _ = alerter_handle => {
-            debug!(target: "AlephBFT-runway", "{:?} Alerter task terminated early.", index);
-        },
-        _ = consensus_handle => {
-            debug!(target: "AlephBFT-runway", "{:?} Consensus task terminated early.", index);
-        },
-        _ = &mut exit => {},
+    loop {
+        futures::select! {
+            _ = runway_handle => {
+                debug!(target: "AlephBFT-runway", "{:?} Runway task terminated early.", index);
+                break;
+            },
+            _ = alerter_handle => {
+                debug!(target: "AlephBFT-runway", "{:?} Alerter task terminated early.", index);
+                break;
+            },
+            _ = consensus_handle => {
+                debug!(target: "AlephBFT-runway", "{:?} Consensus task terminated early.", index);
+                break;
+            },
+            _ = starting_round_handle => {
+                debug!(target: "AlephBFT-runway", "{:?} Starting round task terminated.", index);
+            },
+            _ = &mut exit => break,
+        }
     }
 
     info!(target: "AlephBFT-runway", "{:?} Ending run.", index);

@@ -8,7 +8,7 @@ use std::{
 };
 
 /// All that can be wrong with a unit except control hash issues.
-#[derive(Debug)]
+#[derive(PartialEq, Debug)]
 pub enum ValidationError<H: Hasher, D: Data, S: Signature> {
     WrongSignature(UncheckedSignedUnit<H, D, S>),
     WrongSession(FullUnit<H, D>),

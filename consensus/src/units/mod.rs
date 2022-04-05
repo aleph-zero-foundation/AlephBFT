@@ -10,10 +10,12 @@ use std::collections::HashMap;
 mod store;
 mod validator;
 pub(crate) use store::*;
-pub use validator::Validator;
+pub use validator::{ValidationError, Validator};
 
+/// The coordinates of a unit, i.e. creator and round. In the absence of forks this uniquely
+/// determines a unit within a session.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Encode, Decode, Hash)]
-pub(crate) struct UnitCoord {
+pub struct UnitCoord {
     round: Round,
     creator: NodeIndex,
 }
