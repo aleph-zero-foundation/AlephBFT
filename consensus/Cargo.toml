@@ -22,7 +22,7 @@ derivative = "2.2.0"
 futures = "0.3"
 futures-timer = "3.0"
 log = "0.4"
-parking_lot = "0.11"
+parking_lot = "0.12"
 rand = "0.8"
 
 [dev-dependencies]
