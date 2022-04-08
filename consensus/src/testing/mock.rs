@@ -15,6 +15,7 @@ use std::{
     cell::RefCell,
     collections::{hash_map::DefaultHasher, HashMap},
     hash::Hasher as StdHasher,
+    io::{Cursor, Write},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -26,7 +27,7 @@ use crate::{
     runway::{NotificationIn, NotificationOut},
     units::{Unit, UnitCoord},
     Config, DataProvider as DataProviderT, DelayConfig,
-    FinalizationHandler as FinalizationHandlerT, Hasher, Index, KeyBox as KeyBoxT,
+    FinalizationHandler as FinalizationHandlerT, Hasher, Index, KeyBox as KeyBoxT, LocalIO,
     MultiKeychain as MultiKeychainT, Network as NetworkT, NodeCount, NodeIndex,
     PartialMultisignature as PartialMultisignatureT, Receiver, Recipient, Round, Sender,
     SpawnHandle, TaskHandle,
@@ -561,25 +562,31 @@ impl MultiKeychainT for KeyBox {
     }
 }
 
+pub struct SaverMock {
+    data: Arc<Mutex<Vec<u8>>>,
+}
+
+impl Write for SaverMock {
+    fn write(&mut self, buf: &[u8]) -> Result<usize, std::io::Error> {
+        self.data.lock().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> Result<(), std::io::Error> {
+        Ok(())
+    }
+}
+
+pub type LoaderMock = Cursor<Vec<u8>>;
+
 pub(crate) async fn run_honest_member<N: 'static + NetworkT<NetworkData>>(
     config: Config,
+    local_io: LocalIO<Data, DataProvider, FinalizationHandler, SaverMock, LoaderMock>,
     network: N,
-    data_provider: DataProvider,
-    finalization_provider: FinalizationHandler,
     keybox: KeyBox,
     spawn_handle: Spawner,
     exit: oneshot::Receiver<()>,
 ) {
-    run_session(
-        config,
-        network,
-        data_provider,
-        finalization_provider,
-        keybox,
-        spawn_handle,
-        exit,
-    )
-    .await
+    run_session(config, local_io, network, keybox, spawn_handle, exit).await
 }
 
 pub fn configure_network(
@@ -600,21 +607,23 @@ pub fn spawn_honest_member(
     spawner: Spawner,
     node_index: NodeIndex,
     n_members: NodeCount,
+    units: Arc<Mutex<Vec<u8>>>,
     network: impl 'static + NetworkT<NetworkData>,
 ) -> (UnboundedReceiver<Data>, oneshot::Sender<()>, TaskHandle) {
     let data_provider = DataProvider::new(node_index);
-
-    let (finalization_provider, finalization_rx) = FinalizationHandler::new();
+    let (finalization_handler, finalization_rx) = FinalizationHandler::new();
     let config = gen_config(node_index, n_members);
     let (exit_tx, exit_rx) = oneshot::channel();
     let spawner_inner = spawner.clone();
+    let unit_loader = LoaderMock::new((*units.lock()).clone());
+    let unit_saver = SaverMock { data: units };
+    let local_io = LocalIO::new(data_provider, finalization_handler, unit_saver, unit_loader);
     let member_task = async move {
         let keybox = KeyBox::new(n_members, node_index);
         run_honest_member(
             config,
+            local_io,
             network,
-            data_provider,
-            finalization_provider,
             keybox,
             spawner_inner.clone(),
             exit_rx,

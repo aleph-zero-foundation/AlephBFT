@@ -1,13 +1,12 @@
 use crate::{
-    config::Config,
     network,
     runway::{
         self, NewestUnitResponse, Request, Response, RunwayIO, RunwayNotificationIn,
         RunwayNotificationOut,
     },
     units::{UncheckedSignedUnit, UnitCoord},
-    Data, DataProvider, FinalizationHandler, Hasher, MultiKeychain, Network, NodeCount, NodeIndex,
-    Receiver, Recipient, Sender, Signature, SpawnHandle, UncheckedSigned,
+    Config, Data, DataProvider, FinalizationHandler, Hasher, MultiKeychain, Network, NodeCount,
+    NodeIndex, Receiver, Recipient, Sender, Signature, SpawnHandle, UncheckedSigned,
 };
 use codec::{Decode, Encode};
 use futures::{
@@ -24,6 +23,8 @@ use std::{
     collections::{BinaryHeap, HashSet},
     convert::TryInto,
     fmt::Debug,
+    io::{Read, Write},
+    marker::PhantomData,
     time,
 };
 
@@ -103,6 +104,34 @@ impl<H: Hasher, D: Data, S: Signature> Ord for ScheduledTask<H, D, S> {
 impl<H: Hasher, D: Data, S: Signature> PartialOrd for ScheduledTask<H, D, S> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+#[derive(Clone)]
+pub struct LocalIO<D: Data, DP: DataProvider<D>, FH: FinalizationHandler<D>, US: Write, UL: Read> {
+    data_provider: DP,
+    finalization_handler: FH,
+    _unit_saver: US,
+    _unit_loader: UL,
+    _phantom: PhantomData<D>,
+}
+
+impl<D: Data, DP: DataProvider<D>, FH: FinalizationHandler<D>, US: Write, UL: Read>
+    LocalIO<D, DP, FH, US, UL>
+{
+    pub fn new(
+        data_provider: DP,
+        finalization_handler: FH,
+        unit_saver: US,
+        unit_loader: UL,
+    ) -> LocalIO<D, DP, FH, US, UL> {
+        LocalIO {
+            data_provider,
+            finalization_handler,
+            _unit_saver: unit_saver,
+            _unit_loader: unit_loader,
+            _phantom: PhantomData,
+        }
     }
 }
 
@@ -401,14 +430,15 @@ pub async fn run_session<
     D: Data,
     DP: DataProvider<D>,
     FH: FinalizationHandler<D>,
+    US: Write,
+    UL: Read,
     N: Network<NetworkData<H, D, MK::Signature, MK::PartialMultisignature>> + 'static,
     SH: SpawnHandle,
     MK: MultiKeychain,
 >(
     config: Config,
+    local_io: LocalIO<D, DP, FH, US, UL>,
     network: N,
-    data_provider: DP,
-    finalization_handler: FH,
     keybox: MK,
     spawn_handle: SH,
     mut exit: oneshot::Receiver<()>,
@@ -453,9 +483,9 @@ pub async fn run_session<
     };
     let runway_handle = runway::run(
         config.clone(),
+        local_io.data_provider,
+        local_io.finalization_handler,
         keybox.clone(),
-        data_provider,
-        finalization_handler,
         spawn_handle.clone(),
         runway_io,
         exit_stream,

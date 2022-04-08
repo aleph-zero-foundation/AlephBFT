@@ -67,9 +67,19 @@ pub trait KeyBox: Index + Clone + Send {
 
 A typical implementation of KeyBox would be a collection of `N` public keys, an index `i` and a single private key corresponding to the public key number `i`. The meaning of `sign` is then to produce a signature using the given private key, and `verify(msg, s, j)` is to verify whether the signature `s` under the message `msg` is correct with respect to the public key of the `j`th node.
 
+#### 3.1.4 Read & Write – recovering mid session crashes
+
+The `std::io::Write` and `std::io::Read` traits are used for creating backups of Units created in a session. This is a part of crash recovery. Units created are needed for member to recover after crash during a session for Aleph to be BFT. This means that user needs to provide two traits `std::io::Write` and `std::io::Read` that are used for storing and reading Unit that are created by member. At first (without any crash) `std::io::Read` should return nothing. After crash it should contain all data that was stored before in this session.
+
+These traits are optional. If you do not want to recover crashes mid session or your session handling ensures AlephBFT will not run in the same session twice you can pass NOOP implementation here.
+
+[`std::io::Write`](https://doc.rust-lang.org/std/io/trait.Write.html#) should provide a way of writing data generated during session which should be backed up. **`flush` method should block until the written data is backed up.**
+
+[`std::io::Read`](https://doc.rust-lang.org/std/io/trait.Read.html#) should provide a way of retreiving backups of all data generated during session by this member in case of crash. **`std::io::Read` should have a copy of all data so that writing to `std::io::Write` has no effect on reading.**
+
 ### 3.2 Examples
 
-While the implementations of `KeyBox` and `Network` are pretty much universal, the implementation of `DataProvider` and `FinalizationHandler` depends on the specific application. We consider two examples here.
+While the implementations of `KeyBox`, `std::io::Write`, `std::io::Read` and `Network` are pretty much universal, the implementation of `DataProvider` and `FinalizationHandler` depends on the specific application. We consider two examples here.
 
 #### 3.2.1 Blockchain Finality Gadget.
 

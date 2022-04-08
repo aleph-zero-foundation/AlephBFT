@@ -716,9 +716,9 @@ fn trivial_start(
 
 pub(crate) async fn run<H, D, MK, DP, FH, SH>(
     config: Config,
-    keychain: MK,
     data_provider: DP,
     finalization_handler: FH,
+    keychain: MK,
     spawn_handle: SH,
     runway_io: RunwayIO<H, D, MK>,
     mut exit: oneshot::Receiver<()>,

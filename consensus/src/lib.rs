@@ -20,7 +20,7 @@ pub use aleph_bft_types::{
     SignatureError, SignatureSet, Signed, SpawnHandle, TaskHandle, UncheckedSigned,
 };
 pub use config::{default_config, exponential_slowdown, Config, DelayConfig};
-pub use member::run_session;
+pub use member::{run_session, LocalIO};
 pub use network::NetworkData;
 
 #[cfg(test)]

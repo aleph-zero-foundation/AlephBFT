@@ -1,9 +1,10 @@
-use futures::StreamExt;
-
 use crate::{
     testing::mock::{configure_network, init_log, spawn_honest_member, Spawner},
     NodeCount, SpawnHandle,
 };
+use futures::StreamExt;
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 async fn honest_members_agree_on_batches(
     n_members: NodeCount,
@@ -22,8 +23,13 @@ async fn honest_members_agree_on_batches(
     for network in networks {
         let ix = network.index();
         if n_alive.into_range().contains(&ix) {
-            let (batch_rx, exit_tx, handle) =
-                spawn_honest_member(spawner.clone(), ix, n_members, network);
+            let (batch_rx, exit_tx, handle) = spawn_honest_member(
+                spawner.clone(),
+                ix,
+                n_members,
+                Arc::new(Mutex::new(vec![])),
+                network,
+            );
             batch_rxs.push(batch_rx);
             exits.push(exit_tx);
             handles.push(handle);
