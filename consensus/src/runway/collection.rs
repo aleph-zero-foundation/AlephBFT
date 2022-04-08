@@ -292,18 +292,17 @@ mod tests {
     };
     use crate::{
         creation::Creator as GenericCreator,
-        testing::mock::{Data, Hasher64, KeyBox, Signature},
         units::{
             FullUnit as GenericFullUnit, PreUnit as GenericPreUnit,
-            UncheckedSignedUnit as GenericUncheckedSignedUnit, UnitCoord,
-            Validator as GenericValidator,
+            UncheckedSignedUnit as GenericUncheckedSignedUnit, Validator as GenericValidator,
         },
         Index, NodeCount, NodeIndex, SessionId, Signed, UncheckedSigned,
     };
+    use aleph_bft_mock::{Data, Hasher64, Keychain, Signature};
     use std::iter::{once, repeat};
 
-    type Collection<'a> = GenericCollection<'a, KeyBox>;
-    type Validator<'a> = GenericValidator<'a, KeyBox>;
+    type Collection<'a> = GenericCollection<'a, Keychain>;
+    type Validator<'a> = GenericValidator<'a, Keychain>;
     type Creator = GenericCreator<Hasher64>;
     type PreUnit = GenericPreUnit<Hasher64>;
     type FullUnit = GenericFullUnit<Hasher64, Data>;
@@ -311,15 +310,18 @@ mod tests {
     type NewestUnitResponse = GenericNewestUnitResponse<Hasher64, Data, Signature>;
     type UncheckedSignedNewestUnitResponse = UncheckedSigned<NewestUnitResponse, Signature>;
 
-    fn keychain_set(n_members: NodeCount) -> Vec<KeyBox> {
+    fn keychain_set(n_members: NodeCount) -> Vec<Keychain> {
         let mut result = Vec::new();
         for i in 0..n_members.0 {
-            result.push(KeyBox::new(n_members, NodeIndex(i)));
+            result.push(Keychain::new(n_members, NodeIndex(i)));
         }
         result
     }
 
-    async fn create_responses<'a, R: Iterator<Item = (&'a KeyBox, Option<UncheckedSignedUnit>)>>(
+    async fn create_responses<
+        'a,
+        R: Iterator<Item = (&'a Keychain, Option<UncheckedSignedUnit>)>,
+    >(
         presponses: R,
         salt: Salt,
         requester: NodeIndex,
@@ -335,10 +337,9 @@ mod tests {
     async fn preunit_to_unchecked_signed_unit(
         pu: PreUnit,
         session_id: SessionId,
-        keychain: &KeyBox,
+        keychain: &Keychain,
     ) -> UncheckedSignedUnit {
-        let data = Data::new(UnitCoord::new(0, 0.into()), 0);
-        let full_unit = FullUnit::new(pu, data, session_id);
+        let full_unit = FullUnit::new(pu, 0, session_id);
         let signed_unit = Signed::sign(full_unit, keychain).await;
         signed_unit.into()
     }
@@ -350,7 +351,7 @@ mod tests {
         let creator_id = NodeIndex(0);
         let session_id = 0;
         let max_round = 2;
-        let keychain = KeyBox::new(n_members, creator_id);
+        let keychain = Keychain::new(n_members, creator_id);
         let validator = Validator::new(session_id, &keychain, max_round, threshold);
         let (collection, _) = Collection::new(&keychain, &validator, threshold);
         assert_eq!(collection.status(), Pending);

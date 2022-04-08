@@ -1,6 +1,6 @@
 [package]
 name = "aleph-bft-rmc"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Cardinal Cryptography"]
 categories = ["algorithms", "data-structures", "cryptography", "database"]
@@ -20,5 +20,6 @@ futures-timer = "3.0"
 log = "0.4"
 
 [dev-dependencies]
+aleph-bft-mock = { path = "../mock" }
 rand = "0.8"
 tokio = { version = "1.6.1", features = ["macros", "rt", "rt-multi-thread"] }

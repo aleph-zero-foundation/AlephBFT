@@ -90,12 +90,10 @@ impl<H: Hasher> Creator<H> {
 mod tests {
     use super::Creator as GenericCreator;
     use crate::{
-        testing::mock::{Data, Hasher64},
-        units::{
-            FullUnit as GenericFullUnit, PreUnit as GenericPreUnit, Unit as GenericUnit, UnitCoord,
-        },
+        units::{FullUnit as GenericFullUnit, PreUnit as GenericPreUnit, Unit as GenericUnit},
         Hasher, NodeCount, NodeIndex, Round,
     };
+    use aleph_bft_mock::{Data, Hasher64};
     use std::collections::HashSet;
 
     type Creator = GenericCreator<Hasher64>;
@@ -127,13 +125,7 @@ mod tests {
     }
 
     fn preunit_to_unit(preunit: PreUnit) -> Unit {
-        FullUnit::new(
-            preunit,
-            // The coord is wrong, but it doesn't matter.
-            Data::new(UnitCoord::new(0, 0.into()), 0),
-            0,
-        )
-        .unit()
+        FullUnit::new(preunit, 0, 0).unit()
     }
 
     fn add_units(creator: &mut Creator, units: &[Unit]) {

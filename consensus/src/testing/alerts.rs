@@ -1,10 +1,10 @@
 use crate::{
     alerts::{run, Alert, AlertConfig, AlertMessage, ForkProof, ForkingNotification},
-    testing::mock::{Data, Hasher64, KeyBox, PartialMultisignature, Signature},
-    units::{ControlHash, FullUnit, PreUnit, UnitCoord},
+    units::{ControlHash, FullUnit, PreUnit},
     Index, Indexed, KeyBox as _, NodeCount, NodeIndex, NodeMap, Recipient, Round, Signable, Signed,
     UncheckedSigned,
 };
+use aleph_bft_mock::{Data, Hasher64, Keychain, PartialMultisignature, Signature};
 use aleph_bft_rmc::Message as RmcMessage;
 use futures::{
     channel::{mpsc, oneshot},
@@ -67,7 +67,7 @@ impl Segment {
 }
 
 struct TestCase {
-    keychains: Vec<KeyBox>,
+    keychains: Vec<Keychain>,
     segments: Vec<Segment>,
 }
 
@@ -75,7 +75,7 @@ impl TestCase {
     fn new(n_members: NodeCount) -> Self {
         let mut keychains = Vec::new();
         for i in 0..n_members.0 {
-            keychains.push(KeyBox::new(n_members, NodeIndex(i)))
+            keychains.push(Keychain::new(n_members, NodeIndex(i)))
         }
         Self {
             keychains,
@@ -83,7 +83,7 @@ impl TestCase {
         }
     }
 
-    fn keychain(&self, node: NodeIndex) -> &KeyBox {
+    fn keychain(&self, node: NodeIndex) -> &Keychain {
         &self.keychains[node.0]
     }
 
@@ -114,7 +114,7 @@ impl TestCase {
                     self.keychain(NodeIndex(0)).node_count(),
                 )),
             ),
-            Data::new(UnitCoord::new(round, forker), variant),
+            variant,
             0,
         )
     }
@@ -211,7 +211,7 @@ impl TestCase {
         self
     }
 
-    async fn test(self, keychain: KeyBox) {
+    async fn test(self, keychain: Keychain) {
         let (messages_for_network, mut messages_from_alerter) = mpsc::unbounded();
         let (messages_for_alerter, messages_from_network) = mpsc::unbounded();
         let (notifications_for_units, mut notifications_from_alerter) = mpsc::unbounded();

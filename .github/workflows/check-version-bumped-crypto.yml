@@ -1,0 +1,24 @@
+name: Version bump check for code changes in the aleph-bft-crypto package
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'crypto/src/**'
+
+jobs:
+  check-version-bumped-crypto:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: check-cargo-toml-version-bumped
+        run: |
+          if ! git diff HEAD origin/main -- crypto/Cargo.toml | grep -q '^+version ='; then
+            echo "None of commits in this PR has changed version in crypto/Cargo.toml!"
+            exit 1
+          fi
+        shell: bash

@@ -1,12 +1,10 @@
 use crate::{
     member::UnitMessage,
     network::NetworkDataInner,
-    testing::mock::{
-        configure_network, init_log, spawn_honest_member, NetworkData, NetworkHook, Signature,
-        Spawner,
-    },
-    Index, KeyBox, NodeCount, NodeIndex, Round, Signed, SpawnHandle,
+    testing::{init_log, spawn_honest_member, NetworkData},
+    Index, NodeCount, NodeIndex, Round, Signed, SpawnHandle,
 };
+use aleph_bft_mock::{BadSigning, Keychain, NetworkHook, Router, Spawner};
 use async_trait::async_trait;
 use futures::StreamExt;
 use parking_lot::Mutex;
@@ -20,55 +18,23 @@ struct CorruptPacket {
 }
 
 #[async_trait]
-impl NetworkHook for CorruptPacket {
+impl NetworkHook<NetworkData> for CorruptPacket {
     async fn update_state(
         &mut self,
         data: &mut NetworkData,
         sender: NodeIndex,
         recipient: NodeIndex,
     ) {
-        #[derive(Clone, Debug)]
-        struct BadKeyBox {
-            index: NodeIndex,
-            signature: Signature,
-        }
-
-        impl Index for BadKeyBox {
-            fn index(&self) -> NodeIndex {
-                self.index
-            }
-        }
-
-        #[async_trait]
-        impl KeyBox for BadKeyBox {
-            type Signature = Signature;
-
-            fn node_count(&self) -> NodeCount {
-                0.into()
-            }
-
-            async fn sign(&self, _msg: &[u8]) -> Self::Signature {
-                self.signature.clone()
-            }
-
-            fn verify(&self, _msg: &[u8], _sgn: &Self::Signature, _index: NodeIndex) -> bool {
-                true
-            }
-        }
-
         if self.recipient != recipient || self.sender != sender {
             return;
         }
         if let crate::NetworkData(NetworkDataInner::Units(UnitMessage::NewUnit(us))) = data {
-            let mut full_unit = us.clone().into_signable();
-            let signature = us.signature();
+            let full_unit = us.clone().into_signable();
             let index = full_unit.index();
             if full_unit.round() == self.round && full_unit.creator() == self.creator {
-                full_unit.set_round(0);
+                let bad_keychain: BadSigning<Keychain> = Keychain::new(0.into(), index).into();
+                *us = Signed::sign(full_unit, &bad_keychain).await.into();
             }
-            *us = Signed::sign(full_unit, &BadKeyBox { index, signature })
-                .await
-                .into();
         }
     }
 }
@@ -81,7 +47,7 @@ struct NoteRequest {
 }
 
 #[async_trait]
-impl NetworkHook for NoteRequest {
+impl NetworkHook<NetworkData> for NoteRequest {
     async fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, _: NodeIndex) {
         use NetworkDataInner::Units;
         use UnitMessage::RequestCoord;
@@ -104,7 +70,7 @@ async fn request_missing_coord() {
     let censoring_node = NodeIndex(1);
     let censoring_round = 5;
 
-    let (mut net_hub, networks) = configure_network(n_members, 1.0);
+    let (mut net_hub, networks) = Router::new(n_members, 1.0);
     net_hub.add_hook(CorruptPacket {
         recipient: censored_node,
         sender: censoring_node,

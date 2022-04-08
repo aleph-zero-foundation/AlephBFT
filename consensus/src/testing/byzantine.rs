@@ -1,14 +1,13 @@
 use crate::{
     member::UnitMessage::NewUnit,
     network::NetworkDataInner::Units,
-    testing::mock::{
-        configure_network, init_log, spawn_honest_member, AlertHook, Data, Hash64, Hasher64,
-        KeyBox, Network, NetworkData, Spawner,
-    },
+    testing::{init_log, spawn_honest_member, Network, NetworkData},
     units::{ControlHash, FullUnit, PreUnit, SignedUnit, UnitCoord},
     Hasher, Network as NetworkT, NetworkData as NetworkDataT, NodeCount, NodeIndex, NodeMap,
     Recipient, Round, SessionId, Signed, SpawnHandle, TaskHandle,
 };
+use aleph_bft_mock::{Data, Hash64, Hasher64, Keychain, NetworkHook, Router, Spawner};
+use async_trait::async_trait;
 use futures::{channel::oneshot, StreamExt};
 use log::{debug, error, trace};
 use parking_lot::Mutex;
@@ -20,14 +19,14 @@ struct MaliciousMember<'a> {
     threshold: NodeCount,
     session_id: SessionId,
     forking_round: Round,
-    keybox: &'a KeyBox,
+    keybox: &'a Keychain,
     network: Network,
-    unit_store: HashMap<UnitCoord, SignedUnit<'a, Hasher64, Data, KeyBox>>,
+    unit_store: HashMap<UnitCoord, SignedUnit<'a, Hasher64, Data, Keychain>>,
 }
 
 impl<'a> MaliciousMember<'a> {
     fn new(
-        keybox: &'a KeyBox,
+        keybox: &'a Keychain,
         network: Network,
         node_ix: NodeIndex,
         n_members: NodeCount,
@@ -47,7 +46,7 @@ impl<'a> MaliciousMember<'a> {
         }
     }
 
-    fn unit_to_data(su: SignedUnit<'a, Hasher64, Data, KeyBox>) -> NetworkData {
+    fn unit_to_data(su: SignedUnit<'a, Hasher64, Data, Keychain>) -> NetworkData {
         NetworkDataT(Units(NewUnit(su.into())))
     }
 
@@ -78,15 +77,15 @@ impl<'a> MaliciousMember<'a> {
         }
     }
 
-    fn send_legit_unit(&mut self, su: SignedUnit<'a, Hasher64, Data, KeyBox>) {
+    fn send_legit_unit(&mut self, su: SignedUnit<'a, Hasher64, Data, Keychain>) {
         let message = Self::unit_to_data(su);
         self.network.send(message, Recipient::Everyone);
     }
 
     fn send_two_variants(
         &mut self,
-        su0: SignedUnit<'a, Hasher64, Data, KeyBox>,
-        su1: SignedUnit<'a, Hasher64, Data, KeyBox>,
+        su0: SignedUnit<'a, Hasher64, Data, Keychain>,
+        su1: SignedUnit<'a, Hasher64, Data, Keychain>,
     ) {
         // We send variant k \in {0,1} to each node with index = k (mod 2)
         // We also send to ourselves, it does not matter much.
@@ -109,10 +108,8 @@ impl<'a> MaliciousMember<'a> {
             debug!(target: "malicious-member", "Creating a legit unit for round {}.", round);
             let control_hash = ControlHash::<Hasher64>::new(&parents);
             let new_preunit = PreUnit::<Hasher64>::new(self.node_ix, round, control_hash);
-            let coord = UnitCoord::new(round, self.node_ix);
             if round != self.forking_round {
-                let data = Data::new(coord, 0);
-                let full_unit = FullUnit::new(new_preunit, data, self.session_id);
+                let full_unit = FullUnit::new(new_preunit, 0, self.session_id);
                 let signed_unit = Signed::sign(full_unit, self.keybox).await;
                 self.on_unit_received(signed_unit.clone());
                 self.send_legit_unit(signed_unit);
@@ -120,8 +117,7 @@ impl<'a> MaliciousMember<'a> {
                 // FORKING HAPPENS HERE!
                 debug!(target: "malicious-member", "Creating forks for round {}.", round);
                 let mut variants = Vec::new();
-                for var in 0u32..2u32 {
-                    let data = Data::new(coord, var);
+                for data in 0u32..2u32 {
                     let full_unit = FullUnit::new(new_preunit.clone(), data, self.session_id);
                     let signed = Signed::sign(full_unit, self.keybox).await;
                     variants.push(signed);
@@ -133,7 +129,7 @@ impl<'a> MaliciousMember<'a> {
         false
     }
 
-    fn on_unit_received(&mut self, su: SignedUnit<'a, Hasher64, Data, KeyBox>) {
+    fn on_unit_received(&mut self, su: SignedUnit<'a, Hasher64, Data, Keychain>) {
         let full_unit = su.as_signable();
         let coord: UnitCoord = full_unit.coord();
         // We don't care if we overwrite something as long as we keep at least one version of a unit
@@ -186,7 +182,7 @@ fn spawn_malicious_member(
 ) -> (oneshot::Sender<()>, TaskHandle) {
     let (exit_tx, exit_rx) = oneshot::channel();
     let member_task = async move {
-        let keybox = KeyBox::new(n_members, node_index);
+        let keybox = Keychain::new(n_members, node_index);
         let session_id = 0u64;
         let lesniak = MaliciousMember::new(
             &keybox,
@@ -202,6 +198,49 @@ fn spawn_malicious_member(
     (exit_tx, task_handle)
 }
 
+#[derive(Clone)]
+pub(crate) struct AlertHook {
+    alerts_sent_by_connection: Arc<Mutex<HashMap<(NodeIndex, NodeIndex), usize>>>,
+}
+
+impl AlertHook {
+    pub(crate) fn new() -> Self {
+        AlertHook {
+            alerts_sent_by_connection: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub(crate) fn count(&self, sender: NodeIndex, recipient: NodeIndex) -> usize {
+        match self
+            .alerts_sent_by_connection
+            .lock()
+            .get(&(sender, recipient))
+        {
+            Some(count) => *count,
+            None => 0,
+        }
+    }
+}
+
+#[async_trait]
+impl NetworkHook<NetworkData> for AlertHook {
+    async fn update_state(
+        &mut self,
+        data: &mut NetworkData,
+        sender: NodeIndex,
+        recipient: NodeIndex,
+    ) {
+        use crate::{alerts::AlertMessage::*, network::NetworkDataInner::*};
+        if let crate::NetworkData(Alert(ForkAlert(_))) = data {
+            *self
+                .alerts_sent_by_connection
+                .lock()
+                .entry((sender, recipient))
+                .or_insert(0) += 1;
+        }
+    }
+}
+
 async fn honest_members_agree_on_batches_byzantine(
     n_members: NodeCount,
     n_honest: NodeCount,
@@ -213,7 +252,7 @@ async fn honest_members_agree_on_batches_byzantine(
     let mut batch_rxs = Vec::new();
     let mut exits = Vec::new();
     let mut handles = Vec::new();
-    let (mut net_hub, networks) = configure_network(n_members, network_reliability);
+    let (mut net_hub, networks) = Router::new(n_members, network_reliability);
 
     let alert_hook = AlertHook::new();
     net_hub.add_hook(alert_hook.clone());

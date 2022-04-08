@@ -13,6 +13,9 @@ mod runway;
 mod terminal;
 mod units;
 
+#[cfg(test)]
+mod testing;
+
 pub use aleph_bft_types::{
     Data, DataProvider, FinalizationHandler, Hasher, IncompleteMultisignatureError, Index, Indexed,
     KeyBox, MultiKeychain, Multisigned, Network, NodeCount, NodeIndex, NodeMap, NodeSubset,
@@ -22,9 +25,6 @@ pub use aleph_bft_types::{
 pub use config::{default_config, exponential_slowdown, Config, DelayConfig};
 pub use member::{run_session, LocalIO};
 pub use network::NetworkData;
-
-#[cfg(test)]
-pub mod testing;
 
 type Receiver<T> = futures::channel::mpsc::UnboundedReceiver<T>;
 type Sender<T> = futures::channel::mpsc::UnboundedSender<T>;

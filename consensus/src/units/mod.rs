@@ -175,10 +175,6 @@ impl<H: Hasher, D: Data> FullUnit<H, D> {
     pub(crate) fn unit(&self) -> Unit<H> {
         Unit::new(self.pre_unit.clone(), self.hash())
     }
-    #[cfg(test)]
-    pub(crate) fn set_round(&mut self, round: Round) {
-        self.pre_unit.coord.round = round
-    }
 }
 
 impl<H: Hasher, D: Data> Signable for FullUnit<H, D> {
@@ -225,10 +221,10 @@ impl<H: Hasher> Unit<H> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        testing::mock::Hasher64,
         units::{ControlHash, FullUnit, PreUnit},
         Hasher, NodeIndex,
     };
+    use aleph_bft_mock::Hasher64;
     use codec::{Decode, Encode};
 
     #[test]

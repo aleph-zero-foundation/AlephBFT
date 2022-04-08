@@ -5,9 +5,9 @@ members = [
     "types",
     "crypto",
     "rmc",
+    "mock",
 ]
 
 exclude = [
     "fuzz",
-    "mock",
 ]

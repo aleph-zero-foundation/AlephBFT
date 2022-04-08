@@ -123,26 +123,24 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        testing::mock::{Data, Hasher64, KeyBox},
         units::{ControlHash, FullUnit, PreUnit, SignedUnit, UnitCoord, UnitStore},
         NodeCount, NodeIndex, NodeMap, Round, Signed,
     };
+    use aleph_bft_mock::{Data, Hasher64, Keychain};
 
     async fn create_unit<'a>(
         round: Round,
         node_idx: NodeIndex,
         count: NodeCount,
         session_id: u64,
-        keybox: &'_ KeyBox,
-    ) -> SignedUnit<'_, Hasher64, Data, KeyBox> {
+        keybox: &'_ Keychain,
+    ) -> SignedUnit<'_, Hasher64, Data, Keychain> {
         let preunit = PreUnit::<Hasher64>::new(
             node_idx,
             round,
             ControlHash::new(&NodeMap::with_size(count)),
         );
-        let coord = UnitCoord::new(round, node_idx);
-        let data = Data::new(coord, 0);
-        let full_unit = FullUnit::new(preunit, data, session_id);
+        let full_unit = FullUnit::new(preunit, 0, session_id);
         Signed::sign(full_unit, keybox).await
     }
 
@@ -150,10 +148,10 @@ mod tests {
     async fn mark_forker_restore_state() {
         let n_nodes = NodeCount(10);
 
-        let mut store = UnitStore::<Hasher64, Data, KeyBox>::new(n_nodes, 100);
+        let mut store = UnitStore::<Hasher64, Data, Keychain>::new(n_nodes, 100);
 
         let keyboxes: Vec<_> = (0..=4)
-            .map(|i| KeyBox::new(n_nodes, NodeIndex(i)))
+            .map(|i| Keychain::new(n_nodes, NodeIndex(i)))
             .collect();
 
         let mut forker_hashes = Vec::new();

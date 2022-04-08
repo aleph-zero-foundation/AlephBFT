@@ -1,0 +1,24 @@
+name: Version bump check for code changes in the aleph-bft package
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'consensus/src/**'
+
+jobs:
+  check-version-bumped-consensus:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: check-cargo-toml-version-bumped
+        run: |
+          if ! git diff HEAD origin/main -- consensus/Cargo.toml | grep -q '^+version ='; then
+            echo "None of commits in this PR has changed version in consensus/Cargo.toml!"
+            exit 1
+          fi
+        shell: bash

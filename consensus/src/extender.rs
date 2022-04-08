@@ -320,7 +320,8 @@ impl<H: Hasher> Extender<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{testing::mock::Hasher64, NodeCount};
+    use crate::NodeCount;
+    use aleph_bft_mock::Hasher64;
     use futures::channel::mpsc;
 
     fn coord_to_number(creator: NodeIndex, round: Round, n_members: NodeCount) -> u64 {

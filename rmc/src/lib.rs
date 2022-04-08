@@ -318,12 +318,8 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
 #[cfg(test)]
 mod tests {
     use crate::{DoublingDelayScheduler, Message, ReliableMulticast};
-    use aleph_bft_crypto::{
-        Index, KeyBox, MultiKeychain, Multisigned, NodeCount, NodeIndex, PartialMultisignature,
-        Signable, SignatureSet, Signed,
-    };
-    use async_trait::async_trait;
-    use codec::{Decode, Encode};
+    use aleph_bft_crypto::{Multisigned, NodeCount, NodeIndex, Signed};
+    use aleph_bft_mock::{BadSigning, Keychain, PartialMultisignature, Signable, Signature};
     use futures::{
         channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
         future::{self, BoxFuture},
@@ -331,144 +327,9 @@ mod tests {
         FutureExt, StreamExt,
     };
     use rand::Rng;
-    use std::{collections::HashMap, fmt::Debug, pin::Pin, time::Duration};
+    use std::{collections::HashMap, pin::Pin, time::Duration};
 
-    /// Keybox wrapper which implements MultiKeychain such that a partial multisignature is a list of
-    /// signatures and a partial multisignature is considered complete if it contains more than 2N/3 signatures.
-    ///
-    /// Note: this way of multisigning is very inefficient, and should be used only for testing.
-    #[derive(Debug, Clone)]
-    struct DefaultMultiKeychain<KB: KeyBox> {
-        key_box: KB,
-    }
-
-    impl<KB: KeyBox> DefaultMultiKeychain<KB> {
-        // Create a new `DefaultMultiKeychain` using the provided `KeyBox`.
-        fn new(key_box: KB) -> Self {
-            DefaultMultiKeychain { key_box }
-        }
-
-        fn quorum(&self) -> usize {
-            2 * self.node_count().0 / 3 + 1
-        }
-    }
-
-    impl<KB: KeyBox> Index for DefaultMultiKeychain<KB> {
-        fn index(&self) -> NodeIndex {
-            self.key_box.index()
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl<KB: KeyBox> KeyBox for DefaultMultiKeychain<KB> {
-        type Signature = KB::Signature;
-
-        async fn sign(&self, msg: &[u8]) -> Self::Signature {
-            self.key_box.sign(msg).await
-        }
-
-        fn node_count(&self) -> NodeCount {
-            self.key_box.node_count()
-        }
-
-        fn verify(&self, msg: &[u8], sgn: &Self::Signature, index: NodeIndex) -> bool {
-            self.key_box.verify(msg, sgn, index)
-        }
-    }
-
-    impl<KB: KeyBox> MultiKeychain for DefaultMultiKeychain<KB> {
-        type PartialMultisignature = SignatureSet<KB::Signature>;
-
-        fn from_signature(
-            &self,
-            signature: &Self::Signature,
-            index: NodeIndex,
-        ) -> Self::PartialMultisignature {
-            SignatureSet::add_signature(
-                SignatureSet::with_size(self.node_count()),
-                signature,
-                index,
-            )
-        }
-
-        fn is_complete(&self, msg: &[u8], partial: &Self::PartialMultisignature) -> bool {
-            let signature_count = partial.iter().count();
-            if signature_count < self.quorum() {
-                return false;
-            }
-            partial
-                .iter()
-                .all(|(i, sgn)| self.key_box.verify(msg, sgn, i))
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-    struct TestSignature {
-        msg: Vec<u8>,
-        index: NodeIndex,
-    }
-
-    #[derive(Clone, Debug)]
-    struct TestKeyBox {
-        count: NodeCount,
-        index: NodeIndex,
-    }
-
-    impl TestKeyBox {
-        fn new(count: NodeCount, index: NodeIndex) -> Self {
-            TestKeyBox { count, index }
-        }
-    }
-
-    impl Index for TestKeyBox {
-        fn index(&self) -> NodeIndex {
-            self.index
-        }
-    }
-
-    #[async_trait]
-    impl KeyBox for TestKeyBox {
-        type Signature = TestSignature;
-
-        fn node_count(&self) -> NodeCount {
-            self.count
-        }
-
-        async fn sign(&self, msg: &[u8]) -> Self::Signature {
-            TestSignature {
-                msg: msg.to_vec(),
-                index: self.index,
-            }
-        }
-
-        fn verify(&self, msg: &[u8], sgn: &Self::Signature, index: NodeIndex) -> bool {
-            index == sgn.index && msg == sgn.msg
-        }
-    }
-
-    type TestMultiKeychain = DefaultMultiKeychain<TestKeyBox>;
-
-    type TestPartialMultisignature = SignatureSet<TestSignature>;
-
-    fn test_multi_keychain(node_count: NodeCount, index: NodeIndex) -> TestMultiKeychain {
-        let key_box = TestKeyBox::new(node_count, index);
-        DefaultMultiKeychain::new(key_box)
-    }
-
-    #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Ord, PartialOrd)]
-    struct Hash {
-        byte: u8,
-    }
-
-    impl Signable for Hash {
-        type Hash = [u8; 1];
-
-        fn hash(&self) -> Self::Hash {
-            [self.byte]
-        }
-    }
-
-    type TestMessage = Message<Hash, TestSignature, TestPartialMultisignature>;
+    type TestMessage = Message<Signable, Signature, PartialMultisignature>;
 
     struct TestNetwork {
         outgoing_rx: Pin<Box<dyn Stream<Item = TestMessage>>>,
@@ -512,9 +373,7 @@ mod tests {
                     .expect("Channel should be open");
             }
         }
-    }
 
-    impl TestNetwork {
         async fn run(&mut self) {
             while let Some(message) = self.outgoing_rx.next().await {
                 for (i, tx) in self.incoming_txs.iter().enumerate() {
@@ -527,21 +386,15 @@ mod tests {
         }
     }
 
-    fn prepare_keychains(node_count: NodeCount) -> Vec<TestMultiKeychain> {
-        (0..node_count.0)
-            .map(|i| test_multi_keychain(node_count, i.into()))
-            .collect()
-    }
-
     struct TestData<'a> {
         network: TestNetwork,
-        rmcs: Vec<ReliableMulticast<'a, Hash, TestMultiKeychain>>,
+        rmcs: Vec<ReliableMulticast<'a, Signable, Keychain>>,
     }
 
     impl<'a> TestData<'a> {
         fn new(
             node_count: NodeCount,
-            keychains: &'a [TestMultiKeychain],
+            keychains: &'a [Keychain],
             message_filter: impl FnMut(NodeIndex, TestMessage) -> bool + 'static,
         ) -> Self {
             let (network, channels) = TestNetwork::new(node_count, message_filter);
@@ -562,12 +415,12 @@ mod tests {
         async fn collect_multisigned_hashes(
             mut self,
             count: usize,
-        ) -> HashMap<NodeIndex, Vec<Multisigned<'a, Hash, TestMultiKeychain>>> {
+        ) -> HashMap<NodeIndex, Vec<Multisigned<'a, Signable, Keychain>>> {
             let mut hashes = HashMap::new();
 
             for _ in 0..count {
                 // covert each RMC into a future returning an optional unchecked multisigned hash.
-                let rmc_futures: Vec<BoxFuture<Multisigned<'a, Hash, TestMultiKeychain>>> = self
+                let rmc_futures: Vec<BoxFuture<Multisigned<'a, Signable, Keychain>>> = self
                     .rmcs
                     .iter_mut()
                     .map(|rmc| rmc.next_multisigned_hash().boxed())
@@ -589,12 +442,12 @@ mod tests {
     #[tokio::test]
     async fn simple_scenario() {
         let node_count = NodeCount(10);
-        let keychains = prepare_keychains(node_count);
+        let keychains = Keychain::new_vec(node_count);
         let mut data = TestData::new(node_count, &keychains, |_, _| true);
 
-        let hash = Hash { byte: 56 };
+        let hash: Signable = "56".into();
         for i in 0..node_count.0 {
-            data.rmcs[i].start_rmc(hash).await;
+            data.rmcs[i].start_rmc(hash.clone()).await;
         }
 
         let hashes = data.collect_multisigned_hashes(node_count.0).await;
@@ -610,13 +463,13 @@ mod tests {
     #[tokio::test]
     async fn faulty_network() {
         let node_count = NodeCount(10);
-        let keychains = prepare_keychains(node_count);
+        let keychains = Keychain::new_vec(node_count);
         let mut rng = rand::thread_rng();
         let mut data = TestData::new(node_count, &keychains, move |_, _| rng.gen_range(0..5) == 0);
 
-        let hash = Hash { byte: 56 };
+        let hash: Signable = "56".into();
         for i in 0..node_count.0 {
-            data.rmcs[i].start_rmc(hash).await;
+            data.rmcs[i].start_rmc(hash.clone()).await;
         }
 
         let hashes = data.collect_multisigned_hashes(node_count.0).await;
@@ -633,15 +486,15 @@ mod tests {
     #[tokio::test]
     async fn node_hearing_only_multisignatures() {
         let node_count = NodeCount(10);
-        let keychains = prepare_keychains(node_count);
+        let keychains = Keychain::new_vec(node_count);
         let mut data = TestData::new(node_count, &keychains, move |node_ix, message| {
             !matches!((node_ix.0, message), (0, Message::SignedHash(_)))
         });
 
         let threshold = (2 * node_count.0 + 1) / 3;
-        let hash = Hash { byte: 56 };
+        let hash: Signable = "56".into();
         for i in 0..threshold {
-            data.rmcs[i].start_rmc(hash).await;
+            data.rmcs[i].start_rmc(hash.clone()).await;
         }
 
         let hashes = data.collect_multisigned_hashes(node_count.0).await;
@@ -656,85 +509,29 @@ mod tests {
     /// 7 honest nodes and 3 dishonest nodes which emit bad signatures and multisignatures
     #[tokio::test]
     async fn bad_signatures_and_multisignatures_are_ignored() {
-        #[derive(Clone, Debug)]
-        struct BadKeyBox {
-            count: NodeCount,
-            index: NodeIndex,
-            signature_index: NodeIndex,
-        }
-
-        impl BadKeyBox {
-            fn new(count: NodeCount, index: NodeIndex, signature_index: NodeIndex) -> Self {
-                BadKeyBox {
-                    count,
-                    index,
-                    signature_index,
-                }
-            }
-        }
-
-        impl Index for BadKeyBox {
-            fn index(&self) -> NodeIndex {
-                self.index
-            }
-        }
-
-        #[async_trait]
-        impl KeyBox for BadKeyBox {
-            type Signature = TestSignature;
-
-            fn node_count(&self) -> NodeCount {
-                self.count
-            }
-
-            async fn sign(&self, msg: &[u8]) -> Self::Signature {
-                TestSignature {
-                    msg: msg.to_vec(),
-                    index: self.signature_index,
-                }
-            }
-
-            fn verify(&self, _msg: &[u8], _sgn: &Self::Signature, _index: NodeIndex) -> bool {
-                true
-            }
-        }
-
-        impl MultiKeychain for BadKeyBox {
-            type PartialMultisignature = SignatureSet<TestSignature>;
-
-            fn from_signature(
-                &self,
-                _signature: &Self::Signature,
-                _index: NodeIndex,
-            ) -> Self::PartialMultisignature {
-                SignatureSet::with_size(self.count)
-            }
-
-            fn is_complete(&self, _msg: &[u8], _partial: &Self::PartialMultisignature) -> bool {
-                true
-            }
-        }
-
         let node_count = NodeCount(10);
-        let keychains = prepare_keychains(node_count);
+        let keychains = Keychain::new_vec(node_count);
         let mut data = TestData::new(node_count, &keychains, |_, _| true);
 
-        let bad_hash = Hash { byte: 65 };
-        let bad_keybox = BadKeyBox::new(node_count, 0.into(), 111.into());
-        let bad_msg =
-            TestMessage::SignedHash(Signed::sign_with_index(bad_hash, &bad_keybox).await.into());
+        let bad_hash: Signable = "65".into();
+        let bad_keybox: BadSigning<Keychain> = Keychain::new(node_count, 0.into()).into();
+        let bad_msg = TestMessage::SignedHash(
+            Signed::sign_with_index(bad_hash.clone(), &bad_keybox)
+                .await
+                .into(),
+        );
         data.network.broadcast_message(bad_msg);
         let bad_msg = TestMessage::MultisignedHash(
-            Signed::sign_with_index(bad_hash, &bad_keybox)
+            Signed::sign_with_index(bad_hash.clone(), &bad_keybox)
                 .await
                 .into_partially_multisigned(&bad_keybox)
                 .into_unchecked(),
         );
         data.network.broadcast_message(bad_msg);
 
-        let hash = Hash { byte: 56 };
+        let hash: Signable = "56".into();
         for i in 0..node_count.0 {
-            data.rmcs[i].start_rmc(hash).await;
+            data.rmcs[i].start_rmc(hash.clone()).await;
         }
 
         let hashes = data.collect_multisigned_hashes(node_count.0).await;

@@ -1,13 +1,11 @@
 use crate::{
     creation::{run, IO},
     runway::NotificationOut as GenericNotificationOut,
-    testing::mock::{gen_config, Data, Hasher64},
-    units::{
-        FullUnit as GenericFullUnit, PreUnit as GenericPreUnit, Unit as GenericUnit, UnitCoord,
-    },
+    testing::gen_config,
+    units::{FullUnit as GenericFullUnit, PreUnit as GenericPreUnit, Unit as GenericUnit},
     NodeCount, Receiver, Round, Sender,
 };
-
+use aleph_bft_mock::{Data, Hasher64};
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,
@@ -19,13 +17,7 @@ type FullUnit = GenericFullUnit<Hasher64, Data>;
 type NotificationOut = GenericNotificationOut<Hasher64>;
 
 fn preunit_to_unit(preunit: PreUnit) -> Unit {
-    FullUnit::new(
-        preunit,
-        // The coord is wrong, but it doesn't matter.
-        Data::new(UnitCoord::new(0, 0.into()), 0),
-        0,
-    )
-    .unit()
+    FullUnit::new(preunit, 0, 0).unit()
 }
 
 struct TestController {

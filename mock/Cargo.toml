@@ -1,17 +1,23 @@
 [package]
-name = "aleph-mock"
-version = "0.1.0"
-authors = ["Cardinal Cryptography"]
+name = "aleph-bft-mock"
+version = "0.2.0"
 publish = false
-edition = "2018"
+edition = "2021"
+authors = ["Cardinal Cryptography"]
+categories = ["algorithms", "data-structures", "cryptography", "database"]
+documentation = "https://docs.rs/?"
+homepage = "https://alephzero.org"
+repository = "https://github.com/cardinal-cryptography/?"
+keywords = ["asynchronous", "consensus", "bft", "blockchain", "distributed-systems"]
+license = "Apache-2.0"
+readme = "../README.md"
 
 [dependencies]
-aleph-bft = { path = ".." }
+aleph-bft-types = { path = "../types" }
 async-trait = "0.1"
-codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["std"] }
-env_logger = { version = "0.8", default-features = false }
+codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive"] }
 futures = "0.3"
 log = "0.4"
 parking_lot = "0.11"
 rand = "0.8"
-tokio = { version = "1.6.1", features = ["rt"] }
+tokio = { version = "1.6.1", features = ["macros", "rt", "rt-multi-thread"] }

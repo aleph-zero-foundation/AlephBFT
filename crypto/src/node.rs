@@ -1,6 +1,7 @@
 use codec::{Decode, Encode, Error, Input, Output};
 use derive_more::{Add, AddAssign, From, Into, Sub, SubAssign, Sum};
 use std::{
+    hash::Hash,
     ops::{Div, Index as StdIndex, Mul},
     vec,
 };
@@ -67,7 +68,7 @@ impl NodeCount {
 }
 
 /// A container keeping items indexed by NodeIndex.
-#[derive(Clone, Debug, Eq, PartialEq, From, Encode, Decode)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, From, Encode, Decode)]
 pub struct NodeMap<T>(Vec<Option<T>>);
 
 impl<T> NodeMap<T> {
