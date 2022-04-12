@@ -1,3 +1,5 @@
+//! Traits that need to be implemented by the user.
+
 mod dataio;
 mod network;
 mod tasks;

@@ -1,15 +1,15 @@
 [package]
 name = "aleph-bft-crypto"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 authors = ["Cardinal Cryptography"]
-categories = ["algorithms", "data-structures", "cryptography", "database"]
 documentation = "https://docs.rs/?"
 homepage = "https://alephzero.org"
-repository = "https://github.com/cardinal-cryptography/?"
-keywords = ["asynchronous", "consensus", "bft", "blockchain", "distributed-systems"]
 license = "Apache-2.0"
-readme = "../README.md"
+categories = ["cryptography"]
+repository = "https://github.com/Cardinal-Cryptography/AlephBFT"
+readme = "./README.md"
+description = "Utilities for node addressing and message signing in the aleph-bft package."
 
 [dependencies]
 async-trait = "0.1"

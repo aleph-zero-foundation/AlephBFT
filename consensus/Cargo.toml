@@ -1,28 +1,27 @@
 [package]
 name = "aleph-bft"
-version = "0.12.0"
+version = "0.12.1"
 edition = "2021"
 authors = ["Cardinal Cryptography"]
 categories = ["algorithms", "data-structures", "cryptography", "database"]
 documentation = "https://docs.rs/?"
 homepage = "https://alephzero.org"
-repository = "https://github.com/cardinal-cryptography/?"
+repository = "https://github.com/Cardinal-Cryptography/AlephBFT"
 keywords = ["asynchronous", "consensus", "bft", "blockchain", "distributed-systems"]
 license = "Apache-2.0"
 readme = "../README.md"
-
-description = """AlephBFT is an asynchronous and Byzantine fault tolerant consensus protocol aimed at ordering arbitrary messages (transactions). It has been designed to continuously operate even in the harshest conditions: with no bounds on message-delivery delays and in the presence of malicious actors. This makes it an excellent fit for blockchain-related applications."""
+description = "AlephBFT is an asynchronous and Byzantine fault tolerant consensus protocol aimed at ordering arbitrary messages (transactions). It has been designed to continuously operate even in the harshest conditions: with no bounds on message-delivery delays and in the presence of malicious actors. This makes it an excellent fit for blockchain-related applications."
 
 [dependencies]
-aleph-bft-rmc = { path = "../rmc" }
-aleph-bft-types = { path = "../types" }
+aleph-bft-rmc = { path = "../rmc", version = "0.2" }
+aleph-bft-types = { path = "../types", version = "0.2" }
 async-trait = "0.1"
 codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive"] }
 derivative = "2.2.0"
 futures = "0.3"
 futures-timer = "3.0"
 log = "0.4"
-parking_lot = "0.11"
+parking_lot = "0.12"
 rand = "0.8"
 
 [dev-dependencies]

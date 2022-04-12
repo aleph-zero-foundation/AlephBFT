@@ -1,3 +1,5 @@
+//! Utilities for node addressing and message signing.
+
 mod node;
 mod signature;
 

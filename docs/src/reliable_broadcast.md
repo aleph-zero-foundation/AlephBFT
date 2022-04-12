@@ -20,7 +20,7 @@ The RMC (Reliable MultiCast) protocol is a way to reliably disseminate a single 
 
 The moment when a node receives `MULTISIG(h, msig)` is considered as the completion of the multicast for this node (and even though the node still keeps resubmitting messages) this instance of RMC is considered as successful. If a RMC succeeds for some honest node then it is guaranteed to succeed for all honest nodes (but maybe with some delay). We refer to the file `/src/rmc.rs` for a thorough documentation of this component.
 
-### 6.1 Reliable Broadcast based on RMC
+### 6.2 Reliable Broadcast based on RMC
 
 Having the idea of RMC, one can modify it quite easily to achieve reliable broadcast. A naive way to do so would be to let the sender node hash the message `m` it intends to reliably broadcast into `h=hash(m)` and use RMC on the hash `h`. This almost works, except for the data availability problem -- a malicious sender might simply send a random meaningless hash `h` and then the honest nodes would never be able to recover the underlying data.
 

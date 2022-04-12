@@ -3,16 +3,17 @@ name = "aleph-bft-rmc"
 version = "0.2.0"
 edition = "2021"
 authors = ["Cardinal Cryptography"]
-categories = ["algorithms", "data-structures", "cryptography", "database"]
+categories = ["algorithms", "cryptography"]
 documentation = "https://docs.rs/?"
 homepage = "https://alephzero.org"
-repository = "https://github.com/cardinal-cryptography/?"
-keywords = ["asynchronous", "consensus", "bft", "blockchain", "distributed-systems"]
+repository = "https://github.com/Cardinal-Cryptography/AlephBFT"
+keywords = ["asynchronous", "consensus", "bft", "distributed-systems"]
 license = "Apache-2.0"
-readme = "../README.md"
+readme = "./README.md"
+description = "Reliable MultiCast - a primitive for Reliable Broadcast protocol."
 
 [dependencies]
-aleph-bft-crypto = { path = "../crypto" }
+aleph-bft-crypto = { path = "../crypto", version = "0.2" }
 async-trait = "0.1"
 codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive"] }
 futures = "0.3"

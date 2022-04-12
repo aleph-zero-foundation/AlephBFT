@@ -1,3 +1,5 @@
+//! Mock implementations of required traits. Do NOT use outside of testing!
+
 mod crypto;
 mod dataio;
 mod hasher;

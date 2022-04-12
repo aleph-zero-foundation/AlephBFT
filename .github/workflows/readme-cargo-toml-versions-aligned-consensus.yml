@@ -1,0 +1,19 @@
+name: Versions are aligned (consensus)
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'consensus/Cargo.toml'
+      - 'README.md'
+
+jobs:
+  readme-cargo-toml-versions-aligned-consensus:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: readme-cargo-toml-versions-aligned-consensus
+        run: ./.github/scripts/readme-cargo-toml-versions-aligned-consensus.sh
+        shell: bash
