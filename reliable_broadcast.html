@@ -13,7 +13,7 @@
 
 
         <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
-        <meta name="description" content="Documentation of the rust implementation of Aleph protocol">
+        <meta name="description" content="Documentation of the Rust implementation of Aleph protocol">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff" />
 
@@ -182,7 +182,7 @@
 <li>Upon receiving <code>MULTISIG(h, msig)</code> under <code>h</code>, each node passes it also to all other nodes.</li>
 </ol>
 <p>The moment when a node receives <code>MULTISIG(h, msig)</code> is considered as the completion of the multicast for this node (and even though the node still keeps resubmitting messages) this instance of RMC is considered as successful. If a RMC succeeds for some honest node then it is guaranteed to succeed for all honest nodes (but maybe with some delay). We refer to the file <code>/src/rmc.rs</code> for a thorough documentation of this component.</p>
-<h3 id="61-reliable-broadcast-based-on-rmc"><a class="header" href="#61-reliable-broadcast-based-on-rmc">6.1 Reliable Broadcast based on RMC</a></h3>
+<h3 id="62-reliable-broadcast-based-on-rmc"><a class="header" href="#62-reliable-broadcast-based-on-rmc">6.2 Reliable Broadcast based on RMC</a></h3>
 <p>Having the idea of RMC, one can modify it quite easily to achieve reliable broadcast. A naive way to do so would be to let the sender node hash the message <code>m</code> it intends to reliably broadcast into <code>h=hash(m)</code> and use RMC on the hash <code>h</code>. This almost works, except for the data availability problem -- a malicious sender might simply send a random meaningless hash <code>h</code> and then the honest nodes would never be able to recover the underlying data.</p>
 <p>To circumvent the data availability problem we instruct the sender to send data <code>m</code> to all the nodes and only then to initiate RMC on <code>h = hash(m)</code>, if we make sure that no honest node proceeds with RMC before it receives the data <code>m</code>, then a successful RMC has the guarantee that most of the honest nodes hold the data <code>m</code>. This is the basic idea behind the protocol implemented for fork alerts in AlephBFT, we refer to <code>/src/alerts.rs</code> for details.</p>
 
