@@ -8,8 +8,12 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 
 mod store;
+#[cfg(test)]
+mod testing;
 mod validator;
 pub(crate) use store::*;
+#[cfg(test)]
+pub use testing::{create_units, creator_set, preunit_to_unchecked_signed_unit, preunit_to_unit};
 pub use validator::{ValidationError, Validator};
 
 /// The coordinates of a unit, i.e. creator and round. In the absence of forks this uniquely
@@ -221,11 +225,14 @@ impl<H: Hasher> Unit<H> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        units::{ControlHash, FullUnit, PreUnit},
+        units::{ControlHash, FullUnit as GenericFullUnit, PreUnit as GenericPreUnit},
         Hasher, NodeIndex,
     };
-    use aleph_bft_mock::Hasher64;
+    use aleph_bft_mock::{Data, Hasher64};
     use codec::{Decode, Encode};
+
+    type PreUnit = GenericPreUnit<Hasher64>;
+    type FullUnit = GenericFullUnit<Hasher64, Data>;
 
     #[test]
     fn test_full_unit_hash_is_correct() {

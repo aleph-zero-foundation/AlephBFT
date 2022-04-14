@@ -132,63 +132,13 @@ mod tests {
     use super::{ValidationError::*, Validator as GenericValidator};
     use crate::{
         creation::Creator as GenericCreator,
-        units::{
-            FullUnit as GenericFullUnit, PreUnit as GenericPreUnit,
-            UncheckedSignedUnit as GenericUncheckedSignedUnit, Unit as GenericUnit,
-        },
-        Hasher, NodeCount, NodeIndex, Round, SessionId, Signed,
+        units::{create_units, creator_set, preunit_to_unchecked_signed_unit, preunit_to_unit},
+        NodeCount, NodeIndex,
     };
-    use aleph_bft_mock::{Data, Hasher64, Keychain, Signature};
+    use aleph_bft_mock::{Hasher64, Keychain};
 
     type Validator<'a> = GenericValidator<'a, Keychain>;
     type Creator = GenericCreator<Hasher64>;
-    type PreUnit = GenericPreUnit<Hasher64>;
-    type Unit = GenericUnit<Hasher64>;
-    type FullUnit = GenericFullUnit<Hasher64, Data>;
-    type UncheckedSignedUnit = GenericUncheckedSignedUnit<Hasher64, Data, Signature>;
-
-    fn creator_set(n_members: NodeCount) -> Vec<Creator> {
-        let mut result = Vec::new();
-        for i in 0..n_members.0 {
-            result.push(Creator::new(NodeIndex(i), n_members));
-        }
-        result
-    }
-
-    fn create_units<'a, C: Iterator<Item = &'a Creator>>(
-        creators: C,
-        round: Round,
-    ) -> Vec<(PreUnit, Vec<<Hasher64 as Hasher>::Hash>)> {
-        let mut result = Vec::new();
-        for creator in creators {
-            result.push(
-                creator
-                    .create_unit(round)
-                    .expect("Creation should succeed."),
-            );
-        }
-        result
-    }
-
-    fn preunit_to_unit(preunit: PreUnit) -> Unit {
-        FullUnit::new(preunit, 0, 0).unit()
-    }
-
-    fn add_units(creator: &mut Creator, units: &[Unit]) {
-        for unit in units {
-            creator.add_unit(unit);
-        }
-    }
-
-    async fn preunit_to_unchecked_signed_unit(
-        pu: PreUnit,
-        session_id: SessionId,
-        keybox: &Keychain,
-    ) -> UncheckedSignedUnit {
-        let full_unit = FullUnit::new(pu, 0, session_id);
-        let signed_unit = Signed::sign(full_unit, keybox).await;
-        signed_unit.into()
-    }
 
     #[tokio::test]
     async fn validates_initial_unit() {
@@ -274,11 +224,11 @@ mod tests {
         let mut creators = creator_set(n_members);
         let round_0_units: Vec<_> = create_units(creators.iter(), 0)
             .into_iter()
-            .map(|(preunit, _)| preunit_to_unit(preunit))
+            .map(|(preunit, _)| preunit_to_unit(preunit, session_id))
             .take(5)
             .collect();
         let creator = &mut creators[0];
-        add_units(creator, &round_0_units);
+        creator.add_units(&round_0_units);
         let keychain = Keychain::new(n_members, creator_id);
         let validator = Validator::new(session_id, &keychain, max_round, threshold);
         let (preunit, _) = creator
@@ -306,10 +256,10 @@ mod tests {
         for round in 0..round {
             let units: Vec<_> = create_units(creators.iter(), round)
                 .into_iter()
-                .map(|(preunit, _)| preunit_to_unit(preunit))
+                .map(|(preunit, _)| preunit_to_unit(preunit, session_id))
                 .collect();
             for creator in creators.iter_mut() {
-                add_units(creator, &units);
+                creator.add_units(&units);
             }
         }
         let creator = &creators[0];

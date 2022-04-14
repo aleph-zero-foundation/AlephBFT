@@ -18,8 +18,10 @@ use futures::{
 use log::{debug, error, info, trace, warn};
 use std::{collections::HashSet, convert::TryFrom};
 
+mod backup;
 mod collection;
 
+pub use backup::{_UnitLoader as UnitLoader, _UnitSaver as UnitSaver};
 #[cfg(feature = "initial_unit_collection")]
 use collection::{Collection, IO as CollectionIO};
 pub use collection::{NewestUnitResponse, Salt};

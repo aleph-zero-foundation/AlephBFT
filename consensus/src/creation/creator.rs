@@ -90,49 +90,13 @@ impl<H: Hasher> Creator<H> {
 mod tests {
     use super::Creator as GenericCreator;
     use crate::{
-        units::{FullUnit as GenericFullUnit, PreUnit as GenericPreUnit, Unit as GenericUnit},
-        Hasher, NodeCount, NodeIndex, Round,
+        units::{create_units, creator_set, preunit_to_unit},
+        NodeCount, NodeIndex,
     };
-    use aleph_bft_mock::{Data, Hasher64};
+    use aleph_bft_mock::Hasher64;
     use std::collections::HashSet;
 
     type Creator = GenericCreator<Hasher64>;
-    type PreUnit = GenericPreUnit<Hasher64>;
-    type Unit = GenericUnit<Hasher64>;
-    type FullUnit = GenericFullUnit<Hasher64, Data>;
-
-    fn creator_set(n_members: NodeCount) -> Vec<Creator> {
-        let mut result = Vec::new();
-        for i in 0..n_members.0 {
-            result.push(Creator::new(NodeIndex(i), n_members));
-        }
-        result
-    }
-
-    fn create_units<'a, C: Iterator<Item = &'a Creator>>(
-        creators: C,
-        round: Round,
-    ) -> Vec<(PreUnit, Vec<<Hasher64 as Hasher>::Hash>)> {
-        let mut result = Vec::new();
-        for creator in creators {
-            result.push(
-                creator
-                    .create_unit(round)
-                    .expect("Creation should succeed."),
-            );
-        }
-        result
-    }
-
-    fn preunit_to_unit(preunit: PreUnit) -> Unit {
-        FullUnit::new(preunit, 0, 0).unit()
-    }
-
-    fn add_units(creator: &mut Creator, units: &[Unit]) {
-        for unit in units {
-            creator.add_unit(unit);
-        }
-    }
 
     #[test]
     fn creates_initial_unit() {
@@ -154,11 +118,11 @@ mod tests {
         let new_units = create_units(creators.iter(), 0);
         let new_units: Vec<_> = new_units
             .into_iter()
-            .map(|(pu, _)| preunit_to_unit(pu))
+            .map(|(pu, _)| preunit_to_unit(pu, 0))
             .collect();
         let expected_hashes: Vec<_> = new_units.iter().map(|u| u.hash()).collect();
         let creator = &mut creators[0];
-        add_units(creator, &new_units);
+        creator.add_units(&new_units);
         let round = 1;
         assert_eq!(creator.current_round(), 0);
         let (preunit, parent_hashes) = creator
@@ -174,11 +138,11 @@ mod tests {
         let new_units = create_units(creators.iter().take(n_parents), 0);
         let new_units: Vec<_> = new_units
             .into_iter()
-            .map(|(pu, _)| preunit_to_unit(pu))
+            .map(|(pu, _)| preunit_to_unit(pu, 0))
             .collect();
         let expected_hashes: Vec<_> = new_units.iter().map(|u| u.hash()).collect();
         let creator = &mut creators[0];
-        add_units(creator, &new_units);
+        creator.add_units(&new_units);
         let round = 1;
         assert_eq!(creator.current_round(), 0);
         let (preunit, parent_hashes) = creator
@@ -214,10 +178,10 @@ mod tests {
         let new_units = create_units(creators.iter().take(n_parents), 0);
         let new_units: Vec<_> = new_units
             .into_iter()
-            .map(|(pu, _)| preunit_to_unit(pu))
+            .map(|(pu, _)| preunit_to_unit(pu, 0))
             .collect();
         let creator = &mut creators[0];
-        add_units(creator, &new_units);
+        creator.add_units(&new_units);
         let round = 1;
         assert_eq!(creator.current_round(), 0);
         assert!(creator.create_unit(round).is_none())
@@ -252,11 +216,11 @@ mod tests {
             let new_units = create_units(creators.iter().skip(1), round);
             let new_units: Vec<_> = new_units
                 .into_iter()
-                .map(|(pu, _)| preunit_to_unit(pu))
+                .map(|(pu, _)| preunit_to_unit(pu, 0))
                 .collect();
             let expected_hashes: HashSet<_> = new_units.iter().map(|u| u.hash()).collect();
             for creator in creators.iter_mut() {
-                add_units(creator, &new_units);
+                creator.add_units(&new_units);
             }
             expected_hashes_per_round.push(expected_hashes);
         }
@@ -274,7 +238,7 @@ mod tests {
                     expected_hashes_per_round[(round - 1) as usize]
                 );
             }
-            let unit = preunit_to_unit(preunit);
+            let unit = preunit_to_unit(preunit, 0);
             creator.add_unit(&unit);
             if round < 2 {
                 expected_hashes_per_round[round as usize].insert(unit.hash());
@@ -289,10 +253,10 @@ mod tests {
         let new_units = create_units(creators.iter().skip(1), 0);
         let new_units: Vec<_> = new_units
             .into_iter()
-            .map(|(pu, _)| preunit_to_unit(pu))
+            .map(|(pu, _)| preunit_to_unit(pu, 0))
             .collect();
         let creator = &mut creators[0];
-        add_units(creator, &new_units);
+        creator.add_units(&new_units);
         let round = 1;
         assert!(creator.create_unit(round).is_none());
     }
