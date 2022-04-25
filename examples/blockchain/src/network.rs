@@ -1,5 +1,6 @@
-use crate::chain::Block;
-use aleph_bft::{NodeIndex, Recipient, TaskHandle};
+use crate::{Block, Data};
+use aleph_bft::{NodeIndex, Recipient};
+use aleph_bft_mock::{Hasher64, PartialMultisignature, Signature};
 use codec::{Decode, Encode};
 use futures::{
     channel::{
@@ -7,13 +8,8 @@ use futures::{
         oneshot,
     },
     prelude::*,
-    Future, FutureExt, StreamExt,
+    FutureExt, StreamExt,
 };
-
-use log::{debug, info, trace, warn};
-
-use std::{collections::HashMap, error::Error, io, iter, time::Duration};
-
 use libp2p::{
     core::upgrade,
     identity,
@@ -27,32 +23,12 @@ use libp2p::{
     tcp::TokioTcpConfig,
     NetworkBehaviour, PeerId, Swarm, Transport,
 };
-
-use crate::{
-    chain::Data,
-    crypto::{Hasher256, PartialMultisignature, Signature},
-};
-
-#[derive(Clone)]
-pub(crate) struct Spawner;
-
-impl aleph_bft::SpawnHandle for Spawner {
-    fn spawn(&self, _: &str, task: impl Future<Output = ()> + Send + 'static) {
-        tokio::spawn(task);
-    }
-    fn spawn_essential(
-        &self,
-        _: &str,
-        task: impl Future<Output = ()> + Send + 'static,
-    ) -> TaskHandle {
-        Box::pin(async move { tokio::spawn(task).await.map_err(|_| ()) })
-    }
-}
+use log::{debug, info, trace, warn};
+use std::{collections::HashMap, error::Error, io, iter, time::Duration};
 
 const ALEPH_PROTOCOL_NAME: &str = "/alephbft/test/1";
 
-pub(crate) type NetworkData =
-    aleph_bft::NetworkData<Hasher256, Data, Signature, PartialMultisignature>;
+pub type NetworkData = aleph_bft::NetworkData<Hasher64, Data, Signature, PartialMultisignature>;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Encode, Decode)]
@@ -239,13 +215,13 @@ impl NetworkBehaviourEventProcess<RequestResponseEvent<Request, Response>> for B
     }
 }
 
-pub(crate) struct Network {
+pub struct Network {
     msg_to_manager_tx: mpsc::UnboundedSender<(NetworkData, Recipient)>,
     msg_from_manager_rx: mpsc::UnboundedReceiver<NetworkData>,
 }
 
 #[async_trait::async_trait]
-impl aleph_bft::Network<Hasher256, Data, Signature, PartialMultisignature> for Network {
+impl aleph_bft::Network<NetworkData> for Network {
     fn send(&self, data: NetworkData, recipient: Recipient) {
         if let Err(e) = self.msg_to_manager_tx.unbounded_send((data, recipient)) {
             warn!(target: "Blockchain-network", "Failed network send: {:?}", e);
@@ -256,14 +232,14 @@ impl aleph_bft::Network<Hasher256, Data, Signature, PartialMultisignature> for N
     }
 }
 
-pub(crate) struct NetworkManager {
+pub struct NetworkManager {
     swarm: Swarm<Behaviour>,
     consensus_rx: UnboundedReceiver<(NetworkData, Recipient)>,
     block_rx: UnboundedReceiver<Block>,
 }
 
 impl Network {
-    pub(crate) async fn new(
+    pub async fn new(
         node_ix: NodeIndex,
     ) -> Result<
         (
@@ -356,7 +332,7 @@ impl Network {
 }
 
 impl NetworkManager {
-    pub(crate) async fn run(&mut self, mut exit: oneshot::Receiver<()>) {
+    pub async fn run(&mut self, mut exit: oneshot::Receiver<()>) {
         loop {
             futures::select! {
                 maybe_msg = self.consensus_rx.next() => {

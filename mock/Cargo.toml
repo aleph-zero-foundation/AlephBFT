@@ -1,6 +1,6 @@
 [package]
 name = "aleph-bft-mock"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 authors = ["Cardinal Cryptography"]
 documentation = "https://docs.rs/?"

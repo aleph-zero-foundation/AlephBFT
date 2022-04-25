@@ -17,3 +17,4 @@ jobs:
         with:
           registry-token: ${{ secrets.CRATES_IO_TOKEN }}
           ignore-unpublished-changes: true
+          publish-delay: 30000

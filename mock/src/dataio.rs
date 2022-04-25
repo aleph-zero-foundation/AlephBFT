@@ -37,7 +37,7 @@ pub struct FinalizationHandler {
 impl FinalizationHandlerT<Data> for FinalizationHandler {
     async fn data_finalized(&mut self, d: Data) {
         if let Err(e) = self.tx.unbounded_send(d) {
-            error!(target: "finalization-provider", "Error when sending data from FinalizationProvider {:?}.", e);
+            error!(target: "finalization-handler", "Error when sending data from FinalizationHandler {:?}.", e);
         }
     }
 }

@@ -6,6 +6,10 @@ members = [
     "crypto",
     "rmc",
     "mock",
+
+    # Example crates.
+    "examples/dummy_honest",
+    "examples/blockchain",
 ]
 
 exclude = [

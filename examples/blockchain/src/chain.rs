@@ -1,4 +1,4 @@
-use crate::network::NetworkData;
+use crate::{network::NetworkData, DataStore};
 use aleph_bft::NodeIndex;
 use codec::{Decode, Encode};
 use futures::{
@@ -16,20 +16,16 @@ use std::{
     time::{self, Duration},
 };
 
-pub(crate) use data::{Data, DataProvider, DataStore, FinalizationProvider};
-
-mod data;
-
-type BlockNum = u64;
+pub type BlockNum = u32;
 
 #[derive(Clone, Encode, Decode)]
-pub(crate) struct Block {
-    pub(crate) num: BlockNum,
-    pub(crate) data: Vec<u8>,
+pub struct Block {
+    pub num: BlockNum,
+    pub data: Vec<u8>,
 }
 
 impl Block {
-    pub(crate) fn new(num: BlockNum, size: usize) -> Self {
+    pub fn new(num: BlockNum, size: usize) -> Self {
         debug!(target: "Blockchain-chain", "Started creating block {:?}", num);
         // Not extremely random, but good enough.
         let data: Vec<u8> = (0..size)
@@ -40,36 +36,38 @@ impl Block {
     }
 }
 
-pub(crate) type BlockPlan = Arc<dyn Fn(BlockNum) -> NodeIndex + Sync + Send + 'static>;
+pub type BlockPlan = Arc<dyn Fn(BlockNum) -> NodeIndex + Sync + Send + 'static>;
 
-pub(crate) struct ChainConfig {
+pub struct ChainConfig {
     // Our NodeIndex.
-    pub(crate) node_ix: NodeIndex,
+    pub node_ix: NodeIndex,
     // Number of random bytes to include in the block.
-    pub(crate) data_size: usize,
+    pub data_size: usize,
     // Delay between blocks
-    pub(crate) blocktime_ms: u64,
+    pub blocktime: Duration,
     // Delay before the first block should be created
-    pub(crate) init_delay_ms: u64,
+    pub init_delay: Duration,
     // f(k) means who should author the kth block
-    pub(crate) authorship_plan: BlockPlan,
+    pub authorship_plan: BlockPlan,
 }
 
-pub(crate) fn gen_chain_config(
-    node_ix: NodeIndex,
-    n_members: usize,
-    data_size: usize,
-    blocktime_ms: u64,
-    init_delay_ms: u64,
-) -> ChainConfig {
-    //Round robin block authorship plan.
-    let authorship_plan = Arc::new(move |num: u64| NodeIndex((num as usize) % n_members));
-    ChainConfig {
-        node_ix,
-        data_size,
-        blocktime_ms,
-        init_delay_ms,
-        authorship_plan,
+impl ChainConfig {
+    pub fn new(
+        node_ix: NodeIndex,
+        n_members: usize,
+        data_size: usize,
+        blocktime: Duration,
+        init_delay: Duration,
+    ) -> ChainConfig {
+        //Round robin block authorship plan.
+        let authorship_plan = Arc::new(move |num: BlockNum| NodeIndex((num as usize) % n_members));
+        ChainConfig {
+            node_ix,
+            data_size,
+            blocktime,
+            init_delay,
+            authorship_plan,
+        }
     }
 }
 
@@ -82,7 +80,7 @@ pub(crate) fn gen_chain_config(
 // 3) enough time has passed -- to maintain blocktime of roughly config.blocktime_ms milliseconds.
 // This process holds two channel endpoints: block_rx to receive blocks from the network and
 // block_tx to push created blocks to the network (to send them to all the remaining nodes).
-pub(crate) async fn run_blockchain(
+pub async fn run_blockchain(
     config: ChainConfig,
     mut data_store: DataStore,
     current_block: Arc<Mutex<BlockNum>>,
@@ -92,14 +90,14 @@ pub(crate) async fn run_blockchain(
     mut exit: oneshot::Receiver<()>,
 ) {
     let start_time = time::Instant::now();
-    for block_num in 1u64.. {
+    for block_num in 1.. {
         while *current_block.lock() < block_num {
             let curr_author = (config.authorship_plan)(block_num);
             if curr_author == config.node_ix {
                 // We need to create the block, but at the right time
                 let curr_time = time::Instant::now();
-                let block_delay_ms = (block_num - 1) * config.blocktime_ms + config.init_delay_ms;
-                let block_creation_time = start_time + Duration::from_millis(block_delay_ms);
+                let block_delay = (block_num - 1) * config.blocktime + config.init_delay;
+                let block_creation_time = start_time + block_delay;
                 if curr_time >= block_creation_time {
                     let block = Block::new(block_num, config.data_size);
                     blocks_for_network

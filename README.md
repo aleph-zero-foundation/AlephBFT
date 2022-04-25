@@ -72,20 +72,34 @@ More details are available [in the book][reference-link-implementation-details].
 
 Currently we provide two basic examples of running AlephBFT. The first one: `dummy-honest` implements a committee member that is not
 cryptographically secure and serves only as a working example of what traits need to be implemented and how to implement them.
-The example may be run using:
+For example, you may run the following command
+```
+cargo run --example dummy_honest -- --my-id 0 --n-members 1 --n-finalized 10 2> node.log
+```
+and then investigate its output stored in the `node.log` file.
+If you want to set `--n-members` to a higher number, then you should run multiple instances
+of the script with different `--my-id` parameters simultaneously.
+For further details, see
+```
+cargo run --example dummy_honest -- --help
+```
 
-    cargo run --example dummy_honest my_id n_members n_finalized
-
-    my_id -- our index, 0-based
-    n_members -- size of the committee
-    n_finalized -- number of data to be finalized
-
-The second example: `blockchain` is meant for benchmarking AlephBFT in the blockchain setting. It implements a simple round-robin blockchain assuming honest participation. The simplest way to run it is to use the provided script as follows (assuming we start in the root directory)
+The second example: `blockchain` is meant for benchmarking AlephBFT in the blockchain setting.
+It implements a simple round-robin blockchain assuming honest participation.
+The easiest way to run it is to use the provided script as follows (assuming we start in the root directory)
 
 ```
-./examples/blockchain/run_blockchain 4
+./examples/blockchain/run_blockchain.sh 4
 ```
-where `4` in the above is the number of committee members and can be replaced by any reasonable number. Running this script will result in generating log files `node0.log, node1.log, ...` corresponding to subsequent nodes. The achieved transactions per second should be among the final log messages in these files.
+where `4` in the above is the number of committee members, and can be replaced by any reasonable number.
+Running this script will result in generating log files `node0.log, node1.log, ...` corresponding to subsequent nodes.
+The achieved transactions per second will be among the final log messages in these files.
+The script runs member instances in background, so it is important to wait until they finish before launching again.
+
+If you're not patient enough, you may always kill them manually, e.g. by running
+```
+killall -p blockchain
+```
 
 ### Dependencies
 
