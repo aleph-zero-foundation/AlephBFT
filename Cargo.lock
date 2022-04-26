@@ -65,7 +65,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft"
-version = "0.12.2"
+version = "0.13.0"
 dependencies = [
  "aleph-bft-mock",
  "aleph-bft-rmc",
@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft-crypto"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "bit-vec",
@@ -149,7 +149,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft-rmc"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "aleph-bft-crypto",
  "aleph-bft-mock",
@@ -164,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft-types"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "aleph-bft-crypto",
  "async-trait",
@@ -1981,9 +1981,9 @@ dependencies = [
 
 [[package]]
 name = "parity-scale-codec"
-version = "2.3.1"
+version = "3.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "373b1a4c1338d9cd3d1fa53b3a11bdab5ab6bd80a20f7f7becd76953ae2be909"
+checksum = "e8b44461635bbb1a0300f100a841e571e7d919c81c73075ef5d152ffdb521066"
 dependencies = [
  "arrayvec 0.7.2",
  "byte-slice-cast",
@@ -1993,9 +1993,9 @@ dependencies = [
 
 [[package]]
 name = "parity-scale-codec-derive"
-version = "2.3.1"
+version = "3.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1557010476e0595c9b568d16dcfb81b93cdeb157612726f5170d31aa707bed27"
+checksum = "c45ed1f39709f5a89338fab50e59816b2e8815f5bb58276e7ddf9afd495f73f8"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",

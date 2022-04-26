@@ -1,6 +1,6 @@
 [package]
 name = "aleph-bft-crypto"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 authors = ["Cardinal Cryptography"]
 documentation = "https://docs.rs/?"
@@ -14,7 +14,7 @@ description = "Utilities for node addressing and message signing in the aleph-bf
 [dependencies]
 async-trait = "0.1"
 bit-vec = "0.6"
-codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive"] }
+codec = { package = "parity-scale-codec", version = "3.0", default-features = false, features = ["derive"] }
 derive_more = "0.99"
 log = "0.4"
 

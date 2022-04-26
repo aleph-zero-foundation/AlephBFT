@@ -14,7 +14,7 @@ members = ["."]
 
 [dependencies]
 async-trait = "0.1"
-codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive", "std"] }
+codec = { package = "parity-scale-codec", version = "3.0", default-features = false, features = ["derive", "std"] }
 futures = "0.3"
 futures-timer = "3.0"
 log = "0.4"

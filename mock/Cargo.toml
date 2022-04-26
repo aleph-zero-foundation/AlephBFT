@@ -11,9 +11,9 @@ readme = "./README.md"
 description = "Mock implementations of traits required by the aleph-bft package. Do NOT use outside of testing!"
 
 [dependencies]
-aleph-bft-types = { path = "../types", version = "0.2" }
+aleph-bft-types = { path = "../types", version = "0.3" }
 async-trait = "0.1"
-codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive"] }
+codec = { package = "parity-scale-codec", version = "3.0", default-features = false, features = ["derive"] }
 futures = "0.3"
 log = "0.4"
 parking_lot = "0.12"
