@@ -1,4 +1,3 @@
-use alephbft_fuzz::fuzz;
 use std::{
     io,
     io::{BufReader, BufWriter},
@@ -29,8 +28,8 @@ struct Opt {
 fn main() {
     let opt = Opt::from_args();
     if opt.check_fuzz {
-        fuzz::check_fuzz(BufReader::new(io::stdin()), opt.members, Some(opt.batches));
+        aleph_bft_fuzz::check_fuzz(BufReader::new(io::stdin()), opt.members, Some(opt.batches));
     } else {
-        fuzz::generate_fuzz(BufWriter::new(io::stdout()), opt.members, opt.batches);
+        aleph_bft_fuzz::generate_fuzz(BufWriter::new(io::stdout()), opt.members, opt.batches);
     }
 }

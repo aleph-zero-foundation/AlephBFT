@@ -1,17 +1,19 @@
 [workspace]
 
 members = [
+
+    # Published packages
     "consensus",
     "types",
     "crypto",
     "rmc",
     "mock",
 
-    # Example crates.
+    # Examples
     "examples/dummy_honest",
     "examples/blockchain",
-]
 
-exclude = [
-    "fuzz",
+    # Fuzzing
+    "fuzz"
+
 ]

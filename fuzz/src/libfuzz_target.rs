@@ -1,5 +1,5 @@
 #![no_main]
-use alephbft_fuzz::fuzz::{fuzz, FuzzNetworkData, ReadToNetworkDataIterator};
+use aleph_bft_fuzz::{fuzz, FuzzNetworkData, ReadToNetworkDataIterator};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
