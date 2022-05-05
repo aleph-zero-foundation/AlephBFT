@@ -18,4 +18,4 @@ futures = "0.3"
 libp2p = { version = "0.39", features = ["mdns", "tcp-tokio"]}
 log = "0.4"
 parking_lot = "0.12"
-tokio = { version = "1.6.1", features = ["macros", "rt", "rt-multi-thread"] }
+tokio = { version = "1.18.1", features = ["macros", "rt", "rt-multi-thread"] }
