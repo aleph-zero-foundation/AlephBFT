@@ -15,7 +15,7 @@ clap = { version = "3.1.8", features = ["derive"] }
 codec = { package = "parity-scale-codec", version = "3.0", default-features = false, features = ["derive"] }
 env_logger = "0.9"
 futures = "0.3"
-libp2p = { version = "0.39", features = ["mdns", "tcp-tokio"]}
+libp2p = { version = "0.44", features = ["mdns", "tcp-tokio"]}
 log = "0.4"
 parking_lot = "0.12"
 tokio = { version = "1.6.1", features = ["macros", "rt", "rt-multi-thread"] }

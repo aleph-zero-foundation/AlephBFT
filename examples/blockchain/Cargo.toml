@@ -16,7 +16,7 @@ codec = { package = "parity-scale-codec", version = "3.0", default-features = fa
 env_logger = "0.9"
 futures = "0.3"
 futures-timer = "3.0"
-libp2p = { version = "0.39", features = ["mdns", "tcp-tokio"]}
+libp2p = { version = "0.44", features = ["mdns", "tcp-tokio"]}
 log = "0.4"
 parking_lot = "0.12"
 sha3 = "0.9"
