@@ -90,7 +90,7 @@ fn setup_test(
             outgoing_units: notifications_for_controller.clone(),
         };
         let config = gen_config(node_ix.into(), n_members);
-        let (starting_round_for_consensus, starting_round) = oneshot::channel::<Round>();
+        let (starting_round_for_consensus, starting_round) = oneshot::channel();
 
         units_for_creators.push(parents_for_creator);
 
@@ -99,7 +99,7 @@ fn setup_test(
         let handle =
             tokio::spawn(async move { run(config.into(), io, starting_round, exit).await });
         starting_round_for_consensus
-            .send(0)
+            .send(Some(0))
             .expect("Sending the starting round should work.");
 
         killers.push(killer);

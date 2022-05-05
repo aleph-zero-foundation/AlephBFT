@@ -1,13 +1,17 @@
 use aleph_bft_types::{Network as NetworkT, NodeCount, NodeIndex, Recipient};
 use async_trait::async_trait;
 use futures::{
-    channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
+    channel::{
+        mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
+        oneshot,
+    },
     Future, StreamExt,
 };
 use log::debug;
 use std::{
     cell::RefCell,
     collections::HashMap,
+    fmt::Debug,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -15,14 +19,15 @@ use std::{
 pub type NetworkReceiver<D> = UnboundedReceiver<(D, NodeIndex)>;
 pub type NetworkSender<D> = UnboundedSender<(D, NodeIndex)>;
 
-pub struct Network<D> {
+#[derive(Debug)]
+pub struct Network<D: Debug> {
     rx: NetworkReceiver<D>,
     tx: NetworkSender<D>,
     peers: Vec<NodeIndex>,
     index: NodeIndex,
 }
 
-impl<D> Network<D> {
+impl<D: Debug> Network<D> {
     pub fn new(
         rx: NetworkReceiver<D>,
         tx: NetworkSender<D>,
@@ -42,7 +47,7 @@ impl<D> Network<D> {
 }
 
 #[async_trait::async_trait]
-impl<D: Clone + Send> NetworkT<D> for Network<D> {
+impl<D: Clone + Send + Debug> NetworkT<D> for Network<D> {
     fn send(&self, data: D, recipient: Recipient) {
         use Recipient::*;
         match recipient {
@@ -77,27 +82,36 @@ pub trait NetworkHook<D>: Send {
     async fn update_state(&mut self, data: &mut D, sender: NodeIndex, recipient: NodeIndex);
 }
 
-pub struct Router<D> {
+type ReconnectReceiver<D> = UnboundedReceiver<(NodeIndex, oneshot::Sender<Network<D>>)>;
+pub type ReconnectSender<D> = UnboundedSender<(NodeIndex, oneshot::Sender<Network<D>>)>;
+
+pub struct Router<D: Debug> {
     peers: RefCell<HashMap<NodeIndex, Peer<D>>>,
     peer_list: Vec<NodeIndex>,
     hook_list: RefCell<Vec<Box<dyn NetworkHook<D>>>>,
+    peer_reconnect_rx: ReconnectReceiver<D>,
     reliability: f64,
 }
 
-impl<D> Router<D> {
+impl<D: Debug> Router<D> {
     // reliability - a number in the range [0, 1], 1.0 means perfect reliability, 0.0 means no message gets through
-    pub fn new(n_members: NodeCount, reliability: f64) -> (Router<D>, Vec<Network<D>>) {
+    pub fn new(
+        n_members: NodeCount,
+        reliability: f64,
+    ) -> (Router<D>, Vec<(Network<D>, ReconnectSender<D>)>) {
         let peer_list = n_members.into_iterator().collect();
+        let (reconnect_tx, peer_reconnect_rx) = unbounded();
         let mut router = Router {
             peers: RefCell::new(HashMap::new()),
             peer_list,
             hook_list: RefCell::new(Vec::new()),
+            peer_reconnect_rx,
             reliability,
         };
         let mut networks = Vec::new();
         for ix in n_members.into_iterator() {
             let network = router.connect_peer(ix);
-            networks.push(network);
+            networks.push((network, reconnect_tx.clone()));
         }
         (router, networks)
     }
@@ -126,7 +140,7 @@ impl<D> Router<D> {
     }
 }
 
-impl<D> Future for Router<D> {
+impl<D: Debug> Future for Router<D> {
     type Output = ();
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = &mut self;
@@ -151,6 +165,22 @@ impl<D> Future for Router<D> {
         }
         for peer_id in disconnected_peers {
             this.peers.borrow_mut().remove(&peer_id);
+        }
+        loop {
+            // this call is responsible for waking this Future
+            match this.peer_reconnect_rx.poll_next_unpin(cx) {
+                Poll::Ready(Some((node_id, sender))) => {
+                    sender
+                        .send(this.connect_peer(node_id))
+                        .expect("channel should be open");
+                }
+                Poll::Ready(None) => {
+                    break;
+                }
+                Poll::Pending => {
+                    break;
+                }
+            }
         }
         for (sender, (mut data, recipient)) in buffer {
             let rand_sample = rand::random::<f64>();

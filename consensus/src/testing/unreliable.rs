@@ -90,15 +90,10 @@ async fn request_missing_coord() {
     let mut exits = Vec::new();
     let mut handles = Vec::new();
     let mut batch_rxs = Vec::new();
-    for network in networks {
+    for (network, _) in networks {
         let ix = network.index();
-        let (batch_rx, exit_tx, handle) = spawn_honest_member(
-            spawner.clone(),
-            ix,
-            n_members,
-            Arc::new(Mutex::new(vec![])),
-            network,
-        );
+        let (batch_rx, _, exit_tx, handle) =
+            spawn_honest_member(spawner.clone(), ix, n_members, vec![], network);
         batch_rxs.push(batch_rx);
         exits.push(exit_tx);
         handles.push(handle);

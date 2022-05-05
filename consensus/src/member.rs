@@ -1,7 +1,7 @@
 use crate::{
     network,
     runway::{
-        self, NewestUnitResponse, Request, Response, RunwayIO, RunwayNotificationIn,
+        self, NetworkIO, NewestUnitResponse, Request, Response, RunwayIO, RunwayNotificationIn,
         RunwayNotificationOut,
     },
     units::{UncheckedSignedUnit, UnitCoord},
@@ -111,8 +111,8 @@ impl<H: Hasher, D: Data, S: Signature> PartialOrd for ScheduledTask<H, D, S> {
 pub struct LocalIO<D: Data, DP: DataProvider<D>, FH: FinalizationHandler<D>, US: Write, UL: Read> {
     data_provider: DP,
     finalization_handler: FH,
-    _unit_saver: US,
-    _unit_loader: UL,
+    unit_saver: US,
+    unit_loader: UL,
     _phantom: PhantomData<D>,
 }
 
@@ -128,8 +128,8 @@ impl<D: Data, DP: DataProvider<D>, FH: FinalizationHandler<D>, US: Write, UL: Re
         LocalIO {
             data_provider,
             finalization_handler,
-            _unit_saver: unit_saver,
-            _unit_loader: unit_loader,
+            unit_saver,
+            unit_loader,
             _phantom: PhantomData,
         }
     }
@@ -474,20 +474,25 @@ pub async fn run_session<
 
     info!(target: "AlephBFT-member", "{:?} Initializing Runway.", index);
     let (runway_exit, exit_stream) = oneshot::channel();
-    let runway_io = RunwayIO {
+    let network_io = NetworkIO {
         alert_messages_for_network,
         alert_messages_from_network,
         unit_messages_from_network: runway_messages_from_network,
         unit_messages_for_network: runway_messages_for_network,
         resolved_requests: resolved_requests_tx,
     };
-    let runway_handle = runway::run(
-        config.clone(),
+    let runway_io = RunwayIO::new(
         local_io.data_provider,
         local_io.finalization_handler,
+        local_io.unit_saver,
+        local_io.unit_loader,
+    );
+    let runway_handle = runway::run(
+        config.clone(),
+        runway_io,
         keybox.clone(),
         spawn_handle.clone(),
-        runway_io,
+        network_io,
         exit_stream,
     );
     let runway_handle = runway_handle.fuse();

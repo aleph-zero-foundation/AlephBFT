@@ -398,7 +398,7 @@ async fn execute_generate_fuzz<'a, W: Write + Send + 'static>(
 
     let mut batch_rxs = Vec::new();
     let mut exits = Vec::new();
-    for network in networks.into_iter().take(threshold) {
+    for (network, _) in networks.into_iter().take(threshold) {
         let keybox = KeyBox::new(NodeCount(n_members), network.index());
         let config = gen_config(network.index(), n_members.into());
         let (exit_tx, batch_rx) =

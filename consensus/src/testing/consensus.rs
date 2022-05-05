@@ -166,7 +166,7 @@ async fn agree_on_first_batch() {
         exits.push(exit_tx);
         let (batch_tx, batch_rx) = unbounded();
         batch_rxs.push(batch_rx);
-        let starting_round = complete_oneshot(0);
+        let starting_round = complete_oneshot(Some(0));
         handles.push(spawner.spawn_essential(
             "consensus",
             consensus::run(
@@ -207,7 +207,7 @@ async fn catches_wrong_control_hash() {
     let conf = gen_config(NodeIndex(node_ix), n_nodes.into());
     let (exit_tx, exit_rx) = oneshot::channel();
     let (batch_tx, _batch_rx) = unbounded();
-    let starting_round = complete_oneshot(0);
+    let starting_round = complete_oneshot(Some(0));
 
     let consensus_handle = spawner.spawn_essential(
         "consensus",

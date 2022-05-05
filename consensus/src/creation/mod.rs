@@ -91,7 +91,7 @@ async fn create_unit<H: Hasher>(
 pub async fn run<H: Hasher>(
     conf: Config,
     io: IO<H>,
-    mut starting_round: oneshot::Receiver<Round>,
+    mut starting_round: oneshot::Receiver<Option<Round>>,
     mut exit: oneshot::Receiver<()>,
 ) {
     let Config {
@@ -107,7 +107,11 @@ pub async fn run<H: Hasher>(
     } = io;
     let starting_round = futures::select! {
         maybe_round =  starting_round => match maybe_round {
-            Ok(round) => round,
+            Ok(Some(round)) => round,
+            Ok(None) => {
+                warn!(target: "AlephBFT-creator", "None starting round provided. Exiting.");
+                return;
+            }
             Err(e) => {
                 error!(target: "AlephBFT-creator", "Starting round not provided: {}", e);
                 return;

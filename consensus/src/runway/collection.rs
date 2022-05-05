@@ -63,11 +63,6 @@ impl<H: Hasher, D: Data, S: Signature> NewestUnitResponse<H, D, S> {
         }
     }
 
-    /// The unit included in this response, if any.
-    pub fn included_unit(&self) -> &Option<UncheckedSignedUnit<H, D, S>> {
-        &self.unit
-    }
-
     /// The data included in this message, i.e. contents of the unit if any.
     pub fn included_data(&self) -> Vec<D> {
         match &self.unit {

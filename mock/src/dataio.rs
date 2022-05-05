@@ -14,18 +14,21 @@ type Sender<T> = futures::channel::mpsc::UnboundedSender<T>;
 pub type Data = u32;
 
 #[derive(Default)]
-pub struct DataProvider;
+pub struct DataProvider {
+    counter: u32,
+}
 
 impl DataProvider {
     pub fn new() -> Self {
-        Self
+        Self { counter: 0 }
     }
 }
 
 #[async_trait]
 impl DataProviderT<Data> for DataProvider {
     async fn get_data(&mut self) -> Data {
-        0
+        self.counter += 1;
+        self.counter
     }
 }
 
