@@ -12,6 +12,7 @@ use futures_timer::Delay;
 use log::{debug, info};
 use parking_lot::Mutex;
 use std::{
+    fmt,
     sync::Arc,
     time::{self, Duration},
 };
@@ -22,6 +23,12 @@ pub type BlockNum = u32;
 pub struct Block {
     pub num: BlockNum,
     pub data: Vec<u8>,
+}
+
+impl fmt::Debug for Block {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Block").field("num", &self.num).finish()
+    }
 }
 
 impl Block {

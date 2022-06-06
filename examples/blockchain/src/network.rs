@@ -7,212 +7,73 @@ use futures::{
         mpsc::{self, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
-    prelude::*,
-    FutureExt, StreamExt,
+    StreamExt,
 };
-use libp2p::{
-    core::upgrade,
-    identity,
-    mdns::{Mdns, MdnsConfig, MdnsEvent},
-    mplex, noise,
-    request_response::{
-        ProtocolSupport, RequestResponse, RequestResponseCodec, RequestResponseConfig,
-        RequestResponseEvent, RequestResponseMessage,
-    },
-    swarm::{NetworkBehaviourEventProcess, SwarmBuilder},
-    tcp::TokioTcpConfig,
-    NetworkBehaviour, PeerId, Swarm, Transport,
+use log::{debug, error, warn};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+    io::Write,
+    net::{SocketAddr, SocketAddrV4, TcpStream},
+    str::FromStr,
 };
-use log::{debug, info, trace, warn};
-use std::{collections::HashMap, error::Error, io, iter, time::Duration};
-
-const ALEPH_PROTOCOL_NAME: &str = "/alephbft/test/1";
+use tokio::{io::AsyncReadExt, net::TcpListener};
 
 pub type NetworkData = aleph_bft::NetworkData<Hasher64, Data, Signature, PartialMultisignature>;
 
+#[derive(Clone, Debug, Decode, Encode, PartialEq, Eq)]
+pub struct Address {
+    octets: [u8; 4],
+    port: u16,
+}
+
+impl From<SocketAddrV4> for Address {
+    fn from(addr: SocketAddrV4) -> Self {
+        Self {
+            octets: addr.ip().octets(),
+            port: addr.port(),
+        }
+    }
+}
+
+impl From<SocketAddr> for Address {
+    fn from(addr: SocketAddr) -> Self {
+        match addr {
+            SocketAddr::V4(addr) => addr.into(),
+            SocketAddr::V6(_) => panic!(),
+        }
+    }
+}
+
+impl FromStr for Address {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(s.parse::<SocketAddr>().unwrap().into())
+    }
+}
+
+impl Address {
+    pub async fn new_bind(ip_addr: String) -> (TcpListener, Self) {
+        let listener = TcpListener::bind(ip_addr.parse::<SocketAddr>().unwrap())
+            .await
+            .unwrap();
+        let ip_addr = listener.local_addr().unwrap().to_string();
+        (listener, Self::from_str(&ip_addr).unwrap())
+    }
+
+    pub fn connect(&self) -> std::io::Result<TcpStream> {
+        TcpStream::connect(SocketAddr::from((self.octets, self.port)))
+    }
+}
+
 #[allow(clippy::large_enum_variant)]
-#[derive(Clone, Encode, Decode)]
+#[derive(Clone, Decode, Encode, Debug)]
 enum Message {
-    Auth(NodeIndex),
+    DNSHello(NodeIndex, Address),
+    DNSRequest(NodeIndex, Address),
+    DNSResponse(Vec<(NodeIndex, Address)>),
     Consensus(NetworkData),
     Block(Block),
-}
-
-/// Implements the libp2p [`RequestResponseCodec`] trait.
-/// GenericCodec is a suitably adjusted version of the GenericCodec implemented in sc-network in substrate.
-/// Defines how streams of bytes are turned into requests and responses and vice-versa.
-#[derive(Debug, Clone)]
-struct GenericCodec {}
-
-type Request = Vec<u8>;
-// The Response type is dummy -- we use RequestResponse just to send regular messages (requests).
-type Response = ();
-
-#[async_trait::async_trait]
-impl RequestResponseCodec for GenericCodec {
-    type Protocol = Vec<u8>;
-    type Request = Request;
-    type Response = Response;
-
-    async fn read_request<T>(
-        &mut self,
-        _: &Self::Protocol,
-        mut io: &mut T,
-    ) -> io::Result<Self::Request>
-    where
-        T: AsyncRead + Unpin + Send,
-    {
-        let length = unsigned_varint::aio::read_usize(&mut io)
-            .await
-            .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
-        let mut buffer = vec![0; length];
-        io.read_exact(&mut buffer).await?;
-        Ok(buffer)
-    }
-
-    async fn read_response<T>(
-        &mut self,
-        _: &Self::Protocol,
-        mut _io: &mut T,
-    ) -> io::Result<Self::Response>
-    where
-        T: AsyncRead + Unpin + Send,
-    {
-        Ok(())
-    }
-
-    async fn write_request<T>(
-        &mut self,
-        _: &Self::Protocol,
-        io: &mut T,
-        req: Self::Request,
-    ) -> io::Result<()>
-    where
-        T: AsyncWrite + Unpin + Send,
-    {
-        let mut buffer = unsigned_varint::encode::usize_buffer();
-        io.write_all(unsigned_varint::encode::usize(req.len(), &mut buffer))
-            .await?;
-
-        io.write_all(&req).await?;
-
-        io.close().await?;
-        Ok(())
-    }
-
-    async fn write_response<T>(
-        &mut self,
-        _: &Self::Protocol,
-        _io: &mut T,
-        _res: Self::Response,
-    ) -> io::Result<()>
-    where
-        T: AsyncWrite + Unpin + Send,
-    {
-        Ok(())
-    }
-}
-
-#[derive(NetworkBehaviour)]
-struct Behaviour {
-    mdns: Mdns,
-    rq_rp: RequestResponse<GenericCodec>,
-    #[behaviour(ignore)]
-    peers: Vec<PeerId>,
-    #[behaviour(ignore)]
-    peer_by_index: HashMap<NodeIndex, PeerId>,
-    #[behaviour(ignore)]
-    consensus_tx: mpsc::UnboundedSender<NetworkData>,
-    #[behaviour(ignore)]
-    block_tx: mpsc::UnboundedSender<Block>,
-    #[behaviour(ignore)]
-    node_ix: NodeIndex,
-}
-
-impl Behaviour {
-    fn send_consensus_message(&mut self, message: NetworkData, recipient: Recipient) {
-        let message = Message::Consensus(message).encode();
-        use Recipient::*;
-        match recipient {
-            Node(node_ix) => {
-                if let Some(peer_id) = self.peer_by_index.get(&node_ix) {
-                    self.rq_rp.send_request(peer_id, message);
-                } else {
-                    debug!(target: "Blockchain-network", "No peer_id known for node {:?}.", node_ix);
-                }
-            }
-            Everyone => {
-                for peer_id in self.peers.iter() {
-                    self.rq_rp.send_request(peer_id, message.clone());
-                }
-            }
-        }
-    }
-
-    fn send_block_message(&mut self, block: Block) {
-        debug!(target: "Blockchain-network", "Sending block message num {:?}.", block.num);
-        let message = Message::Block(block).encode();
-        for peer_id in self.peers.iter() {
-            self.rq_rp.send_request(peer_id, message.clone());
-        }
-    }
-}
-
-impl NetworkBehaviourEventProcess<MdnsEvent> for Behaviour {
-    fn inject_event(&mut self, event: MdnsEvent) {
-        if let MdnsEvent::Discovered(list) = event {
-            let auth_message = Message::Auth(self.node_ix).encode();
-            for (peer, _) in list {
-                if self.peers.iter().any(|p| *p == peer) {
-                    continue;
-                }
-                self.peers.push(peer);
-                self.rq_rp.send_request(&peer, auth_message.clone());
-            }
-        }
-    }
-}
-
-impl NetworkBehaviourEventProcess<RequestResponseEvent<Request, Response>> for Behaviour {
-    fn inject_event(&mut self, event: RequestResponseEvent<Request, Response>) {
-        if let RequestResponseEvent::Message {
-            peer: peer_id,
-            message,
-        } = event
-        {
-            match message {
-                RequestResponseMessage::Request {
-                    request_id: _,
-                    request,
-                    channel: _,
-                } => {
-                    let message = Message::decode(&mut &request[..])
-                        .expect("honest network data should decode");
-                    match message {
-                        Message::Consensus(msg) => {
-                            self.consensus_tx
-                                .unbounded_send(msg)
-                                .expect("Network must listen");
-                        }
-                        Message::Auth(node_ix) => {
-                            debug!(target: "Blockchain-network", "Authenticated peer: {:?} {:?}", node_ix, peer_id);
-                            self.peer_by_index.insert(node_ix, peer_id);
-                        }
-                        Message::Block(block) => {
-                            debug!(target: "Blockchain-network", "Received block num {:?}", block.num);
-                            self.block_tx
-                                .unbounded_send(block)
-                                .expect("Blockchain process must listen");
-                        }
-                    }
-                    // We do not send back a response to a request. We treat them simply as one-way messages.
-                }
-                RequestResponseMessage::Response { .. } => {
-                    //We ignore the response, as it is dummy anyway.
-                }
-            }
-        }
-    }
 }
 
 pub struct Network {
@@ -233,18 +94,28 @@ impl aleph_bft::Network<NetworkData> for Network {
 }
 
 pub struct NetworkManager {
-    swarm: Swarm<Behaviour>,
+    id: NodeIndex,
+    address: Address,
+    addresses: HashMap<NodeIndex, Address>,
+    bootnodes: HashSet<NodeIndex>,
+    n_nodes: usize,
+    listener: TcpListener,
+    consensus_tx: UnboundedSender<NetworkData>,
     consensus_rx: UnboundedReceiver<(NetworkData, Recipient)>,
+    block_tx: UnboundedSender<Block>,
     block_rx: UnboundedReceiver<Block>,
 }
 
-impl Network {
+impl NetworkManager {
     pub async fn new(
-        node_ix: NodeIndex,
+        id: NodeIndex,
+        ip_addr: String,
+        n_nodes: usize,
+        bootnodes: HashMap<NodeIndex, Address>,
     ) -> Result<
         (
             Self,
-            NetworkManager,
+            Network,
             UnboundedSender<Block>,
             UnboundedReceiver<Block>,
             UnboundedSender<NetworkData>,
@@ -252,62 +123,15 @@ impl Network {
         ),
         Box<dyn Error>,
     > {
-        let local_key = identity::Keypair::generate_ed25519();
-        let local_peer_id = PeerId::from(local_key.public());
-        info!(target: "Blockchain-network", "Local peer id: {:?}", local_peer_id);
-
-        // Create a keypair for authenticated encryption of the transport.
-        let noise_keys = noise::Keypair::<noise::X25519Spec>::new()
-            .into_authentic(&local_key)
-            .expect("Signing libp2p-noise static DH keypair failed.");
-
-        // Create a tokio-based TCP transport use noise for authenticated
-        // encryption and Mplex for multiplexing of substreams on a TCP stream.
-        let transport = TokioTcpConfig::new()
-            .nodelay(true)
-            .upgrade(upgrade::Version::V1)
-            .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
-            .multiplex(mplex::MplexConfig::new())
-            .boxed();
+        let mut addresses = bootnodes.clone();
+        let (listener, address) = Address::new_bind(ip_addr).await;
+        addresses.insert(id, address.clone());
 
         let (msg_to_manager_tx, msg_to_manager_rx) = mpsc::unbounded();
         let (msg_for_store, msg_from_manager) = mpsc::unbounded();
         let (msg_for_network, msg_from_store) = mpsc::unbounded();
         let (block_to_data_io_tx, block_to_data_io_rx) = mpsc::unbounded();
         let (block_from_data_io_tx, block_from_data_io_rx) = mpsc::unbounded();
-        let mut swarm = {
-            let mut rr_cfg = RequestResponseConfig::default();
-            rr_cfg.set_connection_keep_alive(Duration::from_secs(10));
-            rr_cfg.set_request_timeout(Duration::from_secs(4));
-            let protocol_support = ProtocolSupport::Full;
-            let mdns_config = MdnsConfig {
-                ttl: Duration::from_secs(6 * 60),
-                query_interval: Duration::from_millis(100),
-            };
-            let rq_rp = RequestResponse::new(
-                GenericCodec {},
-                iter::once((ALEPH_PROTOCOL_NAME.as_bytes().to_vec(), protocol_support)),
-                rr_cfg,
-            );
-
-            let mdns = Mdns::new(mdns_config).await?;
-            let behaviour = Behaviour {
-                rq_rp,
-                mdns,
-                peers: vec![],
-                peer_by_index: HashMap::new(),
-                consensus_tx: msg_for_store,
-                block_tx: block_to_data_io_tx,
-                node_ix,
-            };
-            SwarmBuilder::new(transport, behaviour, local_peer_id)
-                .executor(Box::new(|fut| {
-                    tokio::spawn(fut);
-                }))
-                .build()
-        };
-
-        swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
 
         let network = Network {
             msg_to_manager_tx,
@@ -315,48 +139,133 @@ impl Network {
         };
 
         let network_manager = NetworkManager {
-            swarm,
+            id,
+            address,
+            addresses,
+            bootnodes: bootnodes.into_keys().collect(),
+            n_nodes,
+            listener,
+            consensus_tx: msg_for_store,
             consensus_rx: msg_to_manager_rx,
+            block_tx: block_to_data_io_tx,
             block_rx: block_from_data_io_rx,
         };
 
         Ok((
-            network,
             network_manager,
+            network,
             block_from_data_io_tx,
             block_to_data_io_rx,
             msg_for_network,
             msg_from_manager,
         ))
     }
-}
 
-impl NetworkManager {
+    fn reset_dns(&mut self, n: &NodeIndex) {
+        if !self.bootnodes.contains(n) {
+            error!("Reseting address of node {}", n.0);
+            self.addresses.remove(n);
+        }
+    }
+
+    fn send(&mut self, message: Message, recipient: Recipient) {
+        let mut to_reset = vec![];
+        match recipient {
+            Recipient::Node(n) => {
+                if let Some(addr) = self.addresses.get(&n) {
+                    if let Err(e) = self.try_send(&message, addr) {
+                        error!("Failed to send message {:?} to {:?}: {}", message, addr, e);
+                        to_reset.push(n)
+                    }
+                }
+            }
+            Recipient::Everyone => {
+                let my_id = self.id;
+                for (n, addr) in self.addresses.iter().filter(|(n, _)| n != &&my_id) {
+                    if let Err(e) = self.try_send(&message, addr) {
+                        error!("Failed to send message {:?} to {:?}: {}", message, addr, e);
+                        to_reset.push(*n)
+                    }
+                }
+            }
+        }
+        for n in to_reset {
+            self.reset_dns(&n);
+        }
+    }
+
+    fn try_send(&self, message: &Message, address: &Address) -> std::io::Result<()> {
+        debug!("Trying to send message {:?} to {:?}", message, address);
+        address.connect()?.write_all(&message.encode())
+    }
+
+    fn dns_response(&mut self, id: NodeIndex, address: Address) {
+        self.addresses.insert(id, address.clone());
+        self.try_send(
+            &Message::DNSResponse(self.addresses.clone().into_iter().collect()),
+            &address,
+        )
+        .unwrap_or(());
+    }
+
     pub async fn run(&mut self, mut exit: oneshot::Receiver<()>) {
+        let mut dns_interval = tokio::time::interval(std::time::Duration::from_millis(1000));
+        let mut dns_hello_interval = tokio::time::interval(std::time::Duration::from_millis(5000));
         loop {
-            futures::select! {
-                maybe_msg = self.consensus_rx.next() => {
-                    if let Some((consensus_msg, recipient)) = maybe_msg {
-                        let handle = &mut self.swarm.behaviour_mut();
-                        handle.send_consensus_message(consensus_msg, recipient);
-                    }
-                }
-                maybe_block = self.block_rx.next() => {
-                    if let Some(block) = maybe_block {
-                        let handle = &mut self.swarm.behaviour_mut();
-                        handle.send_block_message(block);
-                    }
-                }
-                event = self.swarm.next().fuse() => {
-                    match event {
-                        Some(event) => {
-                            trace!("Received a swarm event: {:?}", event);
+            let mut buffer = Vec::new();
+            tokio::select! {
+
+                event = self.listener.accept() => match event {
+                    Ok((mut socket, _addr)) => {
+                        match socket.read_to_end(&mut buffer).await {
+                            Ok(_) => {
+                                let message = Message::decode(&mut &buffer[..]);
+                                debug!("Received message: {:?}", message);
+                                match message {
+                                    Ok(Message::Consensus(data)) => self.consensus_tx.unbounded_send(data).expect("Network must listen"),
+                                    Ok(Message::Block(block)) => {
+                                        debug!(target: "Blockchain-network", "Received block num {:?}", block.num);
+                                        self.block_tx
+                                            .unbounded_send(block)
+                                            .expect("Blockchain process must listen");
+                                    },
+                                    Ok(Message::DNSHello(id, address)) => { self.addresses.insert(id, address); },
+                                    Ok(Message::DNSRequest(id, address)) => self.dns_response(id, address),
+                                    Ok(Message::DNSResponse(addresses)) => self.addresses.extend(addresses.into_iter()),
+                                    Err(_) => (),
+                                };
+                            },
+                            Err(_) => {
+                                error!("Could not decode incoming data");
+                            },
                         }
-                        None => {
-                            panic!("Swarm stream ended");
-                        }
+                    },
+                    Err(e) => {
+                        error!("Couldn't accept connection: {:?}", e);
+                    },
+                },
+
+                _ = dns_interval.tick() => {
+                    if self.addresses.len() < self.n_nodes {
+                        self.send(Message::DNSRequest(self.id, self.address.clone()), Recipient::Everyone);
+                        debug!("Requesting IP addresses");
                     }
+                },
+
+                _ = dns_hello_interval.tick() => {
+                    self.send(Message::DNSHello(self.id, self.address.clone()), Recipient::Everyone);
+                    debug!("Sending Hello!");
+                },
+
+                Some((consensus_msg, recipient)) = self.consensus_rx.next() => {
+                    self.send(Message::Consensus(consensus_msg), recipient);
                 }
+
+                Some(block) = self.block_rx.next() => {
+                    debug!(target: "Blockchain-network", "Sending block message num {:?}.", block.num);
+                    self.send(Message::Block(block), Recipient::Everyone);
+                }
+
                _ = &mut exit  => break,
             }
         }

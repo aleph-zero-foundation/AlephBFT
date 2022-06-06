@@ -1,17 +1,18 @@
-extern crate aleph_bft_examples_blockchain;
+mod chain;
+mod data;
+mod network;
 
-use aleph_bft::run_session;
-use aleph_bft_examples_blockchain::{
-    run_blockchain, ChainConfig, DataProvider, DataStore, FinalizationHandler, Keychain, Network,
-    Spawner,
-};
-use aleph_bft_mock::{Loader, Saver};
+use aleph_bft::{run_session, NodeIndex};
+use aleph_bft_mock::{FinalizationHandler, Keychain, Loader, Saver, Spawner};
+use chain::{run_blockchain, Block, BlockNum, ChainConfig};
 use chrono::Local;
 use clap::Parser;
+use data::{Data, DataProvider, DataStore};
 use futures::{channel::oneshot, StreamExt};
 use log::{debug, error, info};
+use network::{Address, NetworkData, NetworkManager};
 use parking_lot::Mutex;
-use std::{io::Write, sync::Arc, time, time::Duration};
+use std::{collections::HashMap, io::Write, str::FromStr, sync::Arc, time, time::Duration};
 
 const TXS_PER_BLOCK: usize = 50000;
 const TX_SIZE: usize = 300;
@@ -25,6 +26,18 @@ struct Args {
     /// Our index
     #[clap(long)]
     my_id: usize,
+
+    /// IP address of the node
+    #[clap(default_value = "127.0.0.1:0", long)]
+    ip_addr: String,
+
+    /// Bootnodes indices
+    #[clap(long, value_delimiter = ',')]
+    bootnodes_id: Vec<usize>,
+
+    /// Bootnodes addresses
+    #[clap(long, value_delimiter = ',')]
+    bootnodes_ip_addr: Vec<String>,
 
     /// Size of the committee
     #[clap(long)]
@@ -53,16 +66,22 @@ async fn main() {
     let args = Args::parse();
     let start_time = time::Instant::now();
     info!(target: "Blockchain-main", "Getting network up.");
+    let bootnodes: HashMap<NodeIndex, Address> = args
+        .bootnodes_id
+        .into_iter()
+        .zip(args.bootnodes_ip_addr)
+        .map(|(id, addr)| (id.into(), Address::from_str(&addr).unwrap()))
+        .collect();
     let (
-        network,
         mut manager,
+        network,
         block_from_data_io_tx,
         block_from_network_rx,
         message_for_network,
         message_from_network,
-    ) = Network::new(args.my_id.into())
+    ) = NetworkManager::new(args.my_id.into(), args.ip_addr, args.n_members, bootnodes)
         .await
-        .expect("Libp2p network set-up should succeed.");
+        .expect("Network set-up should succeed.");
     let (data_provider, current_block) = DataProvider::new();
     let (finalization_handler, mut finalized_rx) = FinalizationHandler::new();
     let data_store = DataStore::new(current_block.clone(), message_for_network);

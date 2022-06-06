@@ -16,9 +16,8 @@ codec = { package = "parity-scale-codec", version = "3.0", default-features = fa
 env_logger = "0.9"
 futures = "0.3"
 futures-timer = "3.0"
-libp2p = { version = "0.39", features = ["mdns", "tcp-tokio"]}
 log = "0.4"
 parking_lot = "0.12"
 sha3 = "0.9"
-tokio = { version = "1.6.1", features = ["macros", "rt", "rt-multi-thread"] }
+tokio = { version = "1.18", features = ["macros", "rt", "rt-multi-thread", "io-util", "net", "time"] }
 unsigned-varint = { version = "0.7.0", features = ["futures", "asynchronous_codec"] }
