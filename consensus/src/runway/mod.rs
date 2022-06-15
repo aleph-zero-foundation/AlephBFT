@@ -32,7 +32,7 @@ use collection::{Collection, IO as CollectionIO};
 pub use collection::{NewestUnitResponse, Salt};
 
 /// Type for incoming notifications: Runway to Consensus.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub(crate) enum NotificationIn<H: Hasher> {
     /// A notification carrying units. This might come either from multicast or
     /// from a response to a request. This is of no importance at this layer.
@@ -42,7 +42,7 @@ pub(crate) enum NotificationIn<H: Hasher> {
 }
 
 /// Type for outgoing notifications: Consensus to Runway.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) enum NotificationOut<H: Hasher> {
     /// Notification about a preunit created by this Consensus Node. Member is meant to
     /// disseminate this preunit among other nodes.

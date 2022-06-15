@@ -198,7 +198,7 @@ pub(crate) type UncheckedSignedUnit<H, D, S> = UncheckedSigned<FullUnit<H, D>, S
 
 pub(crate) type SignedUnit<'a, H, D, KB> = Signed<'a, FullUnit<H, D>, KB>;
 
-#[derive(Clone, Debug, PartialEq, Encode, Decode)]
+#[derive(Clone, Debug, Eq, PartialEq, Encode, Decode)]
 pub struct Unit<H: Hasher> {
     pre_unit: PreUnit<H>,
     hash: H::Hash,

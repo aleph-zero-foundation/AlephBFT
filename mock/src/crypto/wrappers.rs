@@ -56,12 +56,12 @@ impl<T: MK> KeychainT for BadSigning<T> {
 impl<T: MK> MultiKeychainT for BadSigning<T> {
     type PartialMultisignature = T::PartialMultisignature;
 
-    fn from_signature(
+    fn bootstrap_multi(
         &self,
         signature: &Self::Signature,
         index: NodeIndex,
     ) -> Self::PartialMultisignature {
-        self.0.from_signature(signature, index)
+        self.0.bootstrap_multi(signature, index)
     }
 
     fn is_complete(&self, msg: &[u8], partial: &Self::PartialMultisignature) -> bool {

@@ -52,7 +52,7 @@ pub trait PartialMultisignature: Signature {
 pub trait MultiKeychain: KeyBox {
     type PartialMultisignature: PartialMultisignature<Signature = Self::Signature>;
     /// Transform a single signature to a multisignature consisting of the signature.
-    fn from_signature(
+    fn bootstrap_multi(
         &self,
         signature: &Self::Signature,
         index: NodeIndex,
@@ -241,7 +241,7 @@ impl<'a, T: Signable, MK: MultiKeychain> Signed<'a, Indexed<T>, MK> {
     /// Note that depending on the setup, it may yield a complete signature.
     pub fn into_partially_multisigned(self, keychain: &'a MK) -> PartiallyMultisigned<'a, T, MK> {
         let multisignature =
-            keychain.from_signature(&self.unchecked.signature, self.unchecked.signable.index);
+            keychain.bootstrap_multi(&self.unchecked.signature, self.unchecked.signable.index);
         let unchecked = UncheckedSigned {
             signable: self.unchecked.signable.strip_index(),
             signature: multisignature,
@@ -482,7 +482,7 @@ mod tests {
     impl<KB: KeyBox> MultiKeychain for DefaultMultiKeychain<KB> {
         type PartialMultisignature = SignatureSet<KB::Signature>;
 
-        fn from_signature(
+        fn bootstrap_multi(
             &self,
             signature: &Self::Signature,
             index: NodeIndex,
@@ -505,7 +505,7 @@ mod tests {
         }
     }
 
-    #[derive(Clone, Debug, Default, PartialEq)]
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
     struct TestMessage {
         msg: Vec<u8>,
     }

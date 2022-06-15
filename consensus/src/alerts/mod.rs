@@ -270,7 +270,7 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
         Some(full_unit1.creator())
     }
 
-    #[must_use = "`rmc_alert()` registers the RMC but does not actually send it; the returned hash must be passed to `start_rmc()` separately"]
+    /// `rmc_alert()` registers the RMC but does not actually send it; the returned hash must be passed to `start_rmc()` separately
     async fn rmc_alert(
         &mut self,
         forker: NodeIndex,
@@ -283,7 +283,7 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
         hash
     }
 
-    #[must_use = "`on_own_alert()` registers RMCs and messages but does not actually send them; make sure the returned values are forwarded to IO"]
+    /// `on_own_alert()` registers RMCs and messages but does not actually send them; make sure the returned values are forwarded to IO
     async fn on_own_alert(
         &mut self,
         alert: Alert<H, D, MK::Signature>,
@@ -303,7 +303,7 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
         )
     }
 
-    #[must_use = "`on_network_alert()` may return a `ForkingNotification`, which should be propagated"]
+    /// `on_network_alert()` may return a `ForkingNotification`, which should be propagated
     async fn on_network_alert(
         &mut self,
         alert: UncheckedSigned<Alert<H, D, MK::Signature>, MK::Signature>,
@@ -337,7 +337,7 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
         }
     }
 
-    #[must_use = "`on_message()` may return an `AlerterResponse` which should be propagated"]
+    /// `on_message()` may return an `AlerterResponse` which should be propagated
     async fn on_message(
         &mut self,
         message: AlertMessage<H, D, MK::Signature, MK::PartialMultisignature>,
@@ -379,7 +379,7 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
         }
     }
 
-    #[must_use = "`alert_confirmed()` may return a `ForkingNotification`, which should be propagated"]
+    /// `alert_confirmed()` may return a `ForkingNotification`, which should be propagated
     fn alert_confirmed(
         &mut self,
         multisigned: Multisigned<'a, H::Hash, MK>,

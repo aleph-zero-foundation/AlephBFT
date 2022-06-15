@@ -93,13 +93,13 @@ impl<'a> MaliciousMember<'a> {
         let message1 = Self::unit_to_data(su1);
         for ix in 0..self.n_members.0 {
             let node_ix = NodeIndex(ix);
-            let _ = if ix % 2 == 0 {
+            if ix % 2 == 0 {
                 self.network
-                    .send(message0.clone(), Recipient::Node(node_ix))
+                    .send(message0.clone(), Recipient::Node(node_ix));
             } else {
                 self.network
-                    .send(message1.clone(), Recipient::Node(node_ix))
-            };
+                    .send(message1.clone(), Recipient::Node(node_ix));
+            }
         }
     }
 

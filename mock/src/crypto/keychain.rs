@@ -53,7 +53,7 @@ impl KeychainT for Keychain {
 impl MultiKeychainT for Keychain {
     type PartialMultisignature = PartialMultisignature;
 
-    fn from_signature(
+    fn bootstrap_multi(
         &self,
         signature: &Self::Signature,
         index: NodeIndex,

@@ -51,6 +51,8 @@ impl SpawnHandle for MockSpawner {
     }
 }
 
+//This code is used only for testing.
+#[allow(clippy::await_holding_lock)]
 impl MockSpawner {
     pub async fn wait(&self) {
         for h in self.handles.lock().iter_mut() {
@@ -143,8 +145,10 @@ impl Spawner {
         }
     }
 
+    //This code is used only for testing.
+    #[allow(clippy::await_holding_lock)]
     pub async fn wait_idle(&self) {
-        let _ = self.idle_mx.lock();
+        let _idle_mx_lock = self.idle_mx.lock();
 
         self.wake_flag
             .store(true, std::sync::atomic::Ordering::SeqCst);

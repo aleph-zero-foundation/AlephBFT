@@ -78,7 +78,7 @@ impl<H: Hasher, D: Data, S: Signature> NewestUnitResponse<H, D, S> {
 }
 
 /// Ways in which a newest unit response might be wrong.
-#[derive(PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug)]
 pub enum Error<H: Hasher, D: Data, S: Signature> {
     WrongSignature,
     SaltMismatch(Salt, Salt),
@@ -115,7 +115,7 @@ impl<H: Hasher, D: Data, S: Signature> From<SignatureError<NewestUnitResponse<H,
 }
 
 /// The status of an ongoing collection.
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum Status {
     /// Received less than threshold responses, counting the trivial self-response.
     Pending,
