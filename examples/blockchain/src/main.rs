@@ -1,18 +1,26 @@
-mod chain;
-mod data;
-mod network;
+use std::{
+    collections::HashMap,
+    io::Write,
+    str::FromStr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
+use clap::Parser;
+use futures::{channel::oneshot, StreamExt};
+use log::{debug, error, info};
+use parking_lot::Mutex;
+use time::{macros::format_description, OffsetDateTime};
 
 use aleph_bft::{run_session, NodeIndex};
 use aleph_bft_mock::{FinalizationHandler, Keychain, Loader, Saver, Spawner};
 use chain::{run_blockchain, Block, BlockNum, ChainConfig};
-use chrono::Local;
-use clap::Parser;
 use data::{Data, DataProvider, DataStore};
-use futures::{channel::oneshot, StreamExt};
-use log::{debug, error, info};
 use network::{Address, NetworkData, NetworkManager};
-use parking_lot::Mutex;
-use std::{collections::HashMap, io::Write, str::FromStr, sync::Arc, time, time::Duration};
+
+mod chain;
+mod data;
+mod network;
 
 const TXS_PER_BLOCK: usize = 50000;
 const TX_SIZE: usize = 300;
@@ -50,13 +58,18 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
+    let time_format =
+        format_description!("[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]");
     env_logger::builder()
-        .format(|buf, record| {
+        .format(move |buf, record| {
             writeln!(
                 buf,
                 "{} {}: {}",
                 record.level(),
-                Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+                OffsetDateTime::now_local()
+                    .unwrap_or_else(|_| OffsetDateTime::now_utc())
+                    .format(&time_format)
+                    .unwrap(),
                 record.args()
             )
         })
@@ -64,7 +77,7 @@ async fn main() {
         .init();
 
     let args = Args::parse();
-    let start_time = time::Instant::now();
+    let start_time = Instant::now();
     info!(target: "Blockchain-main", "Getting network up.");
     let bootnodes: HashMap<NodeIndex, Address> = args
         .bootnodes_id
@@ -144,7 +157,7 @@ async fn main() {
         panic!("Finalization stream finished too soon.");
     }
 
-    let stop_time = time::Instant::now();
+    let stop_time = Instant::now();
     let tot_millis = (stop_time - start_time - INITIAL_DELAY).as_millis();
     let tps = (args.n_finalized as f64) * (TXS_PER_BLOCK as f64) / (0.001 * (tot_millis as f64));
     info!(target: "Blockchain-main", "Achieved {:?} tps.", tps);

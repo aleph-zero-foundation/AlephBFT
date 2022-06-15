@@ -1,14 +1,16 @@
-use aleph_bft::run_session;
-use aleph_bft_mock::{DataProvider, FinalizationHandler, Keychain, Loader, Saver, Spawner};
-use chrono::Local;
+use std::{io::Write, sync::Arc};
+
 use clap::Parser;
 use futures::{channel::oneshot, StreamExt};
 use log::{debug, error, info};
 use parking_lot::Mutex;
-use std::{io::Write, sync::Arc};
+use time::{macros::format_description, OffsetDateTime};
+
+use aleph_bft::run_session;
+use aleph_bft_mock::{DataProvider, FinalizationHandler, Keychain, Loader, Saver, Spawner};
+use network::Network;
 
 mod network;
-use network::Network;
 
 /// Example node producing linear order.
 #[derive(Parser, Debug)]
@@ -29,13 +31,18 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
+    let time_format =
+        format_description!("[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]");
     env_logger::builder()
-        .format(|buf, record| {
+        .format(move |buf, record| {
             writeln!(
                 buf,
                 "{} {}: {}",
                 record.level(),
-                Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+                OffsetDateTime::now_local()
+                    .unwrap_or_else(|_| OffsetDateTime::now_utc())
+                    .format(&time_format)
+                    .unwrap(),
                 record.args()
             )
         })
