@@ -1,0 +1,25 @@
+name: cargo-audit
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/cargo-audit.yml'
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Run `cargo-audit`
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v2
+
+      - name: Run `cargo-audit`
+        uses: actions-rs/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

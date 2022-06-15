@@ -2,6 +2,7 @@
 [![Docs][docs-image]][docs-link]
 [![Build Status][build-image]][build-link]
 [![Apache 2.0 Licensed][license-image]][license-link]
+[![cargo-audit][cargo-audit-image]][cargo-audit-link]
 
 <p align="center">
   <a href="https://alephzero.org" target="_blank">
@@ -208,6 +209,8 @@ The implementation in this repository is funded by [Aleph Zero Foundation][webpa
 [license-image]: https://img.shields.io/badge/license-Apache2.0-blue.svg
 [license-link]: https://github.com/Cardinal-Cryptography/AlephBFT/blob/main/LICENSE
 [rustc-image]: https://img.shields.io/badge/rustc-stable-blue.svg
+[cargo-audit-image]: https://github.com/Cardinal-Cryptography/AlephBFT/actions/workflows/cargo-audit.yml/badge.svg
+[cargo-audit-link]: https://github.com/Cardinal-Cryptography/AlephBFT/actions/workflows/cargo-audit.yml
 [//]: ### "general links"
 [reference-link]: https://Cardinal-Cryptography.github.io/AlephBFT/index.html
 [reference-link-implementation-details]: https://cardinal-cryptography.github.io/AlephBFT/differences.html
