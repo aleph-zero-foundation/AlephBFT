@@ -7,6 +7,10 @@ on:
     paths:
       - 'crypto/src/**'
 
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
 jobs:
   check-version-bumped-crypto:
     runs-on: ubuntu-latest

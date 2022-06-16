@@ -3,9 +3,9 @@ name: cargo-audit
 on:
   pull_request:
     paths:
-      - '.github/workflows/cargo-audit.yml'
       - '**/Cargo.toml'
       - '**/Cargo.lock'
+      - '.github/workflows/cargo-audit.yml'
 
 concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}

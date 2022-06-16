@@ -7,6 +7,11 @@ on:
     paths:
       - 'consensus/Cargo.toml'
       - 'README.md'
+      - '.github/workflows/readme-cargo-toml-versions-aligned-consensus.yml'
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
 
 jobs:
   readme-cargo-toml-versions-aligned-consensus:

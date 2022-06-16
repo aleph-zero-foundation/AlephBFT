@@ -3,7 +3,7 @@ name: Sync Cardinal-Cryptography repo with Aleph-Zero-Foundation repo
 on:
   push:
     branches:
-      main
+      - main
 
 jobs:
   sync:
