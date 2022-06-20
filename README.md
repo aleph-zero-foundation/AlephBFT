@@ -71,21 +71,37 @@ More details are available [in the book][reference-link-implementation-details].
 
 ### Examples
 
-Currently we provide two basic examples of running AlephBFT. The first one: `ordering` implements a committee member that is not
-cryptographically secure and serves only as a working example of what traits need to be implemented and how to implement them.
-For example, you may run the following command
+We provide two basic examples of running AlephBFT, both of which are not cryptographically secure, and assume honest, but possibly malfunctioning, participants.
+
+The first one, `ordering`, implements a simple node that produces data items, and then waits for them to be finalized. It can also perform a simulated crash after creating a specified number of items.
+
+For example, you may run the following command:
 ```
 cd ./examples/ordering
-./run.sh 5
+./run.sh
 ```
-where `5` in the above is the number of committee members, and can be replaced by any reasonable number.
+that will launch 2 properly working nodes, and 2 nodes that will crash 3 times each.
+The delay before relaunching a crashed node will be set to 1 second.
+A faulty node will create 25 items before every crash, and another `25` in the end.
+Every node will therefore create `100` items in total, and then wait for other nodes before finishing its run.
+
+See:
+```
+./run.sh -h
+```
+for further details.
+
+Note that if the number of properly working nodes is less or equal than two times the number of faulty nodes, they will be unable to advance the protocol on their own.
+
+The script will try to start nodes at predefined IP addresses, `127.0.0.1:100XX`, where `XX` denotes the node id. If the port is unavailable, the node will log an error and keep trying to aquire it, waiting 10 seconds between consecutive attempts.
+
 Running this script will result in generating log files `node0.log, node1.log, ...` corresponding to subsequent nodes.
-The script will try to start nodes at predefined IP addresses, `127.0.0.1:43XXX`, where `XXX` denotes the node id, and a node will panic if the address is not available.
+A directory called `aleph-bft-examples-ordering-backup` will be created to store data required by the crash recovery mechanism, and the logs from subsequent runs will be appended to existing log files.
+The cache and logs will be automatically cleared when launching the script again.
 
-The second example: `blockchain` is meant for benchmarking AlephBFT in the blockchain setting.
+The second example, `blockchain`, is meant for benchmarking AlephBFT in the blockchain setting.
 It implements a simple round-robin blockchain assuming honest participation.
-The easiest way to run it is to use the provided script as follows (assuming we start in the root directory)
-
+The easiest way to run it is to use the provided script as follows (assuming we start in the root directory):
 ```
 cd ./examples/blockchain
 ./run.sh 5

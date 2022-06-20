@@ -32,27 +32,27 @@ const INITIAL_DELAY: Duration = Duration::from_millis(5000);
 #[clap(author, version, about, long_about = None)]
 struct Args {
     /// Our index
-    #[clap(long)]
+    #[clap(long, value_parser)]
     my_id: usize,
 
     /// IP address of the node
-    #[clap(default_value = "127.0.0.1:0", long)]
+    #[clap(default_value = "127.0.0.1:0", long, value_parser)]
     ip_addr: String,
 
     /// Bootnodes indices
-    #[clap(long, value_delimiter = ',')]
+    #[clap(long, value_parser, value_delimiter = ',')]
     bootnodes_id: Vec<usize>,
 
     /// Bootnodes addresses
-    #[clap(long, value_delimiter = ',')]
+    #[clap(long, value_parser, value_delimiter = ',')]
     bootnodes_ip_addr: Vec<String>,
 
     /// Size of the committee
-    #[clap(long)]
+    #[clap(long, value_parser)]
     n_members: usize,
 
     /// Number of data to be finalized
-    #[clap(long)]
+    #[clap(long, value_parser)]
     n_finalized: usize,
 }
 

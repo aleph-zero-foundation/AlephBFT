@@ -1,11 +1,13 @@
-use aleph_bft::Recipient;
-use aleph_bft_mock::{Data, Hasher64, PartialMultisignature, Signature};
+use crate::Data;
+use aleph_bft::{NodeIndex, Recipient};
+use aleph_bft_mock::{Hasher64, PartialMultisignature, Signature};
 use codec::{Decode, Encode};
 use log::error;
 use std::{io::Write, net::SocketAddr};
 use tokio::{
     io::{self, AsyncReadExt},
     net::TcpListener,
+    time::{sleep, Duration},
 };
 
 pub type NetworkData = aleph_bft::NetworkData<Hasher64, Data, Signature, PartialMultisignature>;
@@ -17,13 +19,30 @@ pub struct Network {
 }
 
 impl Network {
-    pub async fn new(my_id: usize, ports: &[usize]) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(
+        my_id: NodeIndex,
+        ports: &[usize],
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let my_id = my_id.0;
         assert!(my_id < ports.len());
         let addresses = ports
             .iter()
             .map(|p| format!("127.0.0.1:{}", p).parse::<SocketAddr>())
             .collect::<Result<Vec<_>, _>>()?;
-        let listener = TcpListener::bind(addresses[my_id]).await?;
+        let listener;
+        loop {
+            match TcpListener::bind(addresses[my_id]).await {
+                Ok(l) => {
+                    listener = l;
+                    break;
+                }
+                Err(e) => {
+                    error!("{}", e);
+                    error!("Waiting 10 seconds before the next attempt...");
+                    sleep(Duration::from_secs(10)).await;
+                }
+            };
+        }
         Ok(Network {
             my_id,
             addresses,
@@ -32,8 +51,8 @@ impl Network {
     }
 
     fn send_to_peer(&self, data: NetworkData, recipient: usize) {
-        if self.try_send_to_peer(data, recipient).is_err() {
-            error!("Sending failed, recipient: {:?}", recipient);
+        if let Err(e) = self.try_send_to_peer(data, recipient) {
+            error!("Sending failed, recipient: {:?}, error: {:?}", recipient, e);
         }
     }
 
