@@ -22,10 +22,11 @@ use std::{
     cmp::Ordering,
     collections::{BinaryHeap, HashSet},
     convert::TryInto,
-    fmt::Debug,
+    fmt::{self, Debug},
     io::{Read, Write},
     marker::PhantomData,
     time,
+    time::Duration,
 };
 
 /// A message concerning units, either about new units or some requests for them.
@@ -64,7 +65,7 @@ impl<H: Hasher, D: Data, S: Signature> UnitMessage<H, D, S> {
     }
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Debug)]
 enum Task<H: Hasher, D: Data, S: Signature> {
     // Request the unit with the given (creator, round) coordinates.
     CoordRequest(UnitCoord),
@@ -76,12 +77,22 @@ enum Task<H: Hasher, D: Data, S: Signature> {
     RequestNewest(u64),
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Debug)]
 struct ScheduledTask<H: Hasher, D: Data, S: Signature> {
     task: Task<H, D, S>,
     scheduled_time: time::Instant,
     // The number of times the task was performed so far.
     counter: usize,
+}
+
+impl<H: Hasher, D: Data, S: Signature> fmt::Display for ScheduledTask<H, D, S> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "ScheduledTask({:?}, counter {})",
+            self.task, self.counter
+        )
+    }
 }
 
 impl<H: Hasher, D: Data, S: Signature> ScheduledTask<H, D, S> {
@@ -132,6 +143,95 @@ impl<D: Data, DP: DataProvider<D>, FH: FinalizationHandler<D>, US: Write, UL: Re
             unit_loader,
             _phantom: PhantomData,
         }
+    }
+}
+
+struct MemberStatus<'a, H, D, S>
+where
+    H: Hasher,
+    D: Data,
+    S: Signature,
+{
+    task_queue: &'a BinaryHeap<ScheduledTask<H, D, S>>,
+    not_resolved_parents: &'a HashSet<H::Hash>,
+    not_resolved_coords: &'a HashSet<UnitCoord>,
+}
+
+impl<'a, H, D, S> MemberStatus<'a, H, D, S>
+where
+    H: Hasher,
+    D: Data,
+    S: Signature,
+{
+    fn new(
+        task_queue: &'a BinaryHeap<ScheduledTask<H, D, S>>,
+        not_resolved_parents: &'a HashSet<H::Hash>,
+        not_resolved_coords: &'a HashSet<UnitCoord>,
+    ) -> Self {
+        Self {
+            task_queue,
+            not_resolved_parents,
+            not_resolved_coords,
+        }
+    }
+}
+
+impl<'a, H, D, S> fmt::Display for MemberStatus<'a, H, D, S>
+where
+    H: Hasher,
+    D: Data,
+    S: Signature,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut count_coord_request: usize = 0;
+        let mut count_parents_request: usize = 0;
+        let mut count_unit_multicast: usize = 0;
+        let mut count_request_newest: usize = 0;
+        for task in self.task_queue.iter().map(|st| &st.task) {
+            match task {
+                Task::CoordRequest(_) => count_coord_request += 1,
+                Task::ParentsRequest(_, _) => count_parents_request += 1,
+                Task::UnitMulticast(_) => count_unit_multicast += 1,
+                Task::RequestNewest(_) => count_request_newest += 1,
+            }
+        }
+        let long_time_pending_tasks: Vec<_> = self
+            .task_queue
+            .iter()
+            .filter(|st| match st.task {
+                Task::UnitMulticast(_) => false,
+                _ => st.counter >= 5,
+            })
+            .collect();
+        write!(f, "Member status report: ")?;
+        write!(f, "task queue content: ")?;
+        write!(
+            f,
+            "CoordRequest - {}, ParentsRequest - {}, UnitMulticast - {}, RequestNewest - {}",
+            count_coord_request, count_parents_request, count_unit_multicast, count_request_newest,
+        )?;
+        if !self.not_resolved_coords.is_empty() {
+            write!(
+                f,
+                "; not_resolved_coords.len() - {}",
+                self.not_resolved_coords.len()
+            )?;
+        }
+        if !self.not_resolved_parents.is_empty() {
+            write!(
+                f,
+                "; not_resolved_parents.len() - {}",
+                self.not_resolved_parents.len()
+            )?;
+        }
+        if !long_time_pending_tasks.is_empty() {
+            write!(f, "; pending tasks with counter >= 5 -")?;
+            for task in long_time_pending_tasks.iter() {
+                write!(f, " {},", task)?;
+            }
+        }
+        write!(f, ".")?;
+        Ok(())
     }
 }
 
@@ -349,9 +449,20 @@ where
         }
     }
 
+    fn status_report(&self) {
+        let status = MemberStatus::new(
+            &self.task_queue,
+            &self.not_resolved_parents,
+            &self.not_resolved_coords,
+        );
+        info!(target: "AlephBFT-member", "{}", status);
+    }
+
     async fn run(mut self, mut exit: oneshot::Receiver<()>) {
         let ticker_delay = self.config.delay_config.tick_interval;
         let mut ticker = Delay::new(ticker_delay).fuse();
+        let status_ticker_delay = Duration::from_secs(10);
+        let mut status_ticker = Delay::new(status_ticker_delay).fuse();
 
         loop {
             futures::select! {
@@ -393,6 +504,11 @@ where
                 _ = &mut ticker => {
                     self.trigger_tasks();
                     ticker = Delay::new(ticker_delay).fuse();
+                },
+
+                _ = &mut status_ticker => {
+                    self.status_report();
+                    status_ticker = Delay::new(status_ticker_delay).fuse();
                 },
 
                 _ = &mut exit => {

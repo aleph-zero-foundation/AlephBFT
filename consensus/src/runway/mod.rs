@@ -4,7 +4,7 @@ use crate::{
     member::UnitMessage,
     units::{
         ControlHash, FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit, Unit, UnitCoord,
-        UnitStore, Validator,
+        UnitStore, UnitStoreStatus, Validator,
     },
     Config, Data, DataProvider, FinalizationHandler, Hasher, Index, MultiKeychain, NodeCount,
     NodeIndex, NodeMap, Receiver, Recipient, Round, Sender, SessionId, Signature, Signed,
@@ -15,12 +15,15 @@ use futures::{
     future::FusedFuture,
     pin_mut, Future, FutureExt, StreamExt,
 };
+use futures_timer::Delay;
 use log::{debug, error, info, trace, warn};
 use std::{
     collections::HashSet,
     convert::TryFrom,
+    fmt,
     io::{Read, Write},
     marker::PhantomData,
+    time::Duration,
 };
 
 mod backup;
@@ -139,6 +142,47 @@ where
     finalization_handler: FH,
     unit_saver: UnitSaver<US, H, D, MK::Signature>,
     exiting: bool,
+}
+
+struct RunwayStatus<'a, H: Hasher> {
+    status: UnitStoreStatus<'a>,
+    missing_coords: &'a HashSet<UnitCoord>,
+    missing_parents: &'a HashSet<H::Hash>,
+}
+
+impl<'a, H: Hasher> RunwayStatus<'a, H> {
+    fn new(
+        status: UnitStoreStatus<'a>,
+        missing_coords: &'a HashSet<UnitCoord>,
+        missing_parents: &'a HashSet<H::Hash>,
+    ) -> Self {
+        Self {
+            status,
+            missing_coords,
+            missing_parents,
+        }
+    }
+}
+
+impl<'a, H: Hasher> fmt::Display for RunwayStatus<'a, H> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Runway status report: ")?;
+        write!(f, "{}", self.status)?;
+        if !self.missing_coords.is_empty() {
+            let mut v_coords: Vec<(usize, Round)> = self
+                .missing_coords
+                .iter()
+                .map(|uc| (uc.creator().into(), uc.round()))
+                .collect();
+            v_coords.sort();
+            write!(f, "; missing coords - {:?}", v_coords)?;
+        }
+        if !self.missing_parents.is_empty() {
+            write!(f, "; missing parents - {:?}", self.missing_parents)?;
+        }
+        write!(f, ".")?;
+        Ok(())
+    }
 }
 
 struct RunwayConfig<
@@ -629,6 +673,15 @@ where
         self.send_consensus_notification(NotificationIn::NewUnits(units_to_move))
     }
 
+    fn status_report(&self) {
+        let runway_status: RunwayStatus<H> = RunwayStatus::new(
+            self.store.get_status(),
+            &self.missing_coords,
+            &self.missing_parents,
+        );
+        info!(target: "AlephBFT-runway", "{}", runway_status);
+    }
+
     async fn run(
         mut self,
         units_from_backup: oneshot::Receiver<Vec<UncheckedSignedUnit<H, D, MK::Signature>>>,
@@ -637,6 +690,9 @@ where
         let index = self.index();
         let units_from_backup = units_from_backup.fuse();
         pin_mut!(units_from_backup);
+
+        let status_ticker_delay = Duration::from_secs(10);
+        let mut status_ticker = Delay::new(status_ticker_delay).fuse();
 
         info!(target: "AlephBFT-runway", "{:?} Runway started.", index);
         loop {
@@ -685,6 +741,11 @@ where
                         error!(target: "AlephBFT-runway", "{:?} Ordered batch stream closed.", index);
                         break;
                     }
+                },
+
+                _ = &mut status_ticker => {
+                    self.status_report();
+                    status_ticker = Delay::new(status_ticker_delay).fuse();
                 },
 
                 _ = &mut exit => {

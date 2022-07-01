@@ -1,5 +1,54 @@
 use super::*;
+use itertools::Itertools;
 use log::{trace, warn};
+use std::{collections::HashSet, fmt};
+
+pub struct UnitStoreStatus<'a> {
+    forkers: &'a NodeSubset,
+    size: usize,
+    height: Option<Round>,
+    top_row: NodeMap<Round>,
+    first_missing_rounds: NodeMap<Round>,
+}
+
+impl<'a> UnitStoreStatus<'a> {
+    fn new(
+        forkers: &'a NodeSubset,
+        size: usize,
+        height: Option<Round>,
+        top_row: NodeMap<Round>,
+        first_missing_rounds: NodeMap<Round>,
+    ) -> Self {
+        Self {
+            forkers,
+            size,
+            height,
+            top_row,
+            first_missing_rounds,
+        }
+    }
+}
+
+impl<'a> fmt::Display for UnitStoreStatus<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "DAG size - {}", self.size)?;
+        if let Some(r) = self.height {
+            write!(f, "; DAG height - {}", r)?;
+        }
+        if self.first_missing_rounds.item_count() > 0 {
+            write!(
+                f,
+                "; DAG first missing rounds - {}",
+                self.first_missing_rounds
+            )?;
+        }
+        write!(f, "; DAG top row - {}", self.top_row)?;
+        if !self.forkers.is_empty() {
+            write!(f, "; forkers - {}", self.forkers)?;
+        }
+        Ok(())
+    }
+}
 
 /// A component for temporarily storing units before they are declared "legit" and sent
 /// to the Terminal. We refer to the documentation https://cardinal-cryptography.github.io/AlephBFT/internals.html
@@ -26,6 +75,35 @@ impl<'a, H: Hasher, D: Data, KB: KeyBox> UnitStore<'a, H, D, KB> {
             legit_buffer: Vec::new(),
             max_round,
         }
+    }
+
+    pub fn get_status(&self) -> UnitStoreStatus {
+        let n_nodes: NodeCount = self.is_forker.size().into();
+        let gm = self
+            .by_coord
+            .keys()
+            .map(|c| (c.creator, c.round))
+            .into_grouping_map();
+        let top_row = NodeMap::from_hashmap(n_nodes, gm.clone().max());
+        let first_missing_rounds = NodeMap::from_hashmap(
+            n_nodes,
+            gm.collect::<HashSet<_>>()
+                .into_iter()
+                .filter_map(|(id, rounds)| match top_row.get(id) {
+                    Some(&row) => (0..row)
+                        .position(|round| !rounds.contains(&round))
+                        .map(|round| (id, round as Round)),
+                    None => None,
+                })
+                .collect(),
+        );
+        UnitStoreStatus::new(
+            &self.is_forker,
+            self.by_coord.len(),
+            self.by_coord.keys().map(|k| k.round).max(),
+            top_row,
+            first_missing_rounds,
+        )
     }
 
     pub(crate) fn unit_by_coord(&self, coord: UnitCoord) -> Option<&SignedUnit<'a, H, D, KB>> {

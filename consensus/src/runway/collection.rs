@@ -1,15 +1,16 @@
 use crate::{
     runway::Request,
     units::{UncheckedSignedUnit, ValidationError, Validator},
-    Data, Hasher, KeyBox, NodeCount, NodeIndex, Receiver, Round, Sender, Signable, Signature,
-    SignatureError, UncheckedSigned,
+    Data, Hasher, KeyBox, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Signable,
+    Signature, SignatureError, UncheckedSigned,
 };
 use codec::{Decode, Encode};
 use futures::{channel::oneshot, FutureExt, StreamExt};
-use log::{error, warn};
+use futures_timer::Delay;
+use log::{debug, error, info, warn};
 use std::{
     cmp::max,
-    collections::{hash_map::DefaultHasher, HashSet},
+    collections::hash_map::DefaultHasher,
     fmt::{Display, Formatter, Result as FmtResult},
     hash::{Hash, Hasher as _},
     time::Duration,
@@ -130,8 +131,7 @@ pub enum Status {
 pub struct Collection<'a, MK: KeyBox> {
     keychain: &'a MK,
     validator: &'a Validator<'a, MK>,
-    starting_round: Round,
-    responders: HashSet<NodeIndex>,
+    collected_starting_rounds: NodeMap<Round>,
     threshold: NodeCount,
     salt: Salt,
 }
@@ -145,13 +145,13 @@ impl<'a, MK: KeyBox> Collection<'a, MK> {
         threshold: NodeCount,
     ) -> (Self, Salt) {
         let salt = generate_salt();
-        let responders = [keychain.index()].into();
+        let mut collected_starting_rounds = NodeMap::with_size(keychain.node_count());
+        collected_starting_rounds.insert(keychain.index(), 0);
         (
             Collection {
                 keychain,
                 validator,
-                starting_round: 0,
-                responders,
+                collected_starting_rounds,
                 threshold,
                 salt,
             },
@@ -168,15 +168,26 @@ impl<'a, MK: KeyBox> Collection<'a, MK> {
         if response.salt != self.salt {
             return Err(Error::SaltMismatch(self.salt, response.salt));
         }
-        if let Some(unchecked_unit) = response.unit {
-            let checked_signed_unit = self.validator.validate_unit(unchecked_unit)?;
-            let checked_unit = checked_signed_unit.as_signable();
-            if checked_unit.creator() != self.keychain.index() {
-                return Err(Error::ForeignUnit(checked_unit.creator()));
+        let round: Round = match response.unit {
+            Some(unchecked_unit) => {
+                let checked_signed_unit = self.validator.validate_unit(unchecked_unit)?;
+                let checked_unit = checked_signed_unit.as_signable();
+                if checked_unit.creator() != self.keychain.index() {
+                    return Err(Error::ForeignUnit(checked_unit.creator()));
+                }
+                checked_unit.round() + 1
             }
-            self.starting_round = max(self.starting_round, checked_unit.round() + 1);
+            None => 0,
+        };
+        let current_round = *self
+            .collected_starting_rounds
+            .get(response.responder)
+            .unwrap_or(&round);
+        if current_round != round {
+            debug!(target: "AlephBFT-runway", "Node {} responded with starting unit {}, but now says {}", response.responder.0, current_round, round);
         }
-        self.responders.insert(response.responder);
+        self.collected_starting_rounds
+            .insert(response.responder, max(current_round, round));
         Ok(self.status())
     }
 
@@ -188,12 +199,13 @@ impl<'a, MK: KeyBox> Collection<'a, MK> {
     /// The current status of the collection.
     pub fn status(&self) -> Status {
         use Status::*;
-        let responders = NodeCount(self.responders.len());
+        let responders = NodeCount(self.collected_starting_rounds.item_count());
+        let starting_round: Round = *self.collected_starting_rounds.values().max().unwrap_or(&0);
         if responders == self.keychain.node_count() {
-            return Finished(self.starting_round);
+            return Finished(starting_round);
         }
         if responders >= self.threshold {
-            return Ready(self.starting_round);
+            return Ready(starting_round);
         }
         Pending
     }
@@ -236,6 +248,11 @@ impl<'a, H: Hasher, D: Data, MK: KeyBox> IO<'a, H, D, MK> {
         {
             warn!(target: "AlephBFT-runway", "unable to send resolved request:  {}", e);
         }
+        info!(target: "AlephBFT-runway", "Finished initial unit collection with status: {:?}", self.collection.status());
+    }
+
+    fn status_report(&self) {
+        info!(target: "AlephBFT-runway", "Initial unit collection status report: status - {:?}, collected starting rounds - {}", self.collection.status(), self.collection.collected_starting_rounds);
     }
 
     /// Run the initial unit collection until it sends the initial round.
@@ -244,6 +261,9 @@ impl<'a, H: Hasher, D: Data, MK: KeyBox> IO<'a, H, D, MK> {
         let mut catch_up_delay = futures_timer::Delay::new(Duration::from_secs(5)).fuse();
         let mut delay_passed = false;
 
+        let status_ticker_delay = Duration::from_secs(10);
+        let mut status_ticker = Delay::new(status_ticker_delay).fuse();
+
         loop {
             futures::select! {
                 response = self.responses_from_network.next() => {
@@ -251,6 +271,7 @@ impl<'a, H: Hasher, D: Data, MK: KeyBox> IO<'a, H, D, MK> {
                         Some(response) => response,
                         None => {
                             warn!(target: "AlephBFT-runway", "Response channel closed.");
+                            info!(target: "AlephBFT-runway", "Finished initial unit collection with status: {:?}", self.collection.status());
                             return;
                         }
                     };
@@ -268,11 +289,19 @@ impl<'a, H: Hasher, D: Data, MK: KeyBox> IO<'a, H, D, MK> {
                     }
                 },
                 _ = catch_up_delay => match self.collection.status() {
-                    Pending => delay_passed = true,
-                    Ready(round) | Finished(round)  =>{
+                    Pending => {
+                        delay_passed = true;
+                        info!(target: "AlephBFT-runway", "Catch up delay passed.");
+                        self.status_report();
+                    },
+                    Ready(round) | Finished(round)  => {
                         self.finish(round);
                         return;
                     },
+                },
+                _ = &mut status_ticker => {
+                    self.status_report();
+                    status_ticker = Delay::new(status_ticker_delay).fuse();
                 },
             }
         }

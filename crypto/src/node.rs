@@ -1,6 +1,8 @@
 use codec::{Decode, Encode, Error, Input, Output};
 use derive_more::{Add, AddAssign, From, Into, Sub, SubAssign, Sum};
 use std::{
+    collections::HashMap,
+    fmt,
     hash::Hash,
     ops::{Div, Index as StdIndex, Mul},
     vec,
@@ -81,6 +83,18 @@ impl<T> NodeMap<T> {
         NodeMap(v)
     }
 
+    pub fn from_hashmap(len: NodeCount, hashmap: HashMap<NodeIndex, T>) -> Self
+    where
+        T: Clone,
+    {
+        let v = vec![None; len.into()];
+        let mut nm = NodeMap(v);
+        for (id, item) in hashmap.into_iter() {
+            nm.insert(id, item);
+        }
+        nm
+    }
+
     pub fn size(&self) -> NodeCount {
         self.0.len().into()
     }
@@ -131,6 +145,10 @@ impl<T> NodeMap<T> {
     pub fn to_subset(&self) -> NodeSubset {
         NodeSubset(self.0.iter().map(Option::is_some).collect())
     }
+
+    pub fn item_count(&self) -> usize {
+        self.iter().count()
+    }
 }
 
 impl<T: 'static> IntoIterator for NodeMap<T> {
@@ -157,6 +175,21 @@ impl<'a, T> IntoIterator for &'a mut NodeMap<T> {
     }
 }
 
+impl<T: fmt::Display> fmt::Display for NodeMap<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "[")?;
+        let mut it = self.iter().peekable();
+        while let Some((id, item)) = it.next() {
+            write!(f, "({}, {})", id.0, item)?;
+            if it.peek().is_some() {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, "]")?;
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct NodeSubset(bit_vec::BitVec<u32>);
 
@@ -178,6 +211,14 @@ impl NodeSubset {
             .iter()
             .enumerate()
             .filter_map(|(i, b)| if b { Some(i.into()) } else { None })
+    }
+
+    pub fn len(&self) -> usize {
+        self.elements().count()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -216,6 +257,14 @@ impl StdIndex<NodeIndex> for NodeSubset {
 
     fn index(&self, vidx: NodeIndex) -> &bool {
         &self.0[vidx.0 as usize]
+    }
+}
+
+impl fmt::Display for NodeSubset {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut v: Vec<usize> = self.elements().map(|n| n.into()).collect();
+        v.sort();
+        write!(f, "{:?}", v)
     }
 }
 

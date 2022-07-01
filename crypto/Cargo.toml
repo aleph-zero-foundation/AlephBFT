@@ -1,6 +1,6 @@
 [package]
 name = "aleph-bft-crypto"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 authors = ["Cardinal Cryptography"]
 documentation = "https://docs.rs/?"
