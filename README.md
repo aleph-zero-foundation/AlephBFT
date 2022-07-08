@@ -60,7 +60,7 @@ More details are available [in the book][reference-link-implementation-details].
 - Import AlephBFT in your crate
   ```toml
   [dependencies]
-  aleph-bft = "^0.14"
+  aleph-bft = "^0.15"
   ```
 - The main entry point is the `run_session` function, which returns a Future that runs the
   consensus algorithm.
@@ -215,7 +215,7 @@ The implementation in this repository is funded by [Aleph Zero Foundation][webpa
 [//]: ### "badges"
 [dataio-link]: https://cardinal-cryptography.github.io/AlephBFT/aleph_bft_api.html#311-dataio
 [network-link]: https://cardinal-cryptography.github.io/AlephBFT/aleph_bft_api.html#312-network
-[keybox-link]: https://cardinal-cryptography.github.io/AlephBFT/aleph_bft_api.html#313-keybox
+[keychain-link]: https://cardinal-cryptography.github.io/AlephBFT/aleph_bft_api.html#313-keychain
 [crate-image]: https://img.shields.io/crates/v/aleph-bft.svg
 [crate-link]: https://crates.io/crates/aleph-bft
 [docs-image]: https://docs.rs/aleph-bft/badge.svg

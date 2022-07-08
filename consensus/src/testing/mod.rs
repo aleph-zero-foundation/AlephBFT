@@ -78,12 +78,12 @@ pub fn spawn_honest_member(
     let unit_saver = Saver::new(saved_state.clone());
     let local_io = LocalIO::new(data_provider, finalization_handler, unit_saver, unit_loader);
     let member_task = async move {
-        let keybox = Keychain::new(n_members, node_index);
+        let keychain = Keychain::new(n_members, node_index);
         run_session(
             config,
             local_io,
             network,
-            keybox,
+            keychain,
             spawner_inner.clone(),
             exit_rx,
         )

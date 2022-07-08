@@ -1,6 +1,6 @@
 use crate::crypto::{PartialMultisignature, Signature};
 use aleph_bft_types::{
-    Index, KeyBox as KeychainT, MultiKeychain as MultiKeychainT, NodeCount, NodeIndex,
+    Index, Keychain as KeychainT, MultiKeychain as MultiKeychainT, NodeCount, NodeIndex,
     PartialMultisignature as PartialMultisignatureT, SignatureSet,
 };
 use async_trait::async_trait;

@@ -19,14 +19,14 @@ struct MaliciousMember<'a> {
     threshold: NodeCount,
     session_id: SessionId,
     forking_round: Round,
-    keybox: &'a Keychain,
+    keychain: &'a Keychain,
     network: Network,
     unit_store: HashMap<UnitCoord, SignedUnit<'a, Hasher64, Data, Keychain>>,
 }
 
 impl<'a> MaliciousMember<'a> {
     fn new(
-        keybox: &'a Keychain,
+        keychain: &'a Keychain,
         network: Network,
         node_ix: NodeIndex,
         n_members: NodeCount,
@@ -40,7 +40,7 @@ impl<'a> MaliciousMember<'a> {
             threshold,
             session_id,
             forking_round,
-            keybox,
+            keychain,
             network,
             unit_store: HashMap::new(),
         }
@@ -110,7 +110,7 @@ impl<'a> MaliciousMember<'a> {
             let new_preunit = PreUnit::<Hasher64>::new(self.node_ix, round, control_hash);
             if round != self.forking_round {
                 let full_unit = FullUnit::new(new_preunit, 0, self.session_id);
-                let signed_unit = Signed::sign(full_unit, self.keybox).await;
+                let signed_unit = Signed::sign(full_unit, self.keychain).await;
                 self.on_unit_received(signed_unit.clone());
                 self.send_legit_unit(signed_unit);
             } else {
@@ -119,7 +119,7 @@ impl<'a> MaliciousMember<'a> {
                 let mut variants = Vec::new();
                 for data in 0u32..2u32 {
                     let full_unit = FullUnit::new(new_preunit.clone(), data, self.session_id);
-                    let signed = Signed::sign(full_unit, self.keybox).await;
+                    let signed = Signed::sign(full_unit, self.keychain).await;
                     variants.push(signed);
                 }
                 self.send_two_variants(variants[0].clone(), variants[1].clone());
@@ -141,7 +141,7 @@ impl<'a> MaliciousMember<'a> {
         // We ignore all messages except those carrying new units.
         if let NetworkDataT(Units(NewUnit(unchecked))) = data {
             trace!(target: "malicious-member", "New unit received {:?}.", &unchecked);
-            match unchecked.check(self.keybox) {
+            match unchecked.check(self.keychain) {
                 Ok(su) => self.on_unit_received(su),
                 Err(unchecked) => {
                     panic!("Wrong signature received {:?}.", &unchecked);
@@ -182,10 +182,10 @@ fn spawn_malicious_member(
 ) -> (oneshot::Sender<()>, TaskHandle) {
     let (exit_tx, exit_rx) = oneshot::channel();
     let member_task = async move {
-        let keybox = Keychain::new(n_members, node_index);
+        let keychain = Keychain::new(n_members, node_index);
         let session_id = 0u64;
         let lesniak = MaliciousMember::new(
-            &keybox,
+            &keychain,
             network,
             node_index,
             n_members,

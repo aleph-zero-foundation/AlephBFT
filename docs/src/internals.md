@@ -16,7 +16,7 @@ To explain the inner workings of AlephBFT it is instructive to follow the path o
 
 The creator produces units according to the AlephBFT protocol rules. It will wait until the prespecified delay has passed and attempt to create a unit using a maximal number of parents. If it is not possible yet, it will wait till the first moment enough parents are available. After creating the last unit, the creator stops producing new ones, although this is never expected to happen during correct execution.
 
-Since the creator does not have access to the `DataIO` object and to the `KeyBox` it is not able to create the unit "fully", for this reason it only chooses parents, the rest is filled by the `Runway`.
+Since the creator does not have access to the `DataIO` object and to the `Keychain` it is not able to create the unit "fully", for this reason it only chooses parents, the rest is filled by the `Runway`.
 
 ### 5.2 Unit Store in Runway
 

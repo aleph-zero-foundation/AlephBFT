@@ -1,7 +1,7 @@
 use crate::{
     runway::Request,
     units::{UncheckedSignedUnit, ValidationError, Validator},
-    Data, Hasher, KeyBox, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Signable,
+    Data, Hasher, Keychain, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Signable,
     Signature, SignatureError, UncheckedSigned,
 };
 use codec::{Decode, Encode};
@@ -128,7 +128,7 @@ pub enum Status {
 
 /// Initial unit collection to figure out at which round we should start unit production.
 /// Unfortunately this isn't quite BFT, but it's good enough in many situations.
-pub struct Collection<'a, MK: KeyBox> {
+pub struct Collection<'a, MK: Keychain> {
     keychain: &'a MK,
     validator: &'a Validator<'a, MK>,
     collected_starting_rounds: NodeMap<Round>,
@@ -136,7 +136,7 @@ pub struct Collection<'a, MK: KeyBox> {
     salt: Salt,
 }
 
-impl<'a, MK: KeyBox> Collection<'a, MK> {
+impl<'a, MK: Keychain> Collection<'a, MK> {
     /// Create a new collection instance ready to collect responses.
     /// The returned salt should be used to initiate newest unit requests.
     pub fn new(
@@ -212,7 +212,7 @@ impl<'a, MK: KeyBox> Collection<'a, MK> {
 }
 
 /// A runnable wrapper around initial unit collection.
-pub struct IO<'a, H: Hasher, D: Data, MK: KeyBox> {
+pub struct IO<'a, H: Hasher, D: Data, MK: Keychain> {
     round_for_creator: oneshot::Sender<Round>,
     responses_from_network:
         Receiver<UncheckedSigned<NewestUnitResponse<H, D, MK::Signature>, MK::Signature>>,
@@ -220,7 +220,7 @@ pub struct IO<'a, H: Hasher, D: Data, MK: KeyBox> {
     collection: Collection<'a, MK>,
 }
 
-impl<'a, H: Hasher, D: Data, MK: KeyBox> IO<'a, H, D, MK> {
+impl<'a, H: Hasher, D: Data, MK: Keychain> IO<'a, H, D, MK> {
     /// Create the IO instance for the specified collection and channels associated with it.
     pub fn new(
         round_for_creator: oneshot::Sender<Round>,

@@ -3,7 +3,7 @@ use aleph_bft::{
     NetworkData, NodeCount, NodeIndex, Recipient, SpawnHandle, TaskHandle,
 };
 use aleph_bft_mock::{
-    Data, DataProvider, FinalizationHandler, Hasher64, Keychain as KeyBox, Loader, NetworkHook,
+    Data, DataProvider, FinalizationHandler, Hasher64, Keychain, Loader, NetworkHook,
     PartialMultisignature, Router, Saver, Signature,
 };
 use codec::{Decode, Encode, IoReader};
@@ -207,7 +207,7 @@ pub fn spawn_honest_member_with_config(
     spawner: impl SpawnHandle + Sync,
     config: Config,
     network: impl 'static + NetworkT<FuzzNetworkData>,
-    mk: KeyBox,
+    mk: Keychain,
 ) -> (oneshot::Sender<()>, UReceiver<Data>) {
     let units = Arc::new(Mutex::new(vec![]));
     let unit_loader = Loader::new((*units.lock()).clone());
@@ -403,10 +403,10 @@ async fn execute_generate_fuzz<'a, W: Write + Send + 'static>(
     let mut batch_rxs = Vec::new();
     let mut exits = Vec::new();
     for (network, _) in networks.into_iter().take(threshold) {
-        let keybox = KeyBox::new(NodeCount(n_members), network.index());
+        let keychain = Keychain::new(NodeCount(n_members), network.index());
         let config = gen_config(network.index(), n_members.into());
         let (exit_tx, batch_rx) =
-            spawn_honest_member_with_config(spawner.clone(), config, network, keybox);
+            spawn_honest_member_with_config(spawner.clone(), config, network, keychain);
         exits.push(exit_tx);
         batch_rxs.push(batch_rx);
     }
@@ -439,9 +439,9 @@ async fn execute_fuzz(
 
     let spawner = Spawner::new(&config.delay_config);
     let node_index = NodeIndex(0);
-    let keybox = KeyBox::new(NodeCount(n_members), node_index);
+    let keychain = Keychain::new(NodeCount(n_members), node_index);
     let (exit_tx, mut batch_rx) =
-        spawn_honest_member_with_config(spawner.clone(), config, network, keybox);
+        spawn_honest_member_with_config(spawner.clone(), config, network, keychain);
 
     let (n_batches, batches_expected) = {
         if let Some(batches) = n_batches {

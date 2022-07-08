@@ -1,6 +1,6 @@
 use crate::{
     units::{FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit},
-    Data, Hasher, KeyBox, NodeCount, Round, SessionId, Signature, SignatureError,
+    Data, Hasher, Keychain, NodeCount, Round, SessionId, Signature, SignatureError,
 };
 use std::{
     fmt::{Display, Formatter, Result as FmtResult},
@@ -56,20 +56,20 @@ impl<H: Hasher, D: Data, S: Signature> From<SignatureError<FullUnit<H, D>, S>>
     }
 }
 
-pub struct Validator<'a, KB: KeyBox> {
+pub struct Validator<'a, K: Keychain> {
     session_id: SessionId,
-    keychain: &'a KB,
+    keychain: &'a K,
     max_round: Round,
     threshold: NodeCount,
 }
 
-type Result<'a, H, D, KB> =
-    StdResult<SignedUnit<'a, H, D, KB>, ValidationError<H, D, <KB as KeyBox>::Signature>>;
+type Result<'a, H, D, K> =
+    StdResult<SignedUnit<'a, H, D, K>, ValidationError<H, D, <K as Keychain>::Signature>>;
 
-impl<'a, KB: KeyBox> Validator<'a, KB> {
+impl<'a, K: Keychain> Validator<'a, K> {
     pub fn new(
         session_id: SessionId,
-        keychain: &'a KB,
+        keychain: &'a K,
         max_round: Round,
         threshold: NodeCount,
     ) -> Self {
@@ -83,8 +83,8 @@ impl<'a, KB: KeyBox> Validator<'a, KB> {
 
     pub fn validate_unit<H: Hasher, D: Data>(
         &self,
-        uu: UncheckedSignedUnit<H, D, KB::Signature>,
-    ) -> Result<'a, H, D, KB> {
+        uu: UncheckedSignedUnit<H, D, K::Signature>,
+    ) -> Result<'a, H, D, K> {
         let su = uu.check(self.keychain)?;
         let full_unit = su.as_signable();
         if full_unit.session_id() != self.session_id {
@@ -100,8 +100,8 @@ impl<'a, KB: KeyBox> Validator<'a, KB> {
 
     fn validate_unit_parents<H: Hasher, D: Data>(
         &self,
-        su: SignedUnit<'a, H, D, KB>,
-    ) -> Result<'a, H, D, KB> {
+        su: SignedUnit<'a, H, D, K>,
+    ) -> Result<'a, H, D, K> {
         // NOTE: at this point we cannot validate correctness of the control hash, in principle it could be
         // just a random hash, but we still would not be able to deduce that by looking at the unit only.
         let pre_unit = su.as_signable().as_pre_unit();

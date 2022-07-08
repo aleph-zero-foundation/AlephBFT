@@ -514,17 +514,17 @@ mod tests {
         let mut data = TestData::new(node_count, &keychains, |_, _| true);
 
         let bad_hash: Signable = "65".into();
-        let bad_keybox: BadSigning<Keychain> = Keychain::new(node_count, 0.into()).into();
+        let bad_keychain: BadSigning<Keychain> = Keychain::new(node_count, 0.into()).into();
         let bad_msg = TestMessage::SignedHash(
-            Signed::sign_with_index(bad_hash.clone(), &bad_keybox)
+            Signed::sign_with_index(bad_hash.clone(), &bad_keychain)
                 .await
                 .into(),
         );
         data.network.broadcast_message(bad_msg);
         let bad_msg = TestMessage::MultisignedHash(
-            Signed::sign_with_index(bad_hash.clone(), &bad_keybox)
+            Signed::sign_with_index(bad_hash.clone(), &bad_keychain)
                 .await
-                .into_partially_multisigned(&bad_keybox)
+                .into_partially_multisigned(&bad_keychain)
                 .into_unchecked(),
         );
         data.network.broadcast_message(bad_msg);

@@ -5,7 +5,7 @@ mod signature;
 
 pub use node::{Index, NodeCount, NodeIndex, NodeMap, NodeSubset};
 pub use signature::{
-    IncompleteMultisignatureError, Indexed, KeyBox, MultiKeychain, Multisigned,
+    IncompleteMultisignatureError, Indexed, Keychain, MultiKeychain, Multisigned,
     PartialMultisignature, PartiallyMultisigned, Signable, Signature, SignatureError, SignatureSet,
     Signed, UncheckedSigned,
 };

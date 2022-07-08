@@ -5,7 +5,7 @@ mod network;
 mod tasks;
 
 pub use aleph_bft_crypto::{
-    IncompleteMultisignatureError, Index, Indexed, KeyBox, MultiKeychain, Multisigned, NodeCount,
+    IncompleteMultisignatureError, Index, Indexed, Keychain, MultiKeychain, Multisigned, NodeCount,
     NodeIndex, NodeMap, NodeSubset, PartialMultisignature, PartiallyMultisigned, Signable,
     Signature, SignatureError, SignatureSet, Signed, UncheckedSigned,
 };

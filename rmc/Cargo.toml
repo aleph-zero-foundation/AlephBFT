@@ -1,6 +1,6 @@
 [package]
 name = "aleph-bft-rmc"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 authors = ["Cardinal Cryptography"]
 categories = ["algorithms", "cryptography"]
@@ -13,7 +13,7 @@ readme = "./README.md"
 description = "Reliable MultiCast - a primitive for Reliable Broadcast protocol."
 
 [dependencies]
-aleph-bft-crypto = { path = "../crypto", version = "0.3" }
+aleph-bft-crypto = { path = "../crypto", version = "0.4" }
 async-trait = "0.1"
 codec = { package = "parity-scale-codec", version = "3.0", default-features = false, features = ["derive"] }
 futures = "0.3"
