@@ -180,7 +180,7 @@
 </ol>
 <h3 id="51-creator"><a class="header" href="#51-creator">5.1 Creator</a></h3>
 <p>The creator produces units according to the AlephBFT protocol rules. It will wait until the prespecified delay has passed and attempt to create a unit using a maximal number of parents. If it is not possible yet, it will wait till the first moment enough parents are available. After creating the last unit, the creator stops producing new ones, although this is never expected to happen during correct execution.</p>
-<p>Since the creator does not have access to the <code>DataIO</code> object and to the <code>KeyBox</code> it is not able to create the unit &quot;fully&quot;, for this reason it only chooses parents, the rest is filled by the <code>Runway</code>.</p>
+<p>Since the creator does not have access to the <code>DataIO</code> object and to the <code>Keychain</code> it is not able to create the unit &quot;fully&quot;, for this reason it only chooses parents, the rest is filled by the <code>Runway</code>.</p>
 <h3 id="52-unit-store-in-runway"><a class="header" href="#52-unit-store-in-runway">5.2 Unit Store in Runway</a></h3>
 <p>As mentioned, the idea is that this stores only legit units and passes them to the <code>Terminal</code>. In case a fork is detected by a node <code>i</code>, all <code>i</code>'s units are attached to the appropriate alert.</p>
 <h3 id="53-terminal"><a class="header" href="#53-terminal">5.3 Terminal</a></h3>
