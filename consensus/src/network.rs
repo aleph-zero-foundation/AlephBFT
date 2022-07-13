@@ -23,38 +23,10 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> NetworkDataInn
 }
 
 /// NetworkData is the opaque format for all data that a committee member needs to send to other nodes.
-#[derive(Clone, Debug)]
+#[derive(Encode, Decode, Clone, Debug)]
 pub struct NetworkData<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature>(
     pub(crate) NetworkDataInner<H, D, S, MS>,
 );
-
-impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> Encode
-    for NetworkData<H, D, S, MS>
-{
-    fn size_hint(&self) -> usize {
-        self.0.size_hint()
-    }
-
-    fn encode_to<T: codec::Output + ?Sized>(&self, dest: &mut T) {
-        self.0.encode_to(dest)
-    }
-
-    fn encode(&self) -> Vec<u8> {
-        self.0.encode()
-    }
-
-    fn using_encoded<R, F: FnOnce(&[u8]) -> R>(&self, f: F) -> R {
-        self.0.using_encoded(f)
-    }
-}
-
-impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> Decode
-    for NetworkData<H, D, S, MS>
-{
-    fn decode<I: codec::Input>(input: &mut I) -> Result<Self, codec::Error> {
-        Ok(Self(NetworkDataInner::decode(input)?))
-    }
-}
 
 impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> NetworkData<H, D, S, MS> {
     /// Returns all the Data in the network message that might end up in the ordering as a result
