@@ -3,12 +3,12 @@ use crate::{
     consensus,
     member::UnitMessage,
     units::{
-        ControlHash, FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit, Unit, UnitCoord,
-        UnitStore, UnitStoreStatus, Validator,
+        ControlHash, PreUnit, SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore,
+        UnitStoreStatus, Validator,
     },
     Config, Data, DataProvider, FinalizationHandler, Hasher, Index, MultiKeychain, NodeCount,
-    NodeIndex, NodeMap, Receiver, Recipient, Round, Sender, SessionId, Signature, Signed,
-    SpawnHandle, UncheckedSigned,
+    NodeIndex, NodeMap, Receiver, Recipient, Round, Sender, Signature, Signed, SpawnHandle,
+    UncheckedSigned,
 };
 use futures::{
     channel::{mpsc, oneshot},
@@ -28,11 +28,13 @@ use std::{
 
 mod backup;
 mod collection;
+mod packer;
 
 use backup::{UnitLoader, UnitSaver};
 #[cfg(feature = "initial_unit_collection")]
 use collection::{Collection, IO as CollectionIO};
 pub use collection::{NewestUnitResponse, Salt};
+use packer::Packer;
 
 /// Type for incoming notifications: Runway to Consensus.
 #[derive(Clone, Eq, PartialEq)]
@@ -113,18 +115,16 @@ impl<H: Hasher, D: Data, S: Signature> TryFrom<UnitMessage<H, D, S>>
     }
 }
 
-struct Runway<'a, H, D, US, DP, FH, MK>
+struct Runway<'a, H, D, US, FH, MK>
 where
     H: Hasher,
     D: Data,
     US: Write,
-    DP: DataProvider<D>,
     FH: FinalizationHandler<D>,
     MK: MultiKeychain,
 {
     missing_coords: HashSet<UnitCoord>,
     missing_parents: HashSet<H::Hash>,
-    session_id: SessionId,
     store: UnitStore<'a, H, D, MK>,
     keychain: &'a MK,
     validator: &'a Validator<'a, MK>,
@@ -138,9 +138,10 @@ where
     tx_consensus: Sender<NotificationIn<H>>,
     rx_consensus: Receiver<NotificationOut<H>>,
     ordered_batch_rx: Receiver<Vec<H::Hash>>,
-    data_provider: DP,
     finalization_handler: FH,
     unit_saver: UnitSaver<US, H, D, MK::Signature>,
+    preunits_for_packer: Sender<PreUnit<H>>,
+    signed_units_from_packer: Receiver<SignedUnit<'a, H, D, MK>>,
     exiting: bool,
 }
 
@@ -186,16 +187,14 @@ impl<'a, H: Hasher> fmt::Display for RunwayStatus<'a, H> {
 }
 
 struct RunwayConfig<
+    'a,
     H: Hasher,
     D: Data,
     US: Write,
-    DP: DataProvider<D>,
     FH: FinalizationHandler<D>,
     MK: MultiKeychain,
 > {
-    session_id: SessionId,
     max_round: Round,
-    data_provider: DP,
     finalization_handler: FH,
     unit_saver: UnitSaver<US, H, D, MK::Signature>,
     alerts_for_alerter: Sender<Alert<H, D, MK::Signature>>,
@@ -208,27 +207,26 @@ struct RunwayConfig<
         Sender<UncheckedSigned<NewestUnitResponse<H, D, MK::Signature>, MK::Signature>>,
     ordered_batch_rx: Receiver<Vec<H::Hash>>,
     resolved_requests: Sender<Request<H>>,
+    preunits_for_packer: Sender<PreUnit<H>>,
+    signed_units_from_packer: Receiver<SignedUnit<'a, H, D, MK>>,
 }
 
-impl<'a, H, D, US, DP, FH, MK> Runway<'a, H, D, US, DP, FH, MK>
+impl<'a, H, D, US, FH, MK> Runway<'a, H, D, US, FH, MK>
 where
     H: Hasher,
     D: Data,
     US: Write,
-    DP: DataProvider<D>,
     FH: FinalizationHandler<D>,
     MK: MultiKeychain,
 {
     fn new(
-        config: RunwayConfig<H, D, US, DP, FH, MK>,
+        config: RunwayConfig<'a, H, D, US, FH, MK>,
         keychain: &'a MK,
         validator: &'a Validator<'a, MK>,
     ) -> Self {
         let n_members = keychain.node_count();
         let RunwayConfig {
-            session_id,
             max_round,
-            data_provider,
             finalization_handler,
             unit_saver,
             alerts_for_alerter,
@@ -240,6 +238,8 @@ where
             responses_for_collection,
             ordered_batch_rx,
             resolved_requests,
+            preunits_for_packer,
+            signed_units_from_packer,
         } = config;
         let store = UnitStore::new(n_members, max_round);
 
@@ -257,11 +257,11 @@ where
             tx_consensus,
             rx_consensus,
             ordered_batch_rx,
-            data_provider,
             finalization_handler,
             unit_saver,
             responses_for_collection,
-            session_id,
+            preunits_for_packer,
+            signed_units_from_packer,
             exiting: false,
         }
     }
@@ -524,11 +524,8 @@ where
         }
     }
 
-    async fn on_create(&mut self, u: PreUnit<H>) {
+    fn on_packed(&mut self, signed_unit: SignedUnit<'a, H, D, MK>) {
         debug!(target: "AlephBFT-runway", "{:?} On create notification.", self.index());
-        let data = self.data_provider.get_data().await;
-        let full_unit = FullUnit::new(u, data, self.session_id);
-        let signed_unit = Signed::sign(full_unit, self.keychain).await;
         self.save_unit(signed_unit.clone().into());
         self.store.add_unit(signed_unit, false);
     }
@@ -550,10 +547,13 @@ where
         }
     }
 
-    async fn on_consensus_notification(&mut self, notification: NotificationOut<H>) {
+    fn on_consensus_notification(&mut self, notification: NotificationOut<H>) {
         match notification {
             NotificationOut::CreatedPreUnit(pu, _) => {
-                self.on_create(pu).await;
+                if self.preunits_for_packer.unbounded_send(pu).is_err() {
+                    warn!(target: "AlephBFT-runway", "{:?} preunits_for_packer channel should be open", self.index());
+                    self.exiting = true;
+                }
             }
             NotificationOut::MissingUnits(coords) => {
                 self.on_missing_coords(coords);
@@ -617,7 +617,7 @@ where
         }
     }
 
-    async fn on_ordered_batch(&mut self, batch: Vec<H::Hash>) {
+    fn on_ordered_batch(&mut self, batch: Vec<H::Hash>) {
         let data_iter: Vec<_> = batch
             .iter()
             .map(|h| {
@@ -631,7 +631,7 @@ where
             .collect();
 
         for d in data_iter {
-            self.finalization_handler.data_finalized(d).await;
+            self.finalization_handler.data_finalized(d);
         }
     }
 
@@ -698,11 +698,19 @@ where
         loop {
             futures::select! {
                 notification = self.rx_consensus.next() => match notification {
-                        Some(notification) => self.on_consensus_notification(notification).await,
-                        None => {
-                            error!(target: "AlephBFT-runway", "{:?} Consensus notification stream closed.", index);
-                            break;
-                        }
+                    Some(notification) => self.on_consensus_notification(notification),
+                    None => {
+                        error!(target: "AlephBFT-runway", "{:?} Consensus notification stream closed.", index);
+                        break;
+                    }
+                },
+
+                signed_unit = self.signed_units_from_packer.next() => match signed_unit {
+                    Some(signed_unit) => self.on_packed(signed_unit),
+                    None => {
+                        error!(target: "AlephBFT-runway", "{:?} Packer stream closed.", index);
+                        break;
+                    }
                 },
 
                 notification = self.notifications_from_alerter.next() => match notification {
@@ -736,7 +744,7 @@ where
                 },
 
                 batch = self.ordered_batch_rx.next() => match batch {
-                    Some(batch) => self.on_ordered_batch(batch).await,
+                    Some(batch) => self.on_ordered_batch(batch),
                     None => {
                         error!(target: "AlephBFT-runway", "{:?} Ordered batch stream closed.", index);
                         break;
@@ -966,9 +974,10 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
         unit_saver,
         ..
     } = runway_io;
+    let (preunits_for_packer, preunits_from_runway) = mpsc::unbounded();
+    let (signed_units_for_runway, signed_units_from_packer) = mpsc::unbounded();
 
     let runway_config = RunwayConfig {
-        data_provider,
         finalization_handler,
         unit_saver,
         alerts_for_alerter,
@@ -980,13 +989,25 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
         ordered_batch_rx,
         responses_for_collection,
         resolved_requests: network_io.resolved_requests,
-        session_id: config.session_id,
         max_round: config.max_round,
+        preunits_for_packer,
+        signed_units_from_packer,
     };
     let (runway_exit, exit_stream) = oneshot::channel();
     let runway = Runway::new(runway_config, &keychain, &validator);
     let runway_handle = runway.run(loaded_units_rx, exit_stream).fuse();
     pin_mut!(runway_handle);
+
+    let (packer_exit, exit_stream) = oneshot::channel();
+    let mut packer = Packer::new(
+        data_provider,
+        preunits_from_runway,
+        signed_units_for_runway,
+        &keychain,
+        config.session_id,
+    );
+    let packer_handle = packer.run(exit_stream).fuse();
+    pin_mut!(packer_handle);
 
     loop {
         futures::select! {
@@ -1000,6 +1021,10 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
             },
             _ = consensus_handle => {
                 debug!(target: "AlephBFT-runway", "{:?} Consensus task terminated early.", index);
+                break;
+            },
+            _ = packer_handle => {
+                debug!(target: "AlephBFT-runway", "{:?} Packer task terminated early.", index);
                 break;
             },
             _ = starting_round_handle => {
@@ -1022,6 +1047,16 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
             warn!(target: "AlephBFT-runway", "{:?} Consensus finished with an error", index);
         }
         debug!(target: "AlephBFT-runway", "{:?} Consensus stopped.", index);
+    }
+
+    if packer_exit.send(()).is_err() {
+        debug!(target: "AlephBFT-runway", "{:?} Packer already stopped.", index);
+    }
+    if !packer_handle.is_terminated() {
+        if let Err(()) = packer_handle.await {
+            warn!(target: "AlephBFT-runway", "{:?} Packer finished with an error", index);
+        }
+        debug!(target: "AlephBFT-runway", "{:?} Packer stopped.", index);
     }
 
     if alerter_exit.send(()).is_err() {

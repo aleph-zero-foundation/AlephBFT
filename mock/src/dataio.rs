@@ -1,6 +1,6 @@
 use aleph_bft_types::{DataProvider as DataProviderT, FinalizationHandler as FinalizationHandlerT};
 use async_trait::async_trait;
-use futures::channel::mpsc::unbounded;
+use futures::{channel::mpsc::unbounded, future::pending};
 use log::error;
 use parking_lot::Mutex;
 use std::{
@@ -32,13 +32,28 @@ impl DataProviderT<Data> for DataProvider {
     }
 }
 
+#[derive(Default)]
+pub struct StalledDataProvider {}
+
+impl StalledDataProvider {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+#[async_trait]
+impl DataProviderT<Data> for StalledDataProvider {
+    async fn get_data(&mut self) -> Data {
+        pending().await
+    }
+}
+
 pub struct FinalizationHandler {
     tx: Sender<Data>,
 }
 
-#[async_trait]
 impl FinalizationHandlerT<Data> for FinalizationHandler {
-    async fn data_finalized(&mut self, d: Data) {
+    fn data_finalized(&mut self, d: Data) {
         if let Err(e) = self.tx.unbounded_send(d) {
             error!(target: "finalization-handler", "Error when sending data from FinalizationHandler {:?}.", e);
         }

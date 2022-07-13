@@ -1,20 +1,22 @@
 #!/bin/bash
 
 usage() {
-    echo "Usage: ./run.sh [-n N_NODES] [-m N_MALFUNCTIONING_NODES] [-c N_CRASHES] [-o N_ORDERED_PER_CRASH] [-d RESTART_DELAY]"
+    echo "Usage: ./run.sh [-n N_NODES] [-m N_MALFUNCTIONING_NODES] [-s N_STALLING_DATA_PROVIDERS] [-c N_CRASHES] [-o N_ORDERED_PER_CRASH] [-d RESTART_DELAY]"
     exit 1
 }
 
 N_NODES=2
 N_MALFUNCTIONING_NODES=2
+N_STALLING_DATA_PROVIDERS=1
 N_CRASHES=3
 N_ORDERED_PER_CRASH=25
 RESTART_DELAY=1
 
-while getopts :n:m:c:o:d: flag; do
+while getopts :n:m:s:c:o:d: flag; do
     case "${flag}" in
         n) N_NODES=${OPTARG};;
         m) N_MALFUNCTIONING_NODES=${OPTARG};;
+        s) N_STALLING_DATA_PROVIDERS=${OPTARG};;
         c) N_CRASHES=${OPTARG};;
         o) N_ORDERED_PER_CRASH=${OPTARG};;
         d) RESTART_DELAY=${OPTARG};;
@@ -23,6 +25,7 @@ while getopts :n:m:c:o:d: flag; do
 done
 
 n_ordered=$(( (N_CRASHES+1)*N_ORDERED_PER_CRASH ))
+stalled=$(seq -s, 0 $((N_STALLING_DATA_PROVIDERS-1)))
 port=10000
 ports="$port"
 for i in $(seq 0 $(expr $N_NODES + $N_MALFUNCTIONING_NODES - 2)); do
@@ -43,14 +46,14 @@ run_crash_node () {
     n_data=$N_ORDERED_PER_CRASH
     for (( i = 1; i <= N_CRASHES; i++ )); do
         echo "Starting node $id at $n_starting items ($i/$((N_CRASHES+1)))..."
-        ! "$binary" --id "$id" --ports "$ports" --n-data "$n_data" --n-starting "$n_starting" --crash 2>> "node${id}.log"
+        ! "$binary" --id "$id" --ports "$ports" --n-data "$n_data" --n-starting "$n_starting" --stalled "$stalled" --crash 2>> "node${id}.log"
         echo "Node $id crashed. Respawning in $RESTART_DELAY seconds..."
         sleep "$RESTART_DELAY"
         n_starting=$n_data
         n_data=$(( n_data + N_ORDERED_PER_CRASH ))
     done
     echo "Starting node $id at $n_starting items ($((N_CRASHES+1))/$((N_CRASHES+1)))..."
-    "$binary" --id "$id" --ports "$ports" --n-data "$n_data" --n-starting "$n_starting" 2>> "node${id}.log"
+    "$binary" --id "$id" --ports "$ports" --n-data "$n_data" --n-starting "$n_starting" --stalled "$stalled" 2>> "node${id}.log"
 }
 
 for id in $(seq 0 $(expr $N_NODES + $N_MALFUNCTIONING_NODES - 1)); do
@@ -76,6 +79,7 @@ the restart delay.
 PARAMETERS
 number of nodes: $N_NODES
 number of malfunctioning nodes: $N_MALFUNCTIONING_NODES
+number of nodes with stalling DataProviders: $N_STALLING_DATA_PROVIDERS
 number of forced crashes: $N_CRASHES
 number of ordered data per crash: $N_ORDERED_PER_CRASH
 restart delay: $RESTART_DELAY second(s)
@@ -83,7 +87,7 @@ restart delay: $RESTART_DELAY second(s)
 
 for id in $(seq 0 $(expr $N_NODES - 1)); do
     echo "Starting node ${id}..."
-    "$binary" --id "$id" --ports "$ports" --n-data "$n_ordered" 2>> "node${id}.log" &
+    "$binary" --id "$id" --ports "$ports" --n-data "$n_ordered" --stalled "$stalled" 2>> "node${id}.log" &
 done
 
 for i in $(seq $(expr $N_NODES) $(expr $N_NODES + $N_MALFUNCTIONING_NODES - 1)); do

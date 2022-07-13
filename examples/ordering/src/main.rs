@@ -31,6 +31,10 @@ struct Args {
     #[clap(default_value = "0", long, value_parser)]
     n_starting: u32,
 
+    /// Indices of nodes having stalling DataProviders
+    #[clap(default_value = "", long, value_parser, value_delimiter = ',')]
+    stalled: Vec<usize>,
+
     /// Should the node crash after finalizing its items
     #[clap(long, value_parser)]
     crash: bool,
@@ -86,8 +90,10 @@ async fn main() {
         ports,
         n_data,
         n_starting,
+        stalled,
         crash,
     } = Args::parse();
+    let stalled = stalled.contains(&id);
     let id: NodeIndex = id.into();
 
     info!("Getting network up.");
@@ -95,7 +101,7 @@ async fn main() {
         .await
         .expect("Could not create a Network instance.");
     let n_members = ports.len().into();
-    let data_provider = DataProvider::new(id, n_starting, n_data - n_starting);
+    let data_provider = DataProvider::new(id, n_starting, n_data - n_starting, stalled);
     let (finalization_handler, mut finalized_rx) = FinalizationHandler::new();
     let (backup_saver, backup_loader) = create_backup(id).expect("Error setting up unit saving");
     let local_io = aleph_bft::LocalIO::new(

@@ -16,9 +16,8 @@ pub trait DataProvider<Data> {
 ///
 /// The [`FinalizationHandler::data_finalized`] method is called whenever a piece of data input to the algorithm
 /// using [`DataProvider::get_data`] has been finalized, in order of finalization.
-#[async_trait]
 pub trait FinalizationHandler<Data> {
     /// Data, provided by [DataProvider::get_data], has been finalized.
     /// The calls to this function follow the order of finalization.
-    async fn data_finalized(&mut self, data: Data);
+    fn data_finalized(&mut self, data: Data);
 }

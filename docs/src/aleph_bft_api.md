@@ -18,7 +18,7 @@ The FinalizationHandler trait is an abstraction for a component that should hand
 
 ```rust
 pub trait FinalizationHandler<Data> {
-    async fn data_finalized(&mut self, data: Data);
+    fn data_finalized(&mut self, data: Data);
 }
 ```
 
