@@ -356,11 +356,11 @@ That being said, there are <strong>practical</strong> issues when it comes to de
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>pub trait DataProvider&lt;Data&gt; {
-    async fn get_data(&amp;mut self) -&gt; Data;
+    async fn get_data(&amp;mut self) -&gt; Option&lt;Data&gt;;
 }
 <span class="boring">}
 </span></code></pre></pre>
-<p>AlephBFT internally calls <code>get_data()</code> whenever a new unit is created and data needs to be placed inside.</p>
+<p>AlephBFT internally calls <code>get_data()</code> whenever a new unit is created and data needs to be placed inside. If no data is currently available, the method should return <code>None</code> immediately to prevent halting unit creation.</p>
 <p>The FinalizationHandler trait is an abstraction for a component that should handle finalized items. Same as <code>DataProvider</code> is parametrized with a <code>Data</code> generic type.</p>
 <pre><pre class="playground"><code class="language-rust">
 <span class="boring">#![allow(unused)]
@@ -370,7 +370,7 @@ That being said, there are <strong>practical</strong> issues when it comes to de
 }
 <span class="boring">}
 </span></code></pre></pre>
-<p>Calls to function <code>data_finalized</code> represent the order of the units that AlephBft produced.</p>
+<p>Calls to function <code>data_finalized</code> represent the order of the units that AlephBFT produced and that hold some data.</p>
 <h4 id="312-network"><a class="header" href="#312-network">3.1.2 Network.</a></h4>
 <p>The Network trait defines the functionality we expect the network layer to satisfy and is quite straightforward:</p>
 <pre><pre class="playground"><code class="language-rust">
@@ -422,7 +422,7 @@ That being said, there are <strong>practical</strong> issues when it comes to de
 <p>We start by defining the <code>Data</code> type: this will be simply <code>Hash</code> representing the block hash in our blockchain. Subsequently, we implement <code>get_data</code> (note that we use pseudocode instead of Rust, for clarity)</p>
 <pre><code>def get_data():
 	let B be the tip of the longest chain extending from the most recently finalized block
-	return hash(B)
+	return Some(hash(B))
 </code></pre>
 <p>This is simply the hash of the block the node thinks is the current &quot;tip&quot;.</p>
 <p>Using the <code>included_data</code> method of <code>NetworkData</code> we can filter incoming network messages in our implementation of <code>Network</code>. The code handling incoming network messages could be</p>
@@ -465,7 +465,7 @@ That being said, there are <strong>practical</strong> issues when it comes to de
 	while tx_pool.not_empty() and tx_list.len() &lt; 100:
 		tx = tx_pool.pop()
 		tx_list.append(tx)
-	return tx_list
+	return Some(tx_list)
 </code></pre>
 <p>We simply fetch at most 100 transactions from the local pool and return such a list of transactions.</p>
 <pre><code>def data_finalized(tx_list):
