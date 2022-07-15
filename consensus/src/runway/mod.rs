@@ -620,7 +620,7 @@ where
     fn on_ordered_batch(&mut self, batch: Vec<H::Hash>) {
         let data_iter: Vec<_> = batch
             .iter()
-            .map(|h| {
+            .filter_map(|h| {
                 self.store
                     .unit_by_hash(h)
                     .expect("Ordered units must be in store")

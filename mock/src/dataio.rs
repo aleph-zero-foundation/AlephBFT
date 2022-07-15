@@ -15,20 +15,36 @@ pub type Data = u32;
 
 #[derive(Default)]
 pub struct DataProvider {
-    counter: u32,
+    counter: usize,
+    n_data: Option<usize>,
 }
 
 impl DataProvider {
     pub fn new() -> Self {
-        Self { counter: 0 }
+        Self {
+            counter: 0,
+            n_data: None,
+        }
+    }
+
+    pub fn new_finite(n_data: usize) -> Self {
+        Self {
+            counter: 0,
+            n_data: Some(n_data),
+        }
     }
 }
 
 #[async_trait]
 impl DataProviderT<Data> for DataProvider {
-    async fn get_data(&mut self) -> Data {
+    async fn get_data(&mut self) -> Option<Data> {
         self.counter += 1;
-        self.counter
+        if let Some(n_data) = self.n_data {
+            if n_data < self.counter {
+                return None;
+            }
+        }
+        Some(self.counter as u32)
     }
 }
 
@@ -43,7 +59,7 @@ impl StalledDataProvider {
 
 #[async_trait]
 impl DataProviderT<Data> for StalledDataProvider {
-    async fn get_data(&mut self) -> Data {
+    async fn get_data(&mut self) -> Option<Data> {
         pending().await
     }
 }

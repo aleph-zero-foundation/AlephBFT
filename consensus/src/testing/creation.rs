@@ -17,7 +17,7 @@ type FullUnit = GenericFullUnit<Hasher64, Data>;
 type NotificationOut = GenericNotificationOut<Hasher64>;
 
 fn preunit_to_unit(preunit: PreUnit) -> Unit {
-    FullUnit::new(preunit, 0, 0).unit()
+    FullUnit::new(preunit, Some(0), 0).unit()
 }
 
 struct TestController {

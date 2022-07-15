@@ -8,11 +8,11 @@ The DataProvider trait is an abstraction for a component that provides data item
 
 ```rust
 pub trait DataProvider<Data> {
-    async fn get_data(&mut self) -> Data;
+    async fn get_data(&mut self) -> Option<Data>;
 }
 ```
 
-AlephBFT internally calls `get_data()` whenever a new unit is created and data needs to be placed inside.
+AlephBFT internally calls `get_data()` whenever a new unit is created and data needs to be placed inside. If no data is currently available, the method should return `None` immediately to prevent halting unit creation.
 
 The FinalizationHandler trait is an abstraction for a component that should handle finalized items. Same as `DataProvider` is parametrized with a `Data` generic type.
 
@@ -22,7 +22,7 @@ pub trait FinalizationHandler<Data> {
 }
 ```
 
-Calls to function `data_finalized` represent the order of the units that AlephBft produced.
+Calls to function `data_finalized` represent the order of the units that AlephBFT produced and that hold some data.
 
 
 #### 3.1.2 Network.
@@ -92,7 +92,7 @@ We start by defining the `Data` type: this will be simply `Hash` representing th
 ```
 def get_data():
 	let B be the tip of the longest chain extending from the most recently finalized block
-	return hash(B)
+	return Some(hash(B))
 ```
 
 This is simply the hash of the block the node thinks is the current "tip".
@@ -153,7 +153,7 @@ def get_data():
 	while tx_pool.not_empty() and tx_list.len() < 100:
 		tx = tx_pool.pop()
 		tx_list.append(tx)
-	return tx_list
+	return Some(tx_list)
 ```
 
 We simply fetch at most 100 transactions from the local pool and return such a list of transactions.

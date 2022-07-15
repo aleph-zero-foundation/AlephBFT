@@ -67,7 +67,7 @@ impl<H: Hasher, D: Data, S: Signature> NewestUnitResponse<H, D, S> {
     /// The data included in this message, i.e. contents of the unit if any.
     pub fn included_data(&self) -> Vec<D> {
         match &self.unit {
-            Some(u) => vec![u.as_signable().data().clone()],
+            Some(u) => u.as_signable().included_data(),
             None => Vec::new(),
         }
     }
@@ -363,7 +363,7 @@ mod tests {
         session_id: SessionId,
         keychain: &Keychain,
     ) -> UncheckedSignedUnit {
-        let full_unit = FullUnit::new(pu, 0, session_id);
+        let full_unit = FullUnit::new(pu, Some(0), session_id);
         let signed_unit = Signed::sign(full_unit, keychain).await;
         signed_unit.into()
     }

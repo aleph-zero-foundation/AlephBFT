@@ -114,7 +114,7 @@ impl TestCase {
                     self.keychain(NodeIndex(0)).node_count(),
                 )),
             ),
-            variant,
+            Some(variant),
             0,
         )
     }

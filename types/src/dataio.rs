@@ -9,7 +9,7 @@ use async_trait::async_trait;
 #[async_trait]
 pub trait DataProvider<Data> {
     /// Outputs a new data item to be ordered
-    async fn get_data(&mut self) -> Data;
+    async fn get_data(&mut self) -> Option<Data>;
 }
 
 /// The source of finalization of the units that consensus produces.

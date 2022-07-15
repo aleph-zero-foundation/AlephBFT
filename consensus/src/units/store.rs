@@ -218,7 +218,7 @@ mod tests {
             round,
             ControlHash::new(&NodeMap::with_size(count)),
         );
-        let full_unit = FullUnit::new(preunit, 0, session_id);
+        let full_unit = FullUnit::new(preunit, Some(0), session_id);
         Signed::sign(full_unit, keychain).await
     }
 

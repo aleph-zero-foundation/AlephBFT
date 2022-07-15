@@ -26,7 +26,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "aleph-bft-mock",
  "aleph-bft-rmc",
@@ -63,7 +63,7 @@ dependencies = [
  "aleph-bft",
  "aleph-bft-mock",
  "async-trait",
- "clap 3.2.11",
+ "clap 3.2.12",
  "env_logger",
  "futures",
  "futures-timer",
@@ -84,7 +84,7 @@ dependencies = [
  "aleph-bft-mock",
  "aleph-bft-types",
  "async-trait",
- "clap 3.2.11",
+ "clap 3.2.12",
  "env_logger",
  "futures",
  "log",
@@ -115,7 +115,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft-mock"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "aleph-bft-types",
  "async-trait",
@@ -144,7 +144,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft-types"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "aleph-bft-crypto",
  "async-trait",
@@ -295,9 +295,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "3.2.11"
+version = "3.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d646c7ade5eb07c4aa20e907a922750df0c448892513714fd3e4acbc7130829f"
+checksum = "ab8b79fe3946ceb4a0b1c080b4018992b8d27e9ff363644c1c9b6387c854614d"
 dependencies = [
  "atty",
  "bitflags",
@@ -1113,10 +1113,11 @@ checksum = "42657b1a6f4d817cda8e7a0ace261fe0cc946cf3a80314390b22cc61ae080792"
 
 [[package]]
 name = "tokio"
-version = "1.19.2"
+version = "1.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c51a52ed6686dd62c320f9b89299e9dfb46f730c7a48e635c19f21d116cb1439"
+checksum = "57aec3cfa4c296db7255446efb4928a6be304b431a806216105542a67b6ca82e"
 dependencies = [
+ "autocfg",
  "bytes",
  "libc",
  "memchr",

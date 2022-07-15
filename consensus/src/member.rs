@@ -51,13 +51,13 @@ pub(crate) enum UnitMessage<H: Hasher, D: Data, S: Signature> {
 impl<H: Hasher, D: Data, S: Signature> UnitMessage<H, D, S> {
     pub(crate) fn included_data(&self) -> Vec<D> {
         match self {
-            Self::NewUnit(uu) => vec![uu.as_signable().data().clone()],
+            Self::NewUnit(uu) => uu.as_signable().included_data(),
             Self::RequestCoord(_, _) => Vec::new(),
-            Self::ResponseCoord(uu) => vec![uu.as_signable().data().clone()],
+            Self::ResponseCoord(uu) => uu.as_signable().included_data(),
             Self::RequestParents(_, _) => Vec::new(),
             Self::ResponseParents(_, units) => units
                 .iter()
-                .map(|uu| uu.as_signable().data().clone())
+                .flat_map(|uu| uu.as_signable().included_data())
                 .collect(),
             UnitMessage::RequestNewest(_, _) => Vec::new(),
             UnitMessage::ResponseNewest(response) => response.as_signable().included_data(),

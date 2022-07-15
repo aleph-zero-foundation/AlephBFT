@@ -109,7 +109,7 @@ impl<'a> MaliciousMember<'a> {
             let control_hash = ControlHash::<Hasher64>::new(&parents);
             let new_preunit = PreUnit::<Hasher64>::new(self.node_ix, round, control_hash);
             if round != self.forking_round {
-                let full_unit = FullUnit::new(new_preunit, 0, self.session_id);
+                let full_unit = FullUnit::new(new_preunit, Some(0), self.session_id);
                 let signed_unit = Signed::sign(full_unit, self.keychain).await;
                 self.on_unit_received(signed_unit.clone());
                 self.send_legit_unit(signed_unit);
@@ -118,7 +118,7 @@ impl<'a> MaliciousMember<'a> {
                 debug!(target: "malicious-member", "Creating forks for round {}.", round);
                 let mut variants = Vec::new();
                 for data in 0u32..2u32 {
-                    let full_unit = FullUnit::new(new_preunit.clone(), data, self.session_id);
+                    let full_unit = FullUnit::new(new_preunit.clone(), Some(data), self.session_id);
                     let signed = Signed::sign(full_unit, self.keychain).await;
                     variants.push(signed);
                 }

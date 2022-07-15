@@ -115,7 +115,7 @@ impl<H: Hasher> PreUnit<H> {
 #[derivative(PartialEq, Eq, Hash)]
 pub struct FullUnit<H: Hasher, D: Data> {
     pre_unit: PreUnit<H>,
-    data: D,
+    data: Option<D>,
     session_id: SessionId,
     #[codec(skip)]
     #[derivative(PartialEq = "ignore")]
@@ -136,7 +136,7 @@ impl<H: Hasher, D: Data> Clone for FullUnit<H, D> {
 }
 
 impl<H: Hasher, D: Data> FullUnit<H, D> {
-    pub(crate) fn new(pre_unit: PreUnit<H>, data: D, session_id: SessionId) -> Self {
+    pub(crate) fn new(pre_unit: PreUnit<H>, data: Option<D>, session_id: SessionId) -> Self {
         FullUnit {
             pre_unit,
             data,
@@ -159,8 +159,11 @@ impl<H: Hasher, D: Data> FullUnit<H, D> {
     pub(crate) fn coord(&self) -> UnitCoord {
         self.pre_unit.coord
     }
-    pub(crate) fn data(&self) -> &D {
+    pub(crate) fn data(&self) -> &Option<D> {
         &self.data
+    }
+    pub(crate) fn included_data(&self) -> Vec<D> {
+        self.data.iter().cloned().collect()
     }
     pub(crate) fn session_id(&self) -> SessionId {
         self.session_id
@@ -238,7 +241,12 @@ mod tests {
     fn test_full_unit_hash_is_correct() {
         let ch = ControlHash::<Hasher64>::new(&vec![].into());
         let pre_unit = PreUnit::new(NodeIndex(5), 6, ch);
-        let full_unit = FullUnit::new(pre_unit, 7, 8);
+        let full_unit = FullUnit::new(pre_unit, Some(7), 8);
+        let hash = full_unit.using_encoded(Hasher64::hash);
+        assert_eq!(full_unit.hash(), hash);
+        let ch = ControlHash::<Hasher64>::new(&vec![].into());
+        let pre_unit = PreUnit::new(NodeIndex(5), 6, ch);
+        let full_unit = FullUnit::new(pre_unit, None, 8);
         let hash = full_unit.using_encoded(Hasher64::hash);
         assert_eq!(full_unit.hash(), hash);
     }
@@ -256,7 +264,14 @@ mod tests {
     fn test_full_unit_codec() {
         let ch = ControlHash::<Hasher64>::new(&vec![].into());
         let pre_unit = PreUnit::new(NodeIndex(5), 6, ch);
-        let full_unit = FullUnit::new(pre_unit, 7, 8);
+        let full_unit = FullUnit::new(pre_unit, Some(7), 8);
+        full_unit.hash();
+        let encoded = full_unit.encode();
+        let decoded = FullUnit::decode(&mut encoded.as_slice()).expect("should decode correctly");
+        assert_eq!(decoded, full_unit);
+        let ch = ControlHash::<Hasher64>::new(&vec![].into());
+        let pre_unit = PreUnit::new(NodeIndex(5), 6, ch);
+        let full_unit = FullUnit::new(pre_unit, None, 8);
         full_unit.hash();
         let encoded = full_unit.encode();
         let decoded = FullUnit::decode(&mut encoded.as_slice()).expect("should decode correctly");

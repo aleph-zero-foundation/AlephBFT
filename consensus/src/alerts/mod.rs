@@ -84,7 +84,7 @@ impl<H: Hasher, D: Data, S: Signature> Alert<H, D, S> {
         // Only legit units might end up in the DAG, we can ignore the fork proof.
         self.legit_units
             .iter()
-            .map(|uu| uu.as_signable().data().clone())
+            .filter_map(|uu| uu.as_signable().data().clone())
             .collect()
     }
 }
@@ -524,7 +524,7 @@ mod tests {
         n_members: NodeCount,
         node_id: NodeIndex,
         round: Round,
-        variant: u32,
+        variant: Option<u32>,
     ) -> FullUnit<Hasher64, Data> {
         FullUnit::new(
             PreUnit::new(
@@ -544,8 +544,8 @@ mod tests {
         round: Round,
         n_members: NodeCount,
     ) -> TestForkProof {
-        let unit_0 = full_unit(n_members, node_id, round, 0);
-        let unit_1 = full_unit(n_members, node_id, round, 1);
+        let unit_0 = full_unit(n_members, node_id, round, Some(0));
+        let unit_1 = full_unit(n_members, node_id, round, Some(1));
         let signed_unit_0 = Signed::sign(unit_0, keychain).await.into_unchecked();
         let signed_unit_1 = Signed::sign(unit_1, keychain).await.into_unchecked();
         (signed_unit_0, signed_unit_1)
@@ -655,9 +655,12 @@ mod tests {
                 session_id: 0,
             },
         );
-        let valid_unit = Signed::sign(full_unit(n_members, alerter_index, 0, 0), &alerter_keychain)
-            .await
-            .into_unchecked();
+        let valid_unit = Signed::sign(
+            full_unit(n_members, alerter_index, 0, Some(0)),
+            &alerter_keychain,
+        )
+        .await
+        .into_unchecked();
         let wrong_fork_proof = (valid_unit.clone(), valid_unit);
         let wrong_alert = Alert::new(forker_index, wrong_fork_proof.clone(), vec![]);
         let signed_wrong_alert = Signed::sign(wrong_alert, &forker_keychain)
@@ -916,8 +919,8 @@ mod tests {
             },
         );
         let fork_proof = {
-            let unit_0 = full_unit(n_members, NodeIndex(6), 0, 0);
-            let unit_1 = full_unit(n_members, NodeIndex(5), 0, 0);
+            let unit_0 = full_unit(n_members, NodeIndex(6), 0, Some(0));
+            let unit_1 = full_unit(n_members, NodeIndex(5), 0, Some(0));
             let signed_unit_0 = Signed::sign(unit_0, &keychains[6]).await.into_unchecked();
             let signed_unit_1 = Signed::sign(unit_1, &keychains[5]).await.into_unchecked();
             (signed_unit_0, signed_unit_1)
@@ -940,8 +943,8 @@ mod tests {
             },
         );
         let fork_proof = {
-            let unit_0 = full_unit(n_members, forker_index, 0, 0);
-            let unit_1 = full_unit(n_members, forker_index, 1, 0);
+            let unit_0 = full_unit(n_members, forker_index, 0, Some(0));
+            let unit_1 = full_unit(n_members, forker_index, 1, Some(0));
             let signed_unit_0 = Signed::sign(unit_0, &forker_keychain)
                 .await
                 .into_unchecked();
@@ -985,8 +988,8 @@ mod tests {
         let fork_proof = if good_commitment {
             make_fork_proof(forker_index, &keychains[forker_index.0], 0, n_members).await
         } else {
-            let unit_0 = full_unit(n_members, forker_index, 0, 0);
-            let unit_1 = full_unit(n_members, forker_index, 1, 1);
+            let unit_0 = full_unit(n_members, forker_index, 0, Some(0));
+            let unit_1 = full_unit(n_members, forker_index, 1, Some(1));
             let signed_unit_0 = Signed::sign(unit_0, &keychains[forker_index.0])
                 .await
                 .into_unchecked();
