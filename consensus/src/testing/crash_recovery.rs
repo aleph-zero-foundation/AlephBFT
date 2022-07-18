@@ -10,7 +10,8 @@ use futures::{
     StreamExt,
 };
 use parking_lot::Mutex;
-use std::{collections::HashMap, sync::Arc};
+use serial_test::serial;
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 struct NodeData {
     batch_rx: mpsc::UnboundedReceiver<Data>,
@@ -19,13 +20,32 @@ struct NodeData {
     handle: TaskHandle,
     saved_units: Arc<Mutex<Vec<u8>>>,
     batches: Vec<Data>,
-    batches_from_reconnected: Vec<Data>,
 }
 
 impl NodeData {
-    async fn receive(&mut self) {
+    /// Receives the next unit finalized by this node if one is ready and appends it to `batches`.
+    /// Returns `Some(batch)` if a unit is ready, otherwise `None`.
+    fn try_receive(&mut self) -> Option<Data> {
+        match self.batch_rx.try_next() {
+            Ok(Some(batch)) => {
+                self.batches.push(batch);
+                Some(batch)
+            }
+            _ => None,
+        }
+    }
+
+    /// Receives the next unit finalized by this node. Appends it to `batches` and returns it.
+    async fn receive(&mut self) -> Data {
         let batch = self.batch_rx.next().await.unwrap();
         self.batches.push(batch);
+        batch
+    }
+
+    /// Kills this node.
+    async fn kill(self) {
+        let _ = self.exit_tx.send(());
+        let _ = self.handle.await;
     }
 }
 
@@ -49,11 +69,17 @@ fn connect_nodes(
                     handle,
                     saved_units,
                     batches: vec![],
-                    batches_from_reconnected: vec![],
                 },
             )
         })
         .collect()
+}
+
+/// Kill all of the nodes in `node_data`.
+async fn shutdown(mut node_data: HashMap<NodeIndex, NodeData>) {
+    for (_, data) in node_data.drain() {
+        data.kill().await;
+    }
 }
 
 async fn reconnect_nodes(
@@ -86,21 +112,33 @@ async fn reconnect_nodes(
                 handle,
                 saved_units,
                 batches: vec![],
-                batches_from_reconnected: vec![],
             },
         ));
     }
     reconnected_nodes
 }
 
-async fn crashed_nodes_recover(
-    n_members: NodeCount,
-    n_kill: NodeCount,
-    n_batches: usize,
-    n_batches_upper_bound: usize,
-    _network_reliability: f64,
-) {
+/// Tests that finalization continues after some nodes restart.
+///
+/// Performs the following steps:
+///
+/// 1. Spawns `n_members` nodes.
+/// 2. Waits for at least `n_members * n_batches` items to be finalized.
+/// 3. Kills _more than f nodes_ (where `n_members = 3 * f + 1`). This should cause finalization to
+///    stop.
+/// 4. Notes the list of finalized items.
+/// 5. Restarts the killed nodes.
+/// 6. Checks that (after some time) at least twice as many items are finalized and that all nodes
+///    finalized the same items.
+///
+/// The reason it kills more than f nodes is that we want to check that (at least some of) the
+/// restarted nodes take part in finalization. As it stands, the system does not guarantee that a
+/// restarted node will ever catch up, so if less than `f` nodes are restarted, the restarted nodes
+/// might never be actually needed to finalize anything.
+async fn crashed_nodes_recover(n_members: NodeCount, n_batches: usize) {
     init_log();
+
+    let n_kill = n_members / 3 + 1.into();
     let spawner = Spawner::new();
     let (net_hub, networks) = Router::new(n_members, 1.0);
     spawner.spawn("network-hub", net_hub);
@@ -130,65 +168,38 @@ async fn crashed_nodes_recover(
         killed.insert(NodeIndex(i), (reconnect_tx, (*saved_units.lock()).clone()));
     }
 
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    for (_, data) in node_data.iter_mut() {
+        while data.try_receive().is_some() {}
+    }
+
+    let finalized_before_kill = node_data
+        .values()
+        .map(|x| &x.batches)
+        .max_by(|x, y| x.len().cmp(&y.len()))
+        .unwrap()
+        .clone();
+
     for (node_id, data) in reconnect_nodes(&spawner, n_members, &killed).await {
         node_data.insert(node_id, data);
     }
 
-    for (ix, data) in node_data.iter_mut() {
-        if n_kill.into_range().contains(ix) {
-            for _ in 0..n_batches * n_members.0 {
-                data.receive().await;
-            }
+    for (_, data) in node_data.iter_mut() {
+        while data.batches.len() < 2 * finalized_before_kill.len() {
+            data.receive().await;
         }
     }
 
-    let expected_batches = &node_data
-        .get(&NodeIndex(0))
-        .expect("should contain node")
-        .batches;
-    for (ix, data) in node_data.iter().skip(1) {
+    let expected_batches = &node_data[&NodeIndex(0)].batches;
+    for (ix, data) in node_data.iter() {
         assert_eq!((ix, expected_batches), (ix, &data.batches));
-    }
-
-    for data in node_data.values_mut() {
-        for _ in 0..n_batches_upper_bound * n_members.0 {
-            let batch = data.batch_rx.next().await.unwrap();
-            if batch <= n_batches as u32 {
-                data.batches_from_reconnected.push(batch);
-            }
-            data.batches.push(batch);
-            if data.batches_from_reconnected.len() == n_kill.0 * n_batches {
-                break;
-            }
-        }
-    }
-
-    let expected_batches = &node_data
-        .get(&NodeIndex(0))
-        .expect("should contain node")
-        .batches;
-    let expected_batches_from_reconnected = &node_data
-        .get(&NodeIndex(0))
-        .expect("should contain node")
-        .batches_from_reconnected;
-    for (ix, data) in node_data.iter().skip(1) {
-        assert_eq!((ix, expected_batches), (ix, &data.batches));
-        assert_eq!(
-            (ix, n_kill.0 * n_batches),
-            (ix, data.batches_from_reconnected.len())
-        );
-        assert_eq!(
-            (ix, expected_batches_from_reconnected),
-            (ix, &data.batches_from_reconnected)
-        );
     }
 
     for (ix, (_, saved_units_before)) in killed {
         let buf = &mut &saved_units_before[..];
         let mut counter = 0;
         while !buf.is_empty() {
-            let u = UncheckedSignedUnit::<Hasher64, Data, Signature>::decode(buf)
-                .expect("should be correct");
+            let u = UncheckedSignedUnit::<Hasher64, Data, Signature>::decode(buf).unwrap();
             let su = u.as_signable();
             let coord = su.coord();
             assert_eq!(coord.creator(), ix);
@@ -199,8 +210,7 @@ async fn crashed_nodes_recover(
 
         let buf = &mut &saved_units.lock()[..];
         while !buf.is_empty() {
-            let u = UncheckedSignedUnit::<Hasher64, Data, Signature>::decode(buf)
-                .expect("should be correct");
+            let u = UncheckedSignedUnit::<Hasher64, Data, Signature>::decode(buf).unwrap();
             let su = u.as_signable();
             let coord = su.coord();
             assert_eq!(coord.creator(), ix);
@@ -209,13 +219,11 @@ async fn crashed_nodes_recover(
         }
     }
 
-    for (_, data) in node_data.drain() {
-        let _ = data.exit_tx.send(());
-        let _ = data.handle.await;
-    }
+    shutdown(node_data).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn saves_created_units() {
     init_log();
     let n_batches = 2;
@@ -235,23 +243,16 @@ async fn saves_created_units() {
     let mut killed = HashMap::new();
 
     for (i, data) in node_data.drain() {
-        let NodeData {
-            exit_tx,
-            handle,
-            saved_units,
-            ..
-        } = data;
-        let _ = exit_tx.send(());
-        let _ = handle.await;
-        killed.insert(i, saved_units.lock().clone());
+        let saved_units = data.saved_units.lock().clone();
+        data.kill().await;
+        killed.insert(i, saved_units);
     }
 
     for (ix, saved_units) in killed {
         let buf = &mut &saved_units[..];
         let mut counter = 0;
         while !buf.is_empty() {
-            let u = UncheckedSignedUnit::<Hasher64, Data, Signature>::decode(buf)
-                .expect("should be correct");
+            let u = UncheckedSignedUnit::<Hasher64, Data, Signature>::decode(buf).unwrap();
             let su = u.as_signable();
             let coord = su.coord();
             assert_eq!(coord.creator(), ix);
@@ -261,17 +262,20 @@ async fn saves_created_units() {
     }
 }
 
-#[tokio::test]
-async fn small_node_crash_recovery_one_killed() {
-    crashed_nodes_recover(6.into(), 1.into(), 2, 500, 1.0).await;
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn small_node_crash_recovery_small() {
+    crashed_nodes_recover(7.into(), 2).await;
 }
 
-#[tokio::test]
-async fn small_node_crash_recovery_three_killed() {
-    crashed_nodes_recover(10.into(), 3.into(), 2, 500, 1.0).await;
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn small_node_crash_recovery_medium() {
+    crashed_nodes_recover(10.into(), 2).await;
 }
 
-#[tokio::test]
-async fn medium_node_crash_recovery_nine_killed() {
-    crashed_nodes_recover(28.into(), 9.into(), 2, 500, 1.0).await;
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn medium_node_crash_recovery_large() {
+    crashed_nodes_recover(28.into(), 2).await;
 }

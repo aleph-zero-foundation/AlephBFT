@@ -4,6 +4,7 @@ use crate::{
 };
 use aleph_bft_mock::{Router, Spawner};
 use futures::StreamExt;
+use serial_test::serial;
 
 async fn honest_members_agree_on_batches(
     n_members: NodeCount,
@@ -51,32 +52,38 @@ async fn honest_members_agree_on_batches(
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn small_honest_all_alive() {
     honest_members_agree_on_batches(4.into(), 4.into(), 5, 1.0).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn small_honest_one_crash() {
     honest_members_agree_on_batches(4.into(), 3.into(), 5, 1.0).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn small_honest_one_crash_unreliable_network() {
     honest_members_agree_on_batches(4.into(), 3.into(), 5, 0.9).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn medium_honest_all_alive() {
     honest_members_agree_on_batches(31.into(), 31.into(), 5, 1.0).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn medium_honest_ten_crashes() {
     honest_members_agree_on_batches(31.into(), 21.into(), 5, 1.0).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn medium_honest_ten_crashes_unreliable_network() {
     honest_members_agree_on_batches(31.into(), 21.into(), 5, 0.9).await;
 }

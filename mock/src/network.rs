@@ -200,9 +200,8 @@ impl<D: Debug> Future for Router<D> {
                         Poll::Pending => panic!(),
                     }
                 }
-                peer.tx
-                    .unbounded_send((data, sender))
-                    .expect("channel should be open");
+
+                peer.tx.unbounded_send((data, sender)).ok();
             }
         }
         if this.peers.borrow().is_empty() {

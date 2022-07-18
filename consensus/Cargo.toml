@@ -1,6 +1,6 @@
 [package]
 name = "aleph-bft"
-version = "0.17.0"
+version = "0.18.0"
 edition = "2021"
 authors = ["Cardinal Cryptography"]
 categories = ["algorithms", "data-structures", "cryptography", "database"]
@@ -29,6 +29,7 @@ rand = "0.8"
 aleph-bft-mock = { path = "../mock" }
 env_logger = "0.9"
 tokio = { version = "1.6.1", features = ["macros", "rt", "rt-multi-thread"] }
+serial_test = "*"
 
 [features]
 default = ["initial_unit_collection"]

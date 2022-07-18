@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use futures::{channel::oneshot, StreamExt};
 use log::{debug, error, trace};
 use parking_lot::Mutex;
+use serial_test::serial;
 use std::{collections::HashMap, sync::Arc};
 
 struct MaliciousMember<'a> {
@@ -309,17 +310,20 @@ async fn honest_members_agree_on_batches_byzantine(
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn small_byzantine_one_forker() {
     honest_members_agree_on_batches_byzantine(4.into(), 3.into(), 5, 1.0).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn small_byzantine_two_forkers() {
     honest_members_agree_on_batches_byzantine(7.into(), 5.into(), 5, 1.0).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn medium_byzantine_ten_forkers() {
     honest_members_agree_on_batches_byzantine(31.into(), 21.into(), 5, 1.0).await;
 }

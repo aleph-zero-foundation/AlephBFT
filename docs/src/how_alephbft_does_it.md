@@ -59,7 +59,10 @@ Note that from the pseudocode of the `creator_task` it follows that each node is
 
 #### 2.2.4 Disseminating Units.
 
-From now on we assume that whenever a unit `U` lands in a Dag `D` of an honest node `k` then all other honest nodes will eventually (maybe after some delay) receive `U` and place it in their copies of the Dag. To achieve this in practice there are several mechanisms in AlephBFT to guarantee robustness of the process of disseminating units. First of all the creator broadcasts the unit several times (with exponentially increasing delays). Secondly, there is a request-response mechanism that allows to fetch missing units from other nodes.
+From now on we assume that whenever a unit `U` lands in a Dag `D` of an honest node `k` then all other honest nodes will eventually (maybe after some delay) receive `U` and place it in their copies of the Dag. To achieve this in practice there are several mechanisms in AlephBFT to guarantee robustness of the process of disseminating units:
+1. Firstly, the creator broadcasts the unit.
+2. Secondly, all nodes periodically broadcast top known units for all other nodes. This only happens if a node didn't produce a unit for some time, because otherwise we can assume that other nodes received the newest unit in a regular broadcast.
+3. Thirdly, there is a request-response mechanism that allows nodes to fetch missing units from other nodes.
 
 ### 2.3 Computing the Ordering from Dag.
 
