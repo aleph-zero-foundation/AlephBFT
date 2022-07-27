@@ -1,11 +1,11 @@
-use futures::{channel::oneshot, StreamExt};
+use futures::StreamExt;
 use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
 use crate::{
     extender::ExtenderUnit,
     runway::{NotificationIn, NotificationOut},
     units::{ControlHash, Unit, UnitCoord},
-    Hasher, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender,
+    Hasher, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Terminator,
 };
 use log::{debug, info, trace, warn};
 
@@ -348,7 +348,7 @@ impl<H: Hasher> Terminal<H> {
         }
     }
 
-    pub(crate) async fn run(&mut self, mut exit: oneshot::Receiver<()>) {
+    pub(crate) async fn run(&mut self, mut terminator: Terminator) {
         loop {
             futures::select! {
                 n = self.ntfct_rx.next() => {
@@ -366,13 +366,14 @@ impl<H: Hasher> Terminal<H> {
                         _ => {}
                     }
                 }
-                _ = &mut exit => {
+                _ = &mut terminator.get_exit() => {
                     info!(target: "AlephBFT-terminal", "{:?} received exit signal", self.node_id);
                     self.exiting = true;
                 }
             }
             if self.exiting {
                 info!(target: "AlephBFT-terminal", "{:?} Terminal decided to exit.", self.node_id);
+                terminator.terminate_sync().await;
                 break;
             }
         }

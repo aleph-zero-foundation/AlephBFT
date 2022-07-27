@@ -11,6 +11,7 @@ mod member;
 mod network;
 mod runway;
 mod terminal;
+mod terminator;
 mod units;
 
 mod task_queue;
@@ -26,6 +27,7 @@ pub use aleph_bft_types::{
 pub use config::{default_config, exponential_slowdown, Config, DelayConfig};
 pub use member::{run_session, LocalIO};
 pub use network::NetworkData;
+pub use terminator::Terminator;
 
 type Receiver<T> = futures::channel::mpsc::UnboundedReceiver<T>;
 type Sender<T> = futures::channel::mpsc::UnboundedSender<T>;

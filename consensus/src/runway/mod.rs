@@ -8,7 +8,7 @@ use crate::{
     },
     Config, Data, DataProvider, FinalizationHandler, Hasher, Index, MultiKeychain, NodeCount,
     NodeIndex, NodeMap, Receiver, Recipient, Round, Sender, Signature, Signed, SpawnHandle,
-    UncheckedSigned,
+    Terminator, UncheckedSigned,
 };
 use futures::{
     channel::{mpsc, oneshot},
@@ -696,7 +696,7 @@ where
     async fn run(
         mut self,
         units_from_backup: oneshot::Receiver<Vec<UncheckedSignedUnit<H, D, MK::Signature>>>,
-        mut exit: oneshot::Receiver<()>,
+        mut terminator: Terminator,
     ) {
         let index = self.index();
         let units_from_backup = units_from_backup.fuse();
@@ -767,7 +767,7 @@ where
                     status_ticker = Delay::new(status_ticker_delay).fuse();
                 },
 
-                _ = &mut exit => {
+                _ = &mut terminator.get_exit() => {
                     info!(target: "AlephBFT-runway", "{:?} received exit signal", index);
                     self.exiting = true;
                 }
@@ -776,6 +776,7 @@ where
 
             if self.exiting {
                 info!(target: "AlephBFT-runway", "{:?} Runway decided to exit.", index);
+                terminator.terminate_sync().await;
                 break;
             }
         }
@@ -883,7 +884,7 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
     keychain: MK,
     spawn_handle: SH,
     network_io: NetworkIO<H, D, MK>,
-    mut exit: oneshot::Receiver<()>,
+    mut terminator: Terminator,
 ) where
     H: Hasher,
     D: Data,
@@ -904,7 +905,7 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
         session_id: config.session_id,
         n_members: config.n_members,
     };
-    let (alerter_exit, exit_stream) = oneshot::channel();
+    let alerter_terminator = terminator.add_offspring_connection("AlephBFT-alerter");
     let alerter_keychain = keychain.clone();
     let alert_messages_for_network = network_io.alert_messages_for_network;
     let alert_messages_from_network = network_io.alert_messages_from_network;
@@ -916,13 +917,13 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
             alert_notifications_for_units,
             alerts_from_units,
             alert_config,
-            exit_stream,
+            alerter_terminator,
         )
         .await;
     });
     let mut alerter_handle = alerter_handle.fuse();
 
-    let (consensus_exit, exit_stream) = oneshot::channel();
+    let consensus_terminator = terminator.add_offspring_connection("AlephBFT-consensus");
     let consensus_config = config.clone();
     let consensus_spawner = spawn_handle.clone();
     let (starting_round_sender, starting_round) = oneshot::channel();
@@ -935,7 +936,7 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
             ordered_batch_tx,
             consensus_spawner,
             starting_round,
-            exit_stream,
+            consensus_terminator,
         )
         .await
     });
@@ -1004,12 +1005,12 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
         preunits_for_packer,
         signed_units_from_packer,
     };
-    let (runway_exit, exit_stream) = oneshot::channel();
+    let runway_terminator = terminator.add_offspring_connection("AlephBFT-runway");
     let runway = Runway::new(runway_config, &keychain, &validator);
-    let runway_handle = runway.run(loaded_units_rx, exit_stream).fuse();
+    let runway_handle = runway.run(loaded_units_rx, runway_terminator).fuse();
     pin_mut!(runway_handle);
 
-    let (packer_exit, exit_stream) = oneshot::channel();
+    let packer_terminator = terminator.add_offspring_connection("AlephBFT-packer");
     let mut packer = Packer::new(
         data_provider,
         preunits_from_runway,
@@ -1017,7 +1018,7 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
         &keychain,
         config.session_id,
     );
-    let packer_handle = packer.run(exit_stream).fuse();
+    let packer_handle = packer.run(packer_terminator).fuse();
     pin_mut!(packer_handle);
 
     loop {
@@ -1044,15 +1045,35 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
             _ = backup_loading_handle => {
                 debug!(target: "AlephBFT-runway", "{:?} Backup loading task terminated.", index);
             },
-            _ = &mut exit => break,
+            _ = &mut terminator.get_exit() => {
+                break;
+            }
         }
     }
 
     info!(target: "AlephBFT-runway", "{:?} Ending run.", index);
+    let terminator_handle = terminator.terminate_sync().fuse();
+    pin_mut!(terminator_handle);
 
-    if consensus_exit.send(()).is_err() {
-        debug!(target: "AlephBFT-runway", "{:?} Consensus already stopped.", index);
+    loop {
+        futures::select! {
+            _ = runway_handle => {
+                debug!(target: "AlephBFT-runway", "{:?} Runway stopped.", index);
+            },
+
+            result = packer_handle => {
+                match result {
+                    Err(()) => warn!(target: "AlephBFT-runway", "{:?} Packer finished with an error", index),
+                    _ => debug!(target: "AlephBFT-runway", "{:?} Packer stopped.", index),
+                }
+            },
+
+            _ = terminator_handle => {},
+
+            complete => break,
+        }
     }
+
     if !consensus_handle.is_terminated() {
         if let Err(()) = consensus_handle.await {
             warn!(target: "AlephBFT-runway", "{:?} Consensus finished with an error", index);
@@ -1060,32 +1081,11 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
         debug!(target: "AlephBFT-runway", "{:?} Consensus stopped.", index);
     }
 
-    if packer_exit.send(()).is_err() {
-        debug!(target: "AlephBFT-runway", "{:?} Packer already stopped.", index);
-    }
-    if !packer_handle.is_terminated() {
-        if let Err(()) = packer_handle.await {
-            warn!(target: "AlephBFT-runway", "{:?} Packer finished with an error", index);
-        }
-        debug!(target: "AlephBFT-runway", "{:?} Packer stopped.", index);
-    }
-
-    if alerter_exit.send(()).is_err() {
-        debug!(target: "AlephBFT-runway", "{:?} Alerter already stopped.", index);
-    }
     if !alerter_handle.is_terminated() {
         if let Err(()) = alerter_handle.await {
             warn!(target: "AlephBFT-runway", "{:?} Alerter finished with an error", index);
         }
         debug!(target: "AlephBFT-runway", "{:?} Alerter stopped.", index);
-    }
-
-    if runway_exit.send(()).is_err() {
-        debug!(target: "AlephBFT-runway", "{:?} Runway already stopped.", index);
-    }
-    if !runway_handle.is_terminated() {
-        runway_handle.await;
-        debug!(target: "AlephBFT-runway", "{:?} Runway stopped.", index);
     }
 
     info!(target: "AlephBFT-runway", "{:?} Runway ended.", index);

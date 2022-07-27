@@ -1,15 +1,12 @@
 use crate::{
     units::UncheckedSignedUnit, Data, Hasher, Index, MultiKeychain, Multisigned, NodeCount,
     NodeIndex, PartialMultisignature, Receiver, Recipient, Sender, SessionId, Signable, Signature,
-    Signed, UncheckedSigned,
+    Signed, Terminator, UncheckedSigned,
 };
 use aleph_bft_rmc::{DoublingDelayScheduler, Message as RmcMessage, ReliableMulticast};
 use codec::{Decode, Encode};
 use derivative::Derivative;
-use futures::{
-    channel::{mpsc, oneshot},
-    FutureExt, StreamExt,
-};
+use futures::{channel::mpsc, FutureExt, StreamExt};
 use log::{debug, error, info, trace, warn};
 use parking_lot::RwLock;
 use std::{
@@ -410,7 +407,7 @@ pub(crate) async fn run<H: Hasher, D: Data, MK: MultiKeychain>(
     notifications_for_units: Sender<ForkingNotification<H, D, MK::Signature>>,
     alerts_from_units: Receiver<Alert<H, D, MK::Signature>>,
     config: AlertConfig,
-    mut exit: oneshot::Receiver<()>,
+    mut terminator: Terminator,
 ) {
     use self::io::IO;
 
@@ -493,13 +490,14 @@ pub(crate) async fn run<H: Hasher, D: Data, MK: MultiKeychain>(
                     io.send_notification_for_units(notification, &mut alerter.exiting);
                 }
             },
-            _ = &mut exit => {
+            _ = &mut terminator.get_exit() => {
                 info!(target: "AlephBFT-alerter", "{:?} received exit signal", alerter.index());
                 alerter.exiting = true;
             },
         }
         if alerter.exiting {
             info!(target: "AlephBFT-alerter", "{:?} Alerter decided to exit.", alerter.index());
+            terminator.terminate_sync().await;
             break;
         }
     }

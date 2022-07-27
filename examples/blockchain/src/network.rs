@@ -1,12 +1,9 @@
 use crate::{Block, Data};
-use aleph_bft::{NodeIndex, Recipient};
+use aleph_bft::{NodeIndex, Recipient, Terminator};
 use aleph_bft_mock::{Hasher64, PartialMultisignature, Signature};
 use codec::{Decode, Encode};
 use futures::{
-    channel::{
-        mpsc::{self, UnboundedReceiver, UnboundedSender},
-        oneshot,
-    },
+    channel::mpsc::{self, UnboundedReceiver, UnboundedSender},
     StreamExt,
 };
 use log::{debug, error, warn};
@@ -208,7 +205,7 @@ impl NetworkManager {
         .unwrap_or(());
     }
 
-    pub async fn run(&mut self, mut exit: oneshot::Receiver<()>) {
+    pub async fn run(&mut self, mut terminator: Terminator) {
         let mut dns_interval = tokio::time::interval(std::time::Duration::from_millis(1000));
         let mut dns_hello_interval = tokio::time::interval(std::time::Duration::from_millis(5000));
         loop {
@@ -266,7 +263,10 @@ impl NetworkManager {
                     self.send(Message::Block(block), Recipient::Everyone);
                 }
 
-               _ = &mut exit  => break,
+               _ = &mut terminator.get_exit()  => {
+                    terminator.terminate_sync().await;
+                    break;
+               },
             }
         }
     }

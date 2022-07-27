@@ -11,7 +11,7 @@ use crate::{
     extender::Extender,
     runway::{NotificationIn, NotificationOut},
     terminal::Terminal,
-    Hasher, Receiver, Round, Sender, SpawnHandle,
+    Hasher, Receiver, Round, Sender, SpawnHandle, Terminator,
 };
 
 pub(crate) async fn run<H: Hasher + 'static>(
@@ -21,7 +21,7 @@ pub(crate) async fn run<H: Hasher + 'static>(
     ordered_batch_tx: Sender<Vec<H::Hash>>,
     spawn_handle: impl SpawnHandle,
     starting_round: oneshot::Receiver<Option<Round>>,
-    mut exit: oneshot::Receiver<()>,
+    mut terminator: Terminator,
 ) {
     info!(target: "AlephBFT", "{:?} Starting all services...", conf.node_ix);
 
@@ -30,23 +30,23 @@ pub(crate) async fn run<H: Hasher + 'static>(
 
     let (electors_tx, electors_rx) = mpsc::unbounded();
     let mut extender = Extender::<H>::new(index, n_members, electors_rx, ordered_batch_tx);
-    let (extender_exit, exit_rx) = oneshot::channel();
+    let extender_terminator = terminator.add_offspring_connection("AlephBFT-extender");
     let mut extender_handle = spawn_handle
         .spawn_essential("consensus/extender", async move {
-            extender.extend(exit_rx).await
+            extender.extend(extender_terminator).await
         })
         .fuse();
 
     let (parents_for_creator, parents_from_terminal) = mpsc::unbounded();
 
-    let (creator_exit, exit_rx) = oneshot::channel();
+    let creator_terminator = terminator.add_offspring_connection("creator");
     let io = creation::IO {
         outgoing_units: outgoing_notifications.clone(),
         incoming_parents: parents_from_terminal,
     };
     let mut creator_handle = spawn_handle
         .spawn_essential("consensus/creation", async move {
-            creation::run(conf.clone().into(), io, starting_round, exit_rx).await;
+            creation::run(conf.clone().into(), io, starting_round, creator_terminator).await;
         })
         .fuse();
 
@@ -65,17 +65,16 @@ pub(crate) async fn run<H: Hasher + 'static>(
             .expect("Channel to extender should be open.")
     }));
 
-    let (terminal_exit, exit_rx) = oneshot::channel();
+    let terminal_terminator = terminator.add_offspring_connection("terminal");
     let mut terminal_handle = spawn_handle
-        .spawn_essential(
-            "consensus/terminal",
-            async move { terminal.run(exit_rx).await },
-        )
+        .spawn_essential("consensus/terminal", async move {
+            terminal.run(terminal_terminator).await
+        })
         .fuse();
     info!(target: "AlephBFT", "{:?} All services started.", index);
 
     futures::select! {
-        _ = exit => {},
+        _ = terminator.get_exit() => {},
         _ = terminal_handle => {
             debug!(target: "AlephBFT-consensus", "{:?} terminal task terminated early.", index);
         },
@@ -89,9 +88,8 @@ pub(crate) async fn run<H: Hasher + 'static>(
     info!(target: "AlephBFT", "{:?} All services stopping.", index);
 
     // we stop no matter if received Ok or Err
-    if terminal_exit.send(()).is_err() {
-        debug!(target: "AlephBFT-consensus", "{:?} terminal already stopped.", index);
-    }
+    terminator.terminate_sync().await;
+
     if !terminal_handle.is_terminated() {
         if let Err(()) = terminal_handle.await {
             warn!(target: "AlephBFT-consensus", "{:?} Terminal finished with an error", index);
@@ -99,9 +97,6 @@ pub(crate) async fn run<H: Hasher + 'static>(
         debug!(target: "AlephBFT-consensus", "{:?} terminal stopped.", index);
     }
 
-    if creator_exit.send(()).is_err() {
-        debug!(target: "AlephBFT-consensus", "{:?} creator already stopped.", index);
-    }
     if !creator_handle.is_terminated() {
         if let Err(()) = creator_handle.await {
             warn!(target: "AlephBFT-consensus", "{:?} Creator finished with an error", index);
@@ -109,9 +104,6 @@ pub(crate) async fn run<H: Hasher + 'static>(
         debug!(target: "AlephBFT-consensus", "{:?} creator stopped.", index);
     }
 
-    if extender_exit.send(()).is_err() {
-        debug!(target: "AlephBFT-consensus", "{:?} extender already stopped.", index);
-    }
     if !extender_handle.is_terminated() {
         if let Err(()) = extender_handle.await {
             warn!(target: "AlephBFT-consensus", "{:?} Extender finished with an error", index);

@@ -3,7 +3,7 @@ use crate::{
     runway::{NotificationIn, NotificationOut},
     testing::{complete_oneshot, gen_config},
     units::{ControlHash, PreUnit, Unit},
-    NodeCount, NodeIndex, NodeMap, NodeSubset, Receiver, Round, Sender, SpawnHandle,
+    NodeCount, NodeIndex, NodeMap, NodeSubset, Receiver, Round, Sender, SpawnHandle, Terminator,
 };
 use aleph_bft_mock::{Hash64, Hasher64, Spawner};
 use futures::{
@@ -139,7 +139,7 @@ async fn run_consensus_on_dag(
             batch_tx,
             spawner.clone(),
             starting_round,
-            exit_rx,
+            Terminator::create_root(exit_rx, "AlephBFT-consensus"),
         ),
     );
     spawner.spawn("feeder", feeder.run());

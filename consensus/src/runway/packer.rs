@@ -1,8 +1,9 @@
 use crate::{
     units::{FullUnit, PreUnit, SignedUnit},
     Data, DataProvider, Hasher, MultiKeychain, NodeIndex, Receiver, Sender, SessionId, Signed,
+    Terminator,
 };
-use futures::{channel::oneshot, pin_mut, FutureExt, StreamExt};
+use futures::{pin_mut, FutureExt, StreamExt};
 use log::{debug, error, info};
 use std::marker::PhantomData;
 
@@ -79,13 +80,16 @@ where
     }
 
     /// Run the main loop until receiving a signal to exit.
-    pub async fn run(&mut self, mut exit: oneshot::Receiver<()>) -> Result<(), ()> {
+    pub async fn run(&mut self, mut terminator: Terminator) -> Result<(), ()> {
         info!(target: "AlephBFT-packer", "{:?} Packer started.", self.index());
         let pack = self.pack().fuse();
         pin_mut!(pack);
         futures::select! {
             _ = pack => Err(()),
-            _ = exit => Ok(()),
+            _ = terminator.get_exit() => {
+                terminator.terminate_sync().await;
+                Ok(())
+            },
         }
     }
 }
@@ -95,7 +99,7 @@ mod tests {
     use super::Packer;
     use crate::{
         units::{ControlHash, PreUnit, SignedUnit},
-        NodeCount, NodeIndex, Receiver, Sender, SessionId,
+        NodeCount, NodeIndex, Receiver, Sender, SessionId, Terminator,
     };
     use aleph_bft_mock::{Data, DataProvider, Hasher64, Keychain, StalledDataProvider};
     use aleph_bft_types::NodeMap;
@@ -115,7 +119,7 @@ mod tests {
         Receiver<SignedUnit<Hasher64, Data, Keychain>>,
         Packer<Hasher64, Data, DataProvider, Keychain>,
         oneshot::Sender<()>,
-        oneshot::Receiver<()>,
+        Terminator,
         PreUnit<Hasher64>,
     ) {
         let data_provider = DataProvider::new();
@@ -137,7 +141,7 @@ mod tests {
             signed_units_channel,
             packer,
             exit_tx,
-            exit_rx,
+            Terminator::create_root(exit_rx, "AlephBFT-packer"),
             preunit,
         )
     }
@@ -145,9 +149,9 @@ mod tests {
     #[tokio::test]
     async fn unit_packed() {
         let keychain = Keychain::new(N_MEMBERS, NODE_ID);
-        let (preunits_channel, signed_units_channel, mut packer, _exit_tx, exit_rx, preunit) =
+        let (preunits_channel, signed_units_channel, mut packer, _exit_tx, terminator, preunit) =
             prepare(&keychain);
-        let packer_handle = packer.run(exit_rx).fuse();
+        let packer_handle = packer.run(terminator).fuse();
         preunits_channel
             .unbounded_send(preunit.clone())
             .expect("Packer PreUnit channel closed");
@@ -169,18 +173,18 @@ mod tests {
     #[tokio::test]
     async fn preunits_channel_closed() {
         let keychain = Keychain::new(N_MEMBERS, NODE_ID);
-        let (_, _signed_units_channel, mut packer, _exit_tx, exit_rx, _) = prepare(&keychain);
-        assert_eq!(packer.run(exit_rx).await, Err(()));
+        let (_, _signed_units_channel, mut packer, _exit_tx, terminator, _) = prepare(&keychain);
+        assert_eq!(packer.run(terminator).await, Err(()));
     }
 
     #[tokio::test]
     async fn signed_units_channel_closed() {
         let keychain = Keychain::new(N_MEMBERS, NODE_ID);
-        let (preunits_channel, _, mut packer, _exit_tx, exit_rx, preunit) = prepare(&keychain);
+        let (preunits_channel, _, mut packer, _exit_tx, terminator, preunit) = prepare(&keychain);
         preunits_channel
             .unbounded_send(preunit)
             .expect("Packer PreUnit channel closed");
-        assert_eq!(packer.run(exit_rx).await, Err(()));
+        assert_eq!(packer.run(terminator).await, Err(()));
     }
 
     #[tokio::test]
@@ -200,7 +204,7 @@ mod tests {
         let parent_map = NodeMap::with_size(N_MEMBERS);
         let control_hash = ControlHash::new(&parent_map);
         let preunit = PreUnit::new(NODE_ID, 0, control_hash);
-        let packer_handle = packer.run(exit_rx);
+        let packer_handle = packer.run(Terminator::create_root(exit_rx, "AlephBFT-packer"));
         for _ in 0..3 {
             preunits_channel
                 .unbounded_send(preunit.clone())

@@ -2,7 +2,7 @@ use crate::{
     config::{Config as GeneralConfig, DelaySchedule},
     runway::NotificationOut,
     units::{PreUnit, Unit},
-    Hasher, NodeCount, NodeIndex, Receiver, Round, Sender,
+    Hasher, NodeCount, NodeIndex, Receiver, Round, Sender, Terminator,
 };
 use futures::{channel::oneshot, FutureExt, StreamExt};
 use futures_timer::Delay;
@@ -92,7 +92,7 @@ pub async fn run<H: Hasher>(
     conf: Config,
     io: IO<H>,
     mut starting_round: oneshot::Receiver<Option<Round>>,
-    mut exit: oneshot::Receiver<()>,
+    mut terminator: Terminator,
 ) {
     let Config {
         node_id,
@@ -105,6 +105,7 @@ pub async fn run<H: Hasher>(
         mut incoming_parents,
         outgoing_units,
     } = io;
+
     let starting_round = futures::select! {
         maybe_round =  starting_round => match maybe_round {
             Ok(Some(round)) => round,
@@ -117,8 +118,12 @@ pub async fn run<H: Hasher>(
                 return;
             }
         },
-        _ = &mut exit => return,
+        _ = &mut terminator.get_exit() => {
+            terminator.terminate_sync().await;
+            return;
+        },
     };
+
     debug!(target: "AlephBFT-creator", "Creator starting from round {}", starting_round);
     for round in starting_round..max_round {
         // Skip waiting if someone created a unit of a higher round.
@@ -131,12 +136,13 @@ pub async fn run<H: Hasher>(
             &create_lag,
             ignore_delay,
             &mut incoming_parents,
-            &mut exit,
+            terminator.get_exit(),
         )
         .await
         {
             Ok((u, ph)) => (u, ph),
             Err(_) => {
+                terminator.terminate_sync().await;
                 return;
             }
         };
@@ -147,5 +153,6 @@ pub async fn run<H: Hasher>(
             return;
         }
     }
+
     warn!(target: "AlephBFT-creator", "Maximum round reached. Not creating another unit.");
 }

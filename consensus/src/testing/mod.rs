@@ -10,7 +10,7 @@ mod unreliable;
 
 use crate::{
     exponential_slowdown, run_session, Config, DelayConfig, LocalIO, Network as NetworkT,
-    NodeCount, NodeIndex, SpawnHandle, TaskHandle,
+    NodeCount, NodeIndex, SpawnHandle, TaskHandle, Terminator,
 };
 use aleph_bft_mock::{
     Data, DataProvider, FinalizationHandler, Hasher64, Keychain, Loader, Network as MockNetwork,
@@ -86,7 +86,7 @@ pub fn spawn_honest_member(
             network,
             keychain,
             spawner_inner.clone(),
-            exit_rx,
+            Terminator::create_root(exit_rx, "AlephBFT-member"),
         )
         .await
     };

@@ -3,7 +3,7 @@ use crate::{
     runway::{NotificationIn, NotificationOut},
     testing::{complete_oneshot, gen_config, init_log},
     units::{ControlHash, PreUnit, Unit, UnitCoord},
-    Hasher, NodeIndex, SpawnHandle,
+    Hasher, NodeIndex, SpawnHandle, Terminator,
 };
 use aleph_bft_mock::{Hasher64, Spawner};
 use codec::Encode;
@@ -176,7 +176,7 @@ async fn agree_on_first_batch() {
                 batch_tx,
                 spawner.clone(),
                 starting_round,
-                exit_rx,
+                Terminator::create_root(exit_rx, "AlephBFT-consensus"),
             ),
         ));
     }
@@ -218,7 +218,7 @@ async fn catches_wrong_control_hash() {
             batch_tx,
             spawner.clone(),
             starting_round,
-            exit_rx,
+            Terminator::create_root(exit_rx, "AlephBFT-consensus"),
         ),
     );
     let control_hash = ControlHash::new(&(vec![None; n_nodes]).into());

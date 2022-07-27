@@ -8,15 +8,12 @@ use crate::{
     task_queue::TaskQueue,
     units::{UncheckedSignedUnit, UnitCoord},
     Config, Data, DataProvider, FinalizationHandler, Hasher, MultiKeychain, Network, NodeCount,
-    NodeIndex, Receiver, Recipient, Round, Sender, Signature, SpawnHandle, UncheckedSigned,
+    NodeIndex, Receiver, Recipient, Round, Sender, Signature, SpawnHandle, Terminator,
+    UncheckedSigned,
 };
 use aleph_bft_types::NodeMap;
 use codec::{Decode, Encode};
-use futures::{
-    channel::{mpsc, oneshot},
-    future::FusedFuture,
-    pin_mut, FutureExt, StreamExt,
-};
+use futures::{channel::mpsc, future::FusedFuture, pin_mut, FutureExt, StreamExt};
 use futures_timer::Delay;
 use itertools::Itertools;
 use log::{debug, error, info, trace, warn};
@@ -466,7 +463,7 @@ where
         info!(target: "AlephBFT-member", "{}", status);
     }
 
-    async fn run(mut self, mut exit: oneshot::Receiver<()>) {
+    async fn run(mut self, mut terminator: Terminator) {
         let ticker_delay = self.config.delay_config.tick_interval;
         let mut ticker = Delay::new(ticker_delay).fuse();
         let status_ticker_delay = Duration::from_secs(10);
@@ -486,8 +483,12 @@ where
 
                 event = self.resolved_requests.next() => match event {
                     Some(request) => match request {
-                        Request::Coord(coord) => { self.not_resolved_coords.remove(&coord); },
-                        Request::Parents(u_hash) => { self.not_resolved_parents.remove(&u_hash); },
+                        Request::Coord(coord) => {
+                            self.not_resolved_coords.remove(&coord);
+                        },
+                        Request::Parents(u_hash) => {
+                            self.not_resolved_parents.remove(&u_hash);
+                        },
                         Request::NewestUnit(_) => {
                             self.newest_unit_resolved = true;
                         }
@@ -500,7 +501,9 @@ where
 
                 event = self.unit_messages_from_network.next() => match event {
                     Some(message) => match message.try_into() {
-                        Ok(notification) => self.send_notification_to_runway(notification),
+                        Ok(notification) => {
+                            self.send_notification_to_runway(notification)
+                        },
                         Err(_) => error!(target: "AlephBFT-member", "{:?} Unable to convert a UnitMessage into an instance of RunwayNotificationIn.", self.index()),
                     },
                     None => {
@@ -519,16 +522,18 @@ where
                     status_ticker = Delay::new(status_ticker_delay).fuse();
                 },
 
-                _ = &mut exit => {
+                _ = &mut terminator.get_exit() => {
                     info!(target: "AlephBFT-member", "{:?} received exit signal", self.index());
                     self.exiting = true;
                 },
             }
             if self.exiting {
                 info!(target: "AlephBFT-member", "{:?} Member decided to exit.", self.index());
+                terminator.terminate_sync().await;
                 break;
             }
         }
+
         debug!(target: "AlephBFT-member", "{:?} Member stopped.", self.index());
     }
 
@@ -565,7 +570,7 @@ pub async fn run_session<
     network: N,
     keychain: MK,
     spawn_handle: SH,
-    mut exit: oneshot::Receiver<()>,
+    mut terminator: Terminator,
 ) {
     let index = config.node_ix;
     info!(target: "AlephBFT-member", "{:?} Spawning party for a session.", index);
@@ -579,7 +584,7 @@ pub async fn run_session<
     let (resolved_requests_tx, resolved_requests_rx) = mpsc::unbounded();
 
     info!(target: "AlephBFT-member", "{:?} Spawning network.", index);
-    let (network_exit, exit_stream) = oneshot::channel();
+    let network_terminator = terminator.add_offspring_connection("AlephBFT-network");
 
     let network_handle = spawn_handle.spawn_essential("member/network", async move {
         network::run(
@@ -588,7 +593,7 @@ pub async fn run_session<
             unit_messages_for_units,
             alert_messages_from_alerter,
             alert_messages_for_alerter,
-            exit_stream,
+            network_terminator,
         )
         .await
     });
@@ -597,7 +602,7 @@ pub async fn run_session<
     info!(target: "AlephBFT-member", "{:?} Network spawned.", index);
 
     info!(target: "AlephBFT-member", "{:?} Initializing Runway.", index);
-    let (runway_exit, exit_stream) = oneshot::channel();
+    let runway_terminator = terminator.add_offspring_connection("AlephBFT-runway");
     let network_io = NetworkIO {
         alert_messages_for_network,
         alert_messages_from_network,
@@ -617,7 +622,7 @@ pub async fn run_session<
         keychain.clone(),
         spawn_handle.clone(),
         network_io,
-        exit_stream,
+        runway_terminator,
     );
     let runway_handle = runway_handle.fuse();
     pin_mut!(runway_handle);
@@ -632,8 +637,8 @@ pub async fn run_session<
         runway_messages_from_runway,
         resolved_requests_rx,
     );
-    let (member_exit, exit_stream) = oneshot::channel();
-    let member_handle = member.run(exit_stream).fuse();
+    let member_terminator = terminator.add_offspring_connection("AlephBFT-member");
+    let member_handle = member.run(member_terminator).fuse();
     pin_mut!(member_handle);
     info!(target: "AlephBFT-member", "{:?} Member initialized.", index);
 
@@ -650,31 +655,32 @@ pub async fn run_session<
             error!(target: "AlephBFT-member", "{:?} Member terminated early.", index);
         },
 
-        _ = &mut exit => {
+        _ = &mut terminator.get_exit() => {
             info!(target: "AlephBFT-member", "{:?} exit channel was called.", index);
         },
     }
 
     info!(target: "AlephBFT-member", "{:?} Run ending.", index);
-    if runway_exit.send(()).is_err() {
-        debug!(target: "AlephBFT-member", "{:?} Runway already stopped.", index);
-    }
-    if !runway_handle.is_terminated() {
-        runway_handle.await;
-        debug!(target: "AlephBFT-member", "{:?} Runway stopped.", index);
+
+    let terminator_handle = terminator.terminate_sync().fuse();
+    pin_mut!(terminator_handle);
+
+    loop {
+        futures::select! {
+            _ = runway_handle => {
+                debug!(target: "AlephBFT-member", "{:?} Runway stopped.", index);
+            },
+
+            _ = member_handle => {
+                debug!(target: "AlephBFT-member", "{:?} Member stopped.", index);
+            },
+
+            _ = terminator_handle => {}
+
+            complete => break,
+        }
     }
 
-    if member_exit.send(()).is_err() {
-        debug!(target: "AlephBFT-member", "{:?} Member already stopped.", index);
-    }
-    if !member_handle.is_terminated() {
-        member_handle.await;
-        debug!(target: "AlephBFT-member", "{:?} Member stopped.", index);
-    }
-
-    if network_exit.send(()).is_err() {
-        debug!(target: "AlephBFT-member", "{:?} Network-hub already stopped.", index);
-    }
     if !network_handle.is_terminated() {
         if let Err(()) = network_handle.await {
             warn!(target: "AlephBFT-member", "{:?} Network task stopped with an error", index);

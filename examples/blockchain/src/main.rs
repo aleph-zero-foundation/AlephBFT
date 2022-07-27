@@ -12,7 +12,7 @@ use log::{debug, error, info};
 use parking_lot::Mutex;
 use time::{macros::format_description, OffsetDateTime};
 
-use aleph_bft::{run_session, NodeIndex};
+use aleph_bft::{run_session, NodeIndex, Terminator};
 use aleph_bft_mock::{FinalizationHandler, Keychain, Loader, Saver, Spawner};
 use chain::{run_blockchain, Block, BlockNum, ChainConfig};
 use data::{Data, DataProvider, DataStore};
@@ -64,12 +64,13 @@ async fn main() {
         .format(move |buf, record| {
             writeln!(
                 buf,
-                "{} {}: {}",
+                "{} {} {}: {}",
                 record.level(),
                 OffsetDateTime::now_local()
                     .unwrap_or_else(|_| OffsetDateTime::now_utc())
                     .format(&time_format)
                     .unwrap(),
+                record.target(),
                 record.args()
             )
         })
@@ -99,8 +100,10 @@ async fn main() {
     let (finalization_handler, mut finalized_rx) = FinalizationHandler::new();
     let data_store = DataStore::new(current_block.clone(), message_for_network);
 
-    let (close_network, exit) = oneshot::channel();
-    let network_handle = tokio::spawn(async move { manager.run(exit).await });
+    let (terminator_tx, terminator_rx) = oneshot::channel();
+    let mut terminator = Terminator::create_root(terminator_rx, "Blockchain example");
+    let network_terminator = terminator.add_offspring_connection("blockchain network");
+    let network_handle = tokio::spawn(async move { manager.run(network_terminator).await });
 
     let data_size: usize = TXS_PER_BLOCK * TX_SIZE;
     let chain_config = ChainConfig::new(
@@ -110,7 +113,7 @@ async fn main() {
         BLOCK_TIME,
         INITIAL_DELAY,
     );
-    let (close_chain, exit) = oneshot::channel();
+    let chain_terminator = terminator.add_offspring_connection("chain");
     let chain_handle = tokio::spawn(async move {
         run_blockchain(
             chain_config,
@@ -119,12 +122,12 @@ async fn main() {
             block_from_network_rx,
             block_from_data_io_tx,
             message_from_network,
-            exit,
+            chain_terminator,
         )
         .await
     });
 
-    let (close_member, exit) = oneshot::channel();
+    let member_terminator = terminator.add_offspring_connection("AlephBFT-member");
     let member_handle = tokio::spawn(async move {
         let keychain = Keychain::new(args.n_members.into(), args.my_id.into());
         let config = aleph_bft::default_config(args.n_members.into(), args.my_id.into(), 0);
@@ -136,7 +139,15 @@ async fn main() {
             backup_saver,
             backup_loader,
         );
-        run_session(config, local_io, network, keychain, Spawner {}, exit).await
+        run_session(
+            config,
+            local_io,
+            network,
+            keychain,
+            Spawner {},
+            member_terminator,
+        )
+        .await
     });
 
     let mut max_block_finalized = 0;
@@ -161,10 +172,12 @@ async fn main() {
     let tot_millis = (stop_time - start_time - INITIAL_DELAY).as_millis();
     let tps = (args.n_finalized as f64) * (TXS_PER_BLOCK as f64) / (0.001 * (tot_millis as f64));
     info!(target: "Blockchain-main", "Achieved {:?} tps.", tps);
-    close_member.send(()).expect("should send");
+
+    terminator_tx.send(()).expect("should send");
+    terminator.get_exit().await.expect("should receive");
+    terminator.terminate_sync().await;
+
     member_handle.await.unwrap();
-    close_chain.send(()).expect("should send");
     chain_handle.await.unwrap();
-    close_network.send(()).expect("should send");
     network_handle.await.unwrap();
 }

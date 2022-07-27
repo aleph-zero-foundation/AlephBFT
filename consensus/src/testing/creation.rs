@@ -3,7 +3,7 @@ use crate::{
     runway::NotificationOut as GenericNotificationOut,
     testing::gen_config,
     units::{FullUnit as GenericFullUnit, PreUnit as GenericPreUnit, Unit as GenericUnit},
-    NodeCount, Receiver, Round, Sender,
+    NodeCount, Receiver, Round, Sender, Terminator,
 };
 use aleph_bft_mock::{Data, Hasher64};
 use futures::{
@@ -96,8 +96,15 @@ fn setup_test(
 
         let (killer, exit) = oneshot::channel::<()>();
 
-        let handle =
-            tokio::spawn(async move { run(config.into(), io, starting_round, exit).await });
+        let handle = tokio::spawn(async move {
+            run(
+                config.into(),
+                io,
+                starting_round,
+                Terminator::create_root(exit, "AlephBFT-creator"),
+            )
+            .await
+        });
         starting_round_for_consensus
             .send(Some(0))
             .expect("Sending the starting round should work.");

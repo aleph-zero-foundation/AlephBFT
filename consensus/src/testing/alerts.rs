@@ -2,7 +2,7 @@ use crate::{
     alerts::{run, Alert, AlertConfig, AlertMessage, ForkProof, ForkingNotification},
     units::{ControlHash, FullUnit, PreUnit},
     Index, Indexed, Keychain as _, NodeCount, NodeIndex, NodeMap, Recipient, Round, Signable,
-    Signed, UncheckedSigned,
+    Signed, Terminator, UncheckedSigned,
 };
 use aleph_bft_mock::{Data, Hasher64, Keychain, PartialMultisignature, Signature};
 use aleph_bft_rmc::Message as RmcMessage;
@@ -228,7 +228,7 @@ impl TestCase {
                 n_members,
                 session_id: 0,
             },
-            exit,
+            Terminator::create_root(exit, "AlephBFT-alerter"),
         ));
 
         use Input::*;

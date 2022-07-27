@@ -1,7 +1,7 @@
 mod dataio;
 mod network;
 
-use aleph_bft::{run_session, NodeIndex};
+use aleph_bft::{run_session, NodeIndex, Terminator};
 use aleph_bft_mock::{Keychain, Spawner};
 use clap::Parser;
 use dataio::{Data, DataProvider, FinalizationHandler};
@@ -73,12 +73,13 @@ async fn main() {
         .format(move |buf, record| {
             writeln!(
                 buf,
-                "{} {}: {}",
+                "{} {} {}: {}",
                 record.level(),
                 OffsetDateTime::now_local()
                     .unwrap_or_else(|_| OffsetDateTime::now_utc())
                     .format(&time_format)
                     .unwrap(),
+                record.target(),
                 record.args()
             )
         })
@@ -111,11 +112,20 @@ async fn main() {
         backup_loader,
     );
 
-    let (close_member, exit) = oneshot::channel();
+    let (exit_tx, exit_rx) = oneshot::channel();
+    let member_terminator = Terminator::create_root(exit_rx, "AlephBFT-member");
     let member_handle = tokio::spawn(async move {
         let keychain = Keychain::new(n_members, id);
         let config = aleph_bft::default_config(n_members, id, 0);
-        run_session(config, local_io, network, keychain, Spawner {}, exit).await
+        run_session(
+            config,
+            local_io,
+            network,
+            keychain,
+            Spawner {},
+            member_terminator,
+        )
+        .await
     });
 
     let mut count_finalized: HashMap<NodeIndex, u32> =
@@ -155,6 +165,6 @@ async fn main() {
         }
     }
 
-    close_member.send(()).expect("should send");
+    exit_tx.send(()).expect("should send");
     member_handle.await.unwrap();
 }

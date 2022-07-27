@@ -1,9 +1,9 @@
-use futures::{channel::oneshot, StreamExt};
+use futures::StreamExt;
 use std::collections::{HashMap, VecDeque};
 
 use log::{debug, info, warn};
 
-use crate::{Hasher, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender};
+use crate::{Hasher, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Terminator};
 
 pub(crate) struct ExtenderUnit<H: Hasher> {
     creator: NodeIndex,
@@ -294,7 +294,7 @@ impl<H: Hasher> Extender<H> {
         }
     }
 
-    pub(crate) async fn extend(&mut self, mut exit: oneshot::Receiver<()>) {
+    pub(crate) async fn extend(&mut self, mut terminator: Terminator) {
         loop {
             futures::select! {
                 v = self.electors.next() => {
@@ -304,13 +304,14 @@ impl<H: Hasher> Extender<H> {
                         self.progress(v_hash)
                     }
                 }
-                _ = &mut exit => {
+                _ = &mut terminator.get_exit() => {
                     info!(target: "AlephBFT-extender", "{:?} received exit signal.", self.node_id);
                     self.exiting = true;
                 }
             }
             if self.exiting {
                 info!(target: "AlephBFT-extender", "{:?} Extender decided to exit.", self.node_id);
+                terminator.terminate_sync().await;
                 break;
             }
         }
@@ -322,7 +323,7 @@ mod tests {
     use super::*;
     use crate::NodeCount;
     use aleph_bft_mock::Hasher64;
-    use futures::channel::mpsc;
+    use futures::channel::{mpsc, oneshot};
 
     fn coord_to_number(creator: NodeIndex, round: Round, n_members: NodeCount) -> u64 {
         (round as usize * n_members.0 + creator.0) as u64
@@ -356,7 +357,11 @@ mod tests {
         let (electors_tx, electors_rx) = mpsc::unbounded();
         let mut extender = Extender::<Hasher64>::new(0.into(), n_members, electors_rx, batch_tx);
         let (exit_tx, exit_rx) = oneshot::channel();
-        let extender_handle = tokio::spawn(async move { extender.extend(exit_rx).await });
+        let extender_handle = tokio::spawn(async move {
+            extender
+                .extend(Terminator::create_root(exit_rx, "AlephBFT-extender"))
+                .await
+        });
 
         for round in 0..rounds {
             for creator in n_members.into_iterator() {
