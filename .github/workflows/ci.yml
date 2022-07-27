@@ -34,7 +34,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
-          args: '--lib -- --skip medium'
+          args: '--lib'
   master:
     name: push
     if: "github.event_name == 'push'"
@@ -53,7 +53,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
-          args: '--lib -- --skip medium'
+          args: '--lib'
   lint:
     name: lint
     runs-on: ubuntu-20.04

@@ -17,3 +17,6 @@ members = [
     "fuzz"
 
 ]
+
+[profile.test]
+opt-level = 3
