@@ -1,9 +1,11 @@
 use crate::{
+    member::Task::{CoordRequest, ParentsRequest, RequestNewest, UnitBroadcast},
     network,
     runway::{
         self, NetworkIO, NewestUnitResponse, Request, Response, RunwayIO, RunwayNotificationIn,
         RunwayNotificationOut,
     },
+    task_queue::TaskQueue,
     units::{UncheckedSignedUnit, UnitCoord},
     Config, Data, DataProvider, FinalizationHandler, Hasher, MultiKeychain, Network, NodeCount,
     NodeIndex, Receiver, Recipient, Round, Sender, Signature, SpawnHandle, UncheckedSigned,
@@ -21,13 +23,11 @@ use log::{debug, error, info, trace, warn};
 use network::NetworkData;
 use rand::Rng;
 use std::{
-    cmp::Ordering,
-    collections::{BinaryHeap, HashSet},
+    collections::HashSet,
     convert::TryInto,
     fmt::{self, Debug},
     io::{Read, Write},
     marker::PhantomData,
-    time,
     time::Duration,
 };
 
@@ -80,43 +80,24 @@ enum Task<H: Hasher, D: Data, S: Signature> {
 }
 
 #[derive(Eq, PartialEq, Debug)]
-struct ScheduledTask<H: Hasher, D: Data, S: Signature> {
+struct RepeatableTask<H: Hasher, D: Data, S: Signature> {
     task: Task<H, D, S>,
-    scheduled_time: time::Instant,
-    // The number of times the task was performed so far.
     counter: usize,
 }
 
-impl<H: Hasher, D: Data, S: Signature> fmt::Display for ScheduledTask<H, D, S> {
+impl<H: Hasher, D: Data, S: Signature> fmt::Display for RepeatableTask<H, D, S> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "ScheduledTask({:?}, counter {})",
+            "RepeatableTask({:?}, counter {})",
             self.task, self.counter
         )
     }
 }
 
-impl<H: Hasher, D: Data, S: Signature> ScheduledTask<H, D, S> {
-    fn new(task: Task<H, D, S>, scheduled_time: time::Instant) -> Self {
-        ScheduledTask {
-            task,
-            scheduled_time,
-            counter: 0,
-        }
-    }
-}
-
-impl<H: Hasher, D: Data, S: Signature> Ord for ScheduledTask<H, D, S> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        // we want earlier times to come first when used in max-heap, hence the below:
-        other.scheduled_time.cmp(&self.scheduled_time)
-    }
-}
-
-impl<H: Hasher, D: Data, S: Signature> PartialOrd for ScheduledTask<H, D, S> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
+impl<H: Hasher, D: Data, S: Signature> RepeatableTask<H, D, S> {
+    fn new(task: Task<H, D, S>) -> Self {
+        Self { task, counter: 0 }
     }
 }
 
@@ -157,25 +138,15 @@ impl<D: Data, DP: DataProvider<D>, FH: FinalizationHandler<D>, US: Write, UL: Re
     }
 }
 
-struct MemberStatus<'a, H, D, S>
-where
-    H: Hasher,
-    D: Data,
-    S: Signature,
-{
-    task_queue: &'a BinaryHeap<ScheduledTask<H, D, S>>,
+struct MemberStatus<'a, H: Hasher, D: Data, S: Signature> {
+    task_queue: &'a TaskQueue<RepeatableTask<H, D, S>>,
     not_resolved_parents: &'a HashSet<H::Hash>,
     not_resolved_coords: &'a HashSet<UnitCoord>,
 }
 
-impl<'a, H, D, S> MemberStatus<'a, H, D, S>
-where
-    H: Hasher,
-    D: Data,
-    S: Signature,
-{
+impl<'a, H: Hasher, D: Data, S: Signature> MemberStatus<'a, H, D, S> {
     fn new(
-        task_queue: &'a BinaryHeap<ScheduledTask<H, D, S>>,
+        task_queue: &'a TaskQueue<RepeatableTask<H, D, S>>,
         not_resolved_parents: &'a HashSet<H::Hash>,
         not_resolved_coords: &'a HashSet<UnitCoord>,
     ) -> Self {
@@ -187,11 +158,9 @@ where
     }
 }
 
-impl<'a, H, D, S> fmt::Display for MemberStatus<'a, H, D, S>
+impl<'a, H: Hasher, D: Data, S: Signature> fmt::Display for MemberStatus<'a, H, D, S>
 where
     H: Hasher,
-    D: Data,
-    S: Signature,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut count_coord_request: usize = 0;
@@ -200,10 +169,10 @@ where
         let mut count_rebroadcast: usize = 0;
         for task in self.task_queue.iter().map(|st| &st.task) {
             match task {
-                Task::CoordRequest(_) => count_coord_request += 1,
-                Task::ParentsRequest(_, _) => count_parents_request += 1,
-                Task::RequestNewest(_) => count_request_newest += 1,
-                Task::UnitBroadcast(_) => count_rebroadcast += 1,
+                CoordRequest(_) => count_coord_request += 1,
+                ParentsRequest(_, _) => count_parents_request += 1,
+                RequestNewest(_) => count_request_newest += 1,
+                UnitBroadcast(_) => count_rebroadcast += 1,
             }
         }
         let long_time_pending_tasks: Vec<_> = self
@@ -260,7 +229,7 @@ where
     S: Signature,
 {
     config: Config,
-    task_queue: BinaryHeap<ScheduledTask<H, D, S>>,
+    task_queue: TaskQueue<RepeatableTask<H, D, S>>,
     not_resolved_parents: HashSet<H::Hash>,
     not_resolved_coords: HashSet<UnitCoord>,
     newest_unit_resolved: bool,
@@ -292,7 +261,7 @@ where
 
         Self {
             config,
-            task_queue: BinaryHeap::new(),
+            task_queue: TaskQueue::new(),
             not_resolved_parents: HashSet::new(),
             not_resolved_coords: HashSet::new(),
             newest_unit_resolved: false,
@@ -321,10 +290,9 @@ where
             .unwrap_or(true)
         {
             self.top_units.insert(unit_creator, unit_round);
-            let task = Task::UnitBroadcast(new_unit);
-            let scheduled_time = time::Instant::now() + self.delay(&task);
-            self.task_queue
-                .push(ScheduledTask::new(task, scheduled_time));
+            let task = RepeatableTask::new(UnitBroadcast(new_unit));
+            let delay = self.delay(&task.task);
+            self.task_queue.schedule_in(task, delay)
         }
     }
 
@@ -333,9 +301,9 @@ where
         if !self.not_resolved_coords.insert(coord) {
             return;
         }
-        let curr_time = time::Instant::now();
-        let task = ScheduledTask::new(Task::CoordRequest(coord), curr_time);
-        self.task_queue.push(task);
+
+        self.task_queue
+            .schedule_now(RepeatableTask::new(CoordRequest(coord)));
         self.trigger_tasks();
     }
 
@@ -343,30 +311,21 @@ where
         if !self.not_resolved_parents.insert(u_hash) {
             return;
         }
-        let curr_time = time::Instant::now();
-        let task = ScheduledTask::new(Task::ParentsRequest(u_hash, recipient), curr_time);
-        self.task_queue.push(task);
+
+        self.task_queue
+            .schedule_now(RepeatableTask::new(ParentsRequest(u_hash, recipient)));
         self.trigger_tasks();
     }
 
     fn on_request_newest(&mut self, salt: u64) {
-        let curr_time = time::Instant::now();
-        let task = ScheduledTask::new(Task::RequestNewest(salt), curr_time);
-        self.task_queue.push(task);
+        self.task_queue
+            .schedule_now(RepeatableTask::new(RequestNewest(salt)));
         self.trigger_tasks();
     }
 
-    // Pulls tasks from the priority queue (sorted by scheduled time) and sends them to random peers
-    // as long as they are scheduled at time <= curr_time
     fn trigger_tasks(&mut self) {
-        while let Some(mut request) = self.task_queue.pop() {
-            let curr_time = time::Instant::now();
-            if request.scheduled_time > curr_time {
-                self.task_queue.push(request);
-                break;
-            }
-
-            match self.task_details(&request.task, request.counter) {
+        while let Some(mut task) = self.task_queue.pop_due_task() {
+            match self.task_details(&task.task, task.counter) {
                 TaskDetails::Cancel => (),
                 TaskDetails::Perform {
                     message,
@@ -374,18 +333,18 @@ where
                     reschedule,
                 } => {
                     self.send_unit_message(message, recipient);
-                    request.scheduled_time += reschedule;
-                    request.counter += 1;
-                    self.task_queue.push(request);
+                    task.counter += 1;
+                    self.task_queue.schedule_in(task, reschedule)
                 }
             }
         }
     }
 
-    fn random_peer(&self) -> NodeIndex {
-        rand::thread_rng()
+    fn random_peer(&self) -> Recipient {
+        let node = rand::thread_rng()
             .gen_range(0..self.n_members.into())
-            .into()
+            .into();
+        Recipient::Node(node)
     }
 
     fn index(&self) -> NodeIndex {
@@ -420,10 +379,10 @@ where
 
     fn message(&self, task: &Task<H, D, S>) -> UnitMessage<H, D, S> {
         match task {
-            Task::CoordRequest(coord) => UnitMessage::RequestCoord(self.index(), *coord),
-            Task::ParentsRequest(hash, _) => UnitMessage::RequestParents(self.index(), *hash),
-            Task::UnitBroadcast(unit) => UnitMessage::NewUnit(unit.clone()),
-            Task::RequestNewest(salt) => UnitMessage::RequestNewest(self.index(), *salt),
+            CoordRequest(coord) => UnitMessage::RequestCoord(self.index(), *coord),
+            ParentsRequest(hash, _) => UnitMessage::RequestParents(self.index(), *hash),
+            UnitBroadcast(unit) => UnitMessage::NewUnit(unit.clone()),
+            RequestNewest(salt) => UnitMessage::RequestNewest(self.index(), *salt),
         }
     }
 
@@ -431,27 +390,25 @@ where
         match (self.preferred_recipient(task), counter) {
             (Recipient::Everyone, _) => Recipient::Everyone,
             (recipient, 0) => recipient,
-            (_, _) => Recipient::Node(self.random_peer()),
+            (_, _) => self.random_peer(),
         }
     }
 
     fn preferred_recipient(&self, task: &Task<H, D, S>) -> Recipient {
         match task {
-            Task::CoordRequest(coord) => Recipient::Node(coord.creator()),
-            Task::ParentsRequest(_, preferred_recipient) => preferred_recipient.clone(),
-            Task::UnitBroadcast(_) => Recipient::Everyone,
-            Task::RequestNewest(_) => Recipient::Everyone,
+            CoordRequest(coord) => Recipient::Node(coord.creator()),
+            ParentsRequest(_, preferred_recipient) => preferred_recipient.clone(),
+            UnitBroadcast(_) => Recipient::Everyone,
+            RequestNewest(_) => Recipient::Everyone,
         }
     }
 
     fn still_valid(&self, task: &Task<H, D, S>) -> bool {
         match task {
-            Task::CoordRequest(coord) => self.not_resolved_coords.contains(coord),
-            Task::ParentsRequest(hash, _preferred_recipient) => {
-                self.not_resolved_parents.contains(hash)
-            }
-            Task::RequestNewest(_) => !self.newest_unit_resolved,
-            Task::UnitBroadcast(unit) => {
+            CoordRequest(coord) => self.not_resolved_coords.contains(coord),
+            ParentsRequest(hash, _preferred_recipient) => self.not_resolved_parents.contains(hash),
+            RequestNewest(_) => !self.newest_unit_resolved,
+            UnitBroadcast(unit) => {
                 Some(&unit.as_signable().round())
                     == self.top_units.get(unit.as_signable().creator())
             }
@@ -463,7 +420,7 @@ where
     /// `unit_rebroadcast_interval_min` and `unit_rebroadcast_interval_max`.
     fn delay(&self, task: &Task<H, D, S>) -> Duration {
         match task {
-            Task::UnitBroadcast(_) => {
+            UnitBroadcast(_) => {
                 let low = self.config.delay_config.unit_rebroadcast_interval_min;
                 let high = self.config.delay_config.unit_rebroadcast_interval_max;
                 let millis = rand::thread_rng().gen_range(low.as_millis()..high.as_millis());

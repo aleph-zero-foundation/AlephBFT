@@ -13,6 +13,7 @@ mod runway;
 mod terminal;
 mod units;
 
+mod task_queue;
 #[cfg(test)]
 mod testing;
 
