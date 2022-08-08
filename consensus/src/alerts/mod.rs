@@ -163,7 +163,7 @@ struct Alerter<'a, H: Hasher, D: Data, MK: MultiKeychain> {
     session_id: SessionId,
     keychain: &'a MK,
     known_forkers: HashMap<NodeIndex, ForkProof<H, D, MK::Signature>>,
-    known_alerts: HashMap<H::Hash, Signed<'a, Alert<H, D, MK::Signature>, MK>>,
+    known_alerts: HashMap<H::Hash, Signed<Alert<H, D, MK::Signature>, MK>>,
     known_rmcs: HashMap<(NodeIndex, NodeIndex), H::Hash>,
     exiting: bool,
 }
@@ -271,7 +271,7 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
     fn rmc_alert(
         &mut self,
         forker: NodeIndex,
-        alert: Signed<'a, Alert<H, D, MK::Signature>, MK>,
+        alert: Signed<Alert<H, D, MK::Signature>, MK>,
     ) -> H::Hash {
         let hash = alert.as_signable().hash();
         self.known_rmcs
@@ -378,7 +378,7 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
     /// `alert_confirmed()` may return a `ForkingNotification`, which should be propagated
     fn alert_confirmed(
         &mut self,
-        multisigned: Multisigned<'a, H::Hash, MK>,
+        multisigned: Multisigned<H::Hash, MK>,
     ) -> Option<ForkingNotification<H, D, MK::Signature>> {
         let alert = match self.known_alerts.get(multisigned.as_signable()) {
             Some(alert) => alert.as_signable(),

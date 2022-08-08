@@ -54,17 +54,17 @@ impl<'a> fmt::Display for UnitStoreStatus<'a> {
 /// to the Terminal. We refer to the documentation https://cardinal-cryptography.github.io/AlephBFT/internals.html
 /// Section 5.4 for a discussion of this component and the notion of "legit" units.
 
-pub(crate) struct UnitStore<'a, H: Hasher, D: Data, K: Keychain> {
-    by_coord: HashMap<UnitCoord, SignedUnit<'a, H, D, K>>,
-    by_hash: HashMap<H::Hash, SignedUnit<'a, H, D, K>>,
+pub(crate) struct UnitStore<H: Hasher, D: Data, K: Keychain> {
+    by_coord: HashMap<UnitCoord, SignedUnit<H, D, K>>,
+    by_hash: HashMap<H::Hash, SignedUnit<H, D, K>>,
     parents: HashMap<H::Hash, Vec<H::Hash>>,
     //the number of unique nodes that we hold units for a given round
     is_forker: NodeSubset,
-    legit_buffer: Vec<SignedUnit<'a, H, D, K>>,
+    legit_buffer: Vec<SignedUnit<H, D, K>>,
     max_round: Round,
 }
 
-impl<'a, H: Hasher, D: Data, K: Keychain> UnitStore<'a, H, D, K> {
+impl<H: Hasher, D: Data, K: Keychain> UnitStore<H, D, K> {
     pub(crate) fn new(n_nodes: NodeCount, max_round: Round) -> Self {
         UnitStore {
             by_coord: HashMap::new(),
@@ -106,11 +106,11 @@ impl<'a, H: Hasher, D: Data, K: Keychain> UnitStore<'a, H, D, K> {
         )
     }
 
-    pub(crate) fn unit_by_coord(&self, coord: UnitCoord) -> Option<&SignedUnit<'a, H, D, K>> {
+    pub(crate) fn unit_by_coord(&self, coord: UnitCoord) -> Option<&SignedUnit<H, D, K>> {
         self.by_coord.get(&coord)
     }
 
-    pub(crate) fn unit_by_hash(&self, hash: &H::Hash) -> Option<&SignedUnit<'a, H, D, K>> {
+    pub(crate) fn unit_by_hash(&self, hash: &H::Hash) -> Option<&SignedUnit<H, D, K>> {
         self.by_hash.get(hash)
     }
 
@@ -137,12 +137,12 @@ impl<'a, H: Hasher, D: Data, K: Keychain> UnitStore<'a, H, D, K> {
     }
 
     // Outputs new legit units that are supposed to be sent to Consensus and empties the buffer.
-    pub(crate) fn yield_buffer_units(&mut self) -> Vec<SignedUnit<'a, H, D, K>> {
+    pub(crate) fn yield_buffer_units(&mut self) -> Vec<SignedUnit<H, D, K>> {
         std::mem::take(&mut self.legit_buffer)
     }
 
     // Outputs None if this is not a newly-discovered fork or Some(sv) where (su, sv) form a fork
-    pub(crate) fn is_new_fork(&self, fu: &FullUnit<H, D>) -> Option<SignedUnit<'a, H, D, K>> {
+    pub(crate) fn is_new_fork(&self, fu: &FullUnit<H, D>) -> Option<SignedUnit<H, D, K>> {
         if self.contains_hash(&fu.hash()) {
             return None;
         }
@@ -155,7 +155,7 @@ impl<'a, H: Hasher, D: Data, K: Keychain> UnitStore<'a, H, D, K> {
 
     // Marks a node as a forker and outputs all units in store created by this node.
     // The returned vector is sorted w.r.t. increasing rounds.
-    pub(crate) fn mark_forker(&mut self, forker: NodeIndex) -> Vec<SignedUnit<'a, H, D, K>> {
+    pub(crate) fn mark_forker(&mut self, forker: NodeIndex) -> Vec<SignedUnit<H, D, K>> {
         if self.is_forker[forker] {
             warn!(target: "AlephBFT-unit-store", "Trying to mark the node {:?} as forker for the second time.", forker);
         }
@@ -165,7 +165,7 @@ impl<'a, H: Hasher, D: Data, K: Keychain> UnitStore<'a, H, D, K> {
             .collect()
     }
 
-    pub(crate) fn add_unit(&mut self, su: SignedUnit<'a, H, D, K>, alert: bool) {
+    pub(crate) fn add_unit(&mut self, su: SignedUnit<H, D, K>, alert: bool) {
         let hash = su.as_signable().hash();
         let creator = su.as_signable().creator();
 
@@ -211,8 +211,8 @@ mod tests {
         node_idx: NodeIndex,
         count: NodeCount,
         session_id: u64,
-        keychain: &'_ Keychain,
-    ) -> SignedUnit<'_, Hasher64, Data, Keychain> {
+        keychain: &Keychain,
+    ) -> SignedUnit<Hasher64, Data, Keychain> {
         let preunit = PreUnit::<Hasher64>::new(
             node_idx,
             round,

@@ -559,8 +559,8 @@ pub async fn run_session<
     D: Data,
     DP: DataProvider<D>,
     FH: FinalizationHandler<D>,
-    US: Write,
-    UL: Read,
+    US: Write + Send + Sync + 'static,
+    UL: Read + Send + Sync + 'static,
     N: Network<NetworkData<H, D, MK::Signature, MK::PartialMultisignature>> + 'static,
     SH: SpawnHandle,
     MK: MultiKeychain,
@@ -586,18 +586,19 @@ pub async fn run_session<
     info!(target: "AlephBFT-member", "{:?} Spawning network.", index);
     let network_terminator = terminator.add_offspring_connection("AlephBFT-network");
 
-    let network_handle = spawn_handle.spawn_essential("member/network", async move {
-        network::run(
-            network,
-            unit_messages_from_units,
-            unit_messages_for_units,
-            alert_messages_from_alerter,
-            alert_messages_for_alerter,
-            network_terminator,
-        )
-        .await
-    });
-    let network_handle = network_handle.fuse();
+    let network_handle = spawn_handle
+        .spawn_essential("member/network", async move {
+            network::run(
+                network,
+                unit_messages_from_units,
+                unit_messages_for_units,
+                alert_messages_from_alerter,
+                alert_messages_for_alerter,
+                network_terminator,
+            )
+            .await
+        })
+        .fuse();
     pin_mut!(network_handle);
     info!(target: "AlephBFT-member", "{:?} Network spawned.", index);
 
@@ -616,17 +617,23 @@ pub async fn run_session<
         local_io.unit_saver,
         local_io.unit_loader,
     );
-    let runway_handle = runway::run(
-        config.clone(),
-        runway_io,
-        keychain.clone(),
-        spawn_handle.clone(),
-        network_io,
-        runway_terminator,
-    );
-    let runway_handle = runway_handle.fuse();
+    let spawn_copy = spawn_handle.clone();
+    let config_copy = config.clone();
+    let runway_handle = spawn_handle
+        .spawn_essential("member/runway", async move {
+            runway::run(
+                config_copy,
+                runway_io,
+                &keychain,
+                spawn_copy,
+                network_io,
+                runway_terminator,
+            )
+            .await
+        })
+        .fuse();
     pin_mut!(runway_handle);
-    info!(target: "AlephBFT-member", "{:?} Runway initialized.", index);
+    info!(target: "AlephBFT-member", "{:?} Runway spawned.", index);
 
     info!(target: "AlephBFT-member", "{:?} Initializing Member.", index);
     let member = Member::new(
@@ -638,7 +645,11 @@ pub async fn run_session<
         resolved_requests_rx,
     );
     let member_terminator = terminator.add_offspring_connection("AlephBFT-member");
-    let member_handle = member.run(member_terminator).fuse();
+    let member_handle = spawn_handle
+        .spawn_essential("member", async move {
+            member.run(member_terminator).await;
+        })
+        .fuse();
     pin_mut!(member_handle);
     info!(target: "AlephBFT-member", "{:?} Member initialized.", index);
 

@@ -9,7 +9,7 @@ use std::marker::PhantomData;
 
 /// The component responsible for packing Data from DataProvider into received PreUnits,
 /// and signing the outcome, thus creating SignedUnits that are sent back to Runway.
-pub struct Packer<'a, H, D, DP, MK>
+pub struct Packer<H, D, DP, MK>
 where
     H: Hasher,
     D: Data,
@@ -18,13 +18,13 @@ where
 {
     data_provider: DP,
     preunits_from_runway: Receiver<PreUnit<H>>,
-    signed_units_for_runway: Sender<SignedUnit<'a, H, D, MK>>,
-    keychain: &'a MK,
+    signed_units_for_runway: Sender<SignedUnit<H, D, MK>>,
+    keychain: MK,
     session_id: SessionId,
     _phantom: PhantomData<D>,
 }
 
-impl<'a, H, D, DP, MK> Packer<'a, H, D, DP, MK>
+impl<H, D, DP, MK> Packer<H, D, DP, MK>
 where
     H: Hasher,
     D: Data,
@@ -34,8 +34,8 @@ where
     pub fn new(
         data_provider: DP,
         preunits_from_runway: Receiver<PreUnit<H>>,
-        signed_units_for_runway: Sender<SignedUnit<'a, H, D, MK>>,
-        keychain: &'a MK,
+        signed_units_for_runway: Sender<SignedUnit<H, D, MK>>,
+        keychain: MK,
         session_id: SessionId,
     ) -> Self {
         Self {
@@ -67,7 +67,7 @@ where
             let data = self.data_provider.get_data().await;
             debug!(target: "AlephBFT-packer", "{:?} Received data.", self.index());
             let full_unit = FullUnit::new(preunit, data, self.session_id);
-            let signed_unit = Signed::sign(full_unit, self.keychain).await;
+            let signed_unit = Signed::sign(full_unit, &self.keychain).await;
             if self
                 .signed_units_for_runway
                 .unbounded_send(signed_unit)
@@ -84,6 +84,7 @@ where
         info!(target: "AlephBFT-packer", "{:?} Packer started.", self.index());
         let pack = self.pack().fuse();
         pin_mut!(pack);
+
         futures::select! {
             _ = pack => Err(()),
             _ = terminator.get_exit() => {
@@ -113,7 +114,7 @@ mod tests {
     const N_MEMBERS: NodeCount = NodeCount(4);
 
     fn prepare(
-        keychain: &Keychain,
+        keychain: Keychain,
     ) -> (
         Sender<PreUnit<Hasher64>>,
         Receiver<SignedUnit<Hasher64, Data, Keychain>>,
@@ -150,7 +151,7 @@ mod tests {
     async fn unit_packed() {
         let keychain = Keychain::new(N_MEMBERS, NODE_ID);
         let (preunits_channel, signed_units_channel, mut packer, _exit_tx, terminator, preunit) =
-            prepare(&keychain);
+            prepare(keychain);
         let packer_handle = packer.run(terminator).fuse();
         preunits_channel
             .unbounded_send(preunit.clone())
@@ -173,14 +174,14 @@ mod tests {
     #[tokio::test]
     async fn preunits_channel_closed() {
         let keychain = Keychain::new(N_MEMBERS, NODE_ID);
-        let (_, _signed_units_channel, mut packer, _exit_tx, terminator, _) = prepare(&keychain);
+        let (_, _signed_units_channel, mut packer, _exit_tx, terminator, _) = prepare(keychain);
         assert_eq!(packer.run(terminator).await, Err(()));
     }
 
     #[tokio::test]
     async fn signed_units_channel_closed() {
         let keychain = Keychain::new(N_MEMBERS, NODE_ID);
-        let (preunits_channel, _, mut packer, _exit_tx, terminator, preunit) = prepare(&keychain);
+        let (preunits_channel, _, mut packer, _exit_tx, terminator, preunit) = prepare(keychain);
         preunits_channel
             .unbounded_send(preunit)
             .expect("Packer PreUnit channel closed");
@@ -197,7 +198,7 @@ mod tests {
             data_provider,
             preunits_from_runway,
             signed_units_for_runway,
-            &keychain,
+            keychain,
             SESSION_ID,
         );
         let (exit_tx, exit_rx) = oneshot::channel();
