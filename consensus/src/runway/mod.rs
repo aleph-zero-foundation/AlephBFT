@@ -696,7 +696,7 @@ where
         let status_ticker_delay = Duration::from_secs(10);
         let mut status_ticker = Delay::new(status_ticker_delay).fuse();
 
-        info!(target: "AlephBFT-runway", "{:?} Runway started.", index);
+        debug!(target: "AlephBFT-runway", "{:?} Runway started.", index);
         loop {
             futures::select! {
                 notification = self.rx_consensus.next() => match notification {
@@ -759,20 +759,20 @@ where
                 },
 
                 _ = &mut terminator.get_exit() => {
-                    info!(target: "AlephBFT-runway", "{:?} received exit signal", index);
+                    debug!(target: "AlephBFT-runway", "{:?} received exit signal", index);
                     self.exiting = true;
                 }
             };
             self.move_units_to_consensus();
 
             if self.exiting {
-                info!(target: "AlephBFT-runway", "{:?} Runway decided to exit.", index);
+                debug!(target: "AlephBFT-runway", "{:?} Runway decided to exit.", index);
                 terminator.terminate_sync().await;
                 break;
             }
         }
 
-        info!(target: "AlephBFT-runway", "{:?} Run ended.", index);
+        debug!(target: "AlephBFT-runway", "{:?} Run ended.", index);
     }
 }
 
@@ -1070,7 +1070,7 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
         }
     }
 
-    info!(target: "AlephBFT-runway", "{:?} Ending run.", index);
+    debug!(target: "AlephBFT-runway", "{:?} Ending run.", index);
     let terminator_handle = terminator.terminate_sync().fuse();
     pin_mut!(terminator_handle);
 
@@ -1107,5 +1107,5 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
         debug!(target: "AlephBFT-runway", "{:?} Alerter stopped.", index);
     }
 
-    info!(target: "AlephBFT-runway", "{:?} Runway ended.", index);
+    debug!(target: "AlephBFT-runway", "{:?} Runway ended.", index);
 }

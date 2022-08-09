@@ -6,7 +6,7 @@ use crate::{
 };
 use futures::{channel::oneshot, FutureExt, StreamExt};
 use futures_timer::Delay;
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use std::time::Duration;
 
 mod creator;
@@ -56,7 +56,7 @@ async fn create_unit<H: Hasher>(
             unit = incoming_parents.next() => match unit {
                 Some(unit) => creator.add_unit(&unit),
                 None => {
-                    info!(target: "AlephBFT-creator", "Incoming parent channel closed, exiting.");
+                    debug!(target: "AlephBFT-creator", "Incoming parent channel closed, exiting.");
                     return Err(());
                 }
             },
@@ -68,7 +68,7 @@ async fn create_unit<H: Hasher>(
                 delay = Delay::new(Duration::from_secs(30 * 60)).fuse();
             },
             _ = exit => {
-                info!(target: "AlephBFT-creator", "Received exit signal.");
+                debug!(target: "AlephBFT-creator", "Received exit signal.");
                 return Err(());
             },
         }

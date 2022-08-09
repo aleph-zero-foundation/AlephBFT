@@ -4,7 +4,7 @@ use crate::{
 };
 use codec::{Decode, Encode};
 use futures::{FutureExt, StreamExt};
-use log::{error, info, warn};
+use log::{debug, error, warn};
 use std::fmt::Debug;
 
 #[derive(Encode, Decode, Clone, Debug)]
@@ -130,7 +130,7 @@ impl<
             }
         }
 
-        info!(target: "AlephBFT-network-hub", "Network ended.");
+        debug!(target: "AlephBFT-network-hub", "Network ended.");
     }
 }
 

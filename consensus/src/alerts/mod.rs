@@ -7,7 +7,7 @@ use aleph_bft_rmc::{DoublingDelayScheduler, Message as RmcMessage, ReliableMulti
 use codec::{Decode, Encode};
 use derivative::Derivative;
 use futures::{channel::mpsc, FutureExt, StreamExt};
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, trace, warn};
 use parking_lot::RwLock;
 use std::{
     collections::{HashMap, HashSet},
@@ -491,12 +491,12 @@ pub(crate) async fn run<H: Hasher, D: Data, MK: MultiKeychain>(
                 }
             },
             _ = &mut terminator.get_exit() => {
-                info!(target: "AlephBFT-alerter", "{:?} received exit signal", alerter.index());
+                debug!(target: "AlephBFT-alerter", "{:?} received exit signal", alerter.index());
                 alerter.exiting = true;
             },
         }
         if alerter.exiting {
-            info!(target: "AlephBFT-alerter", "{:?} Alerter decided to exit.", alerter.index());
+            debug!(target: "AlephBFT-alerter", "{:?} Alerter decided to exit.", alerter.index());
             terminator.terminate_sync().await;
             break;
         }

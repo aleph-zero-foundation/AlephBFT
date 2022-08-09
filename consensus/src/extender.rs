@@ -1,7 +1,7 @@
 use futures::StreamExt;
 use std::collections::{HashMap, VecDeque};
 
-use log::{debug, info, warn};
+use log::{debug, warn};
 
 use crate::{Hasher, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Terminator};
 
@@ -305,12 +305,12 @@ impl<H: Hasher> Extender<H> {
                     }
                 }
                 _ = &mut terminator.get_exit() => {
-                    info!(target: "AlephBFT-extender", "{:?} received exit signal.", self.node_id);
+                    debug!(target: "AlephBFT-extender", "{:?} received exit signal.", self.node_id);
                     self.exiting = true;
                 }
             }
             if self.exiting {
-                info!(target: "AlephBFT-extender", "{:?} Extender decided to exit.", self.node_id);
+                debug!(target: "AlephBFT-extender", "{:?} Extender decided to exit.", self.node_id);
                 terminator.terminate_sync().await;
                 break;
             }

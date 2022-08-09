@@ -4,7 +4,7 @@ use crate::{
     Terminator,
 };
 use futures::{pin_mut, FutureExt, StreamExt};
-use log::{debug, error, info};
+use log::{debug, error};
 use std::marker::PhantomData;
 
 /// The component responsible for packing Data from DataProvider into received PreUnits,
@@ -81,7 +81,7 @@ where
 
     /// Run the main loop until receiving a signal to exit.
     pub async fn run(&mut self, mut terminator: Terminator) -> Result<(), ()> {
-        info!(target: "AlephBFT-packer", "{:?} Packer started.", self.index());
+        debug!(target: "AlephBFT-packer", "{:?} Packer started.", self.index());
         let pack = self.pack().fuse();
         pin_mut!(pack);
 

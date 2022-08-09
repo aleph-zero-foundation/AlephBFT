@@ -3,7 +3,7 @@ use futures::{
     future::FusedFuture,
     FutureExt,
 };
-use log::{debug, info, warn};
+use log::{debug, warn};
 
 use crate::{
     config::Config,
@@ -23,7 +23,7 @@ pub(crate) async fn run<H: Hasher + 'static>(
     starting_round: oneshot::Receiver<Option<Round>>,
     mut terminator: Terminator,
 ) {
-    info!(target: "AlephBFT", "{:?} Starting all services...", conf.node_ix);
+    debug!(target: "AlephBFT", "{:?} Starting all services...", conf.node_ix);
 
     let n_members = conf.n_members;
     let index = conf.node_ix;
@@ -71,7 +71,7 @@ pub(crate) async fn run<H: Hasher + 'static>(
             terminal.run(terminal_terminator).await
         })
         .fuse();
-    info!(target: "AlephBFT", "{:?} All services started.", index);
+    debug!(target: "AlephBFT", "{:?} All services started.", index);
 
     futures::select! {
         _ = terminator.get_exit() => {},
@@ -85,7 +85,7 @@ pub(crate) async fn run<H: Hasher + 'static>(
             debug!(target: "AlephBFT-consensus", "{:?} extender task terminated early.", index);
         }
     }
-    info!(target: "AlephBFT", "{:?} All services stopping.", index);
+    debug!(target: "AlephBFT", "{:?} All services stopping.", index);
 
     // we stop no matter if received Ok or Err
     terminator.terminate_sync().await;
@@ -111,5 +111,5 @@ pub(crate) async fn run<H: Hasher + 'static>(
         debug!(target: "AlephBFT-consensus", "{:?} extender stopped.", index);
     }
 
-    info!(target: "AlephBFT", "{:?} All services stopped.", index);
+    debug!(target: "AlephBFT", "{:?} All services stopped.", index);
 }

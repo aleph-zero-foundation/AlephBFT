@@ -7,7 +7,7 @@ use crate::{
     units::{ControlHash, Unit, UnitCoord},
     Hasher, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Terminator,
 };
-use log::{debug, info, trace, warn};
+use log::{debug, trace, warn};
 
 /// An enum describing the status of a Unit in the Terminal pipeline.
 #[derive(Clone, Eq, PartialEq)]
@@ -367,12 +367,12 @@ impl<H: Hasher> Terminal<H> {
                     }
                 }
                 _ = &mut terminator.get_exit() => {
-                    info!(target: "AlephBFT-terminal", "{:?} received exit signal", self.node_id);
+                    debug!(target: "AlephBFT-terminal", "{:?} received exit signal", self.node_id);
                     self.exiting = true;
                 }
             }
             if self.exiting {
-                info!(target: "AlephBFT-terminal", "{:?} Terminal decided to exit.", self.node_id);
+                debug!(target: "AlephBFT-terminal", "{:?} Terminal decided to exit.", self.node_id);
                 terminator.terminate_sync().await;
                 break;
             }

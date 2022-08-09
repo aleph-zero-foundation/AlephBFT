@@ -291,7 +291,7 @@ impl<'a, H: Hasher, D: Data, MK: Keychain> IO<'a, H, D, MK> {
                 _ = catch_up_delay => match self.collection.status() {
                     Pending => {
                         delay_passed = true;
-                        info!(target: "AlephBFT-runway", "Catch up delay passed.");
+                        debug!(target: "AlephBFT-runway", "Catch up delay passed.");
                         self.status_report();
                     },
                     Ready(round) | Finished(round)  => {
