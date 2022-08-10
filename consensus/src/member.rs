@@ -1,4 +1,5 @@
 use crate::{
+    handle_task_termination,
     member::Task::{CoordRequest, ParentsRequest, RequestNewest, UnitBroadcast},
     network,
     runway::{
@@ -13,7 +14,7 @@ use crate::{
 };
 use aleph_bft_types::NodeMap;
 use codec::{Decode, Encode};
-use futures::{channel::mpsc, future::FusedFuture, pin_mut, FutureExt, StreamExt};
+use futures::{channel::mpsc, pin_mut, FutureExt, StreamExt};
 use futures_timer::Delay;
 use itertools::Itertools;
 use log::{debug, error, info, trace, warn};
@@ -674,31 +675,11 @@ pub async fn run_session<
 
     debug!(target: "AlephBFT-member", "{:?} Run ending.", index);
 
-    let terminator_handle = terminator.terminate_sync().fuse();
-    pin_mut!(terminator_handle);
+    terminator.terminate_sync().await;
 
-    loop {
-        futures::select! {
-            _ = runway_handle => {
-                debug!(target: "AlephBFT-member", "{:?} Runway stopped.", index);
-            },
-
-            _ = member_handle => {
-                debug!(target: "AlephBFT-member", "{:?} Member stopped.", index);
-            },
-
-            _ = terminator_handle => {}
-
-            complete => break,
-        }
-    }
-
-    if !network_handle.is_terminated() {
-        if let Err(()) = network_handle.await {
-            warn!(target: "AlephBFT-member", "{:?} Network task stopped with an error", index);
-        }
-        debug!(target: "AlephBFT-member", "{:?} Network stopped.", index);
-    }
+    handle_task_termination(network_handle, "AlephBFT-member", "Network", index).await;
+    handle_task_termination(runway_handle, "AlephBFT-member", "Runway", index).await;
+    handle_task_termination(member_handle, "AlephBFT-member", "Member", index).await;
 
     info!(target: "AlephBFT-member", "{:?} Session ended.", index);
 }
