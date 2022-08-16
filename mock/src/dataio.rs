@@ -1,5 +1,6 @@
 use aleph_bft_types::{DataProvider as DataProviderT, FinalizationHandler as FinalizationHandlerT};
 use async_trait::async_trait;
+use codec::{Decode, Encode};
 use futures::{channel::mpsc::unbounded, future::pending};
 use log::error;
 use parking_lot::Mutex;
@@ -13,7 +14,7 @@ type Sender<T> = futures::channel::mpsc::UnboundedSender<T>;
 
 pub type Data = u32;
 
-#[derive(Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default)]
 pub struct DataProvider {
     counter: usize,
     n_data: Option<usize>,
@@ -48,7 +49,7 @@ impl DataProviderT<Data> for DataProvider {
     }
 }
 
-#[derive(Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default, Decode, Encode)]
 pub struct StalledDataProvider {}
 
 impl StalledDataProvider {
@@ -64,6 +65,7 @@ impl DataProviderT<Data> for StalledDataProvider {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct FinalizationHandler {
     tx: Sender<Data>,
 }
@@ -84,6 +86,7 @@ impl FinalizationHandler {
     }
 }
 
+#[derive(Clone, Debug, Default)]
 pub struct Saver {
     data: Arc<Mutex<Vec<u8>>>,
 }

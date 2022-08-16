@@ -9,7 +9,7 @@ use std::{
 };
 
 /// The index of a node
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, PartialOrd, Hash, From, Into)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default, From, Into)]
 pub struct NodeIndex(pub usize);
 
 impl Encode for NodeIndex {
@@ -37,7 +37,22 @@ pub trait Index {
 /// Node count. Right now it doubles as node weight in many places in the code, in the future we
 /// might need a new type for that.
 #[derive(
-    Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Add, Sub, AddAssign, SubAssign, Sum, From, Into,
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    Debug,
+    Default,
+    Add,
+    AddAssign,
+    From,
+    Into,
+    Sub,
+    SubAssign,
+    Sum,
 )]
 pub struct NodeCount(pub usize);
 
@@ -70,7 +85,7 @@ impl NodeCount {
 }
 
 /// A container keeping items indexed by NodeIndex.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, From, Encode, Decode)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Default, Decode, Encode, From)]
 pub struct NodeMap<T>(Vec<Option<T>>);
 
 impl<T> NodeMap<T> {
@@ -190,7 +205,7 @@ impl<T: fmt::Display> fmt::Display for NodeMap<T> {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Default)]
 pub struct NodeSubset(bit_vec::BitVec<u32>);
 
 impl NodeSubset {

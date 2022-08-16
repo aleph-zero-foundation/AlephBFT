@@ -18,7 +18,7 @@ pub use validator::{ValidationError, Validator};
 
 /// The coordinates of a unit, i.e. creator and round. In the absence of forks this uniquely
 /// determines a unit within a session.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Encode, Decode, Hash)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default, Encode, Decode)]
 pub struct UnitCoord {
     round: Round,
     creator: NodeIndex,
@@ -43,7 +43,7 @@ impl UnitCoord {
 
 /// Combined hashes of the parents of a unit together with the set of indices of creators of the
 /// parents
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Encode, Decode)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Decode, Encode)]
 pub struct ControlHash<H: Hasher> {
     pub(crate) parents_mask: NodeSubset,
     pub(crate) combined_hash: H::Hash,
@@ -75,7 +75,7 @@ impl<H: Hasher> ControlHash<H> {
 }
 
 /// The simplest type representing a unit, consisting of coordinates and a control hash
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Encode, Decode)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Decode, Encode)]
 pub struct PreUnit<H: Hasher> {
     coord: UnitCoord,
     control_hash: ControlHash<H>,
@@ -110,16 +110,14 @@ impl<H: Hasher> PreUnit<H> {
     }
 }
 
-///
-#[derive(Debug, Encode, Decode, Derivative)]
-#[derivative(PartialEq, Eq, Hash)]
+#[derive(Debug, Decode, Derivative, Encode)]
+#[derivative(Eq, PartialEq, Hash)]
 pub struct FullUnit<H: Hasher, D: Data> {
     pre_unit: PreUnit<H>,
     data: Option<D>,
     session_id: SessionId,
     #[codec(skip)]
-    #[derivative(PartialEq = "ignore")]
-    #[derivative(Hash = "ignore")]
+    #[derivative(PartialEq = "ignore", Hash = "ignore")]
     hash: RwLock<Option<H::Hash>>,
 }
 
@@ -201,7 +199,7 @@ pub(crate) type UncheckedSignedUnit<H, D, S> = UncheckedSigned<FullUnit<H, D>, S
 
 pub(crate) type SignedUnit<H, D, K> = Signed<FullUnit<H, D>, K>;
 
-#[derive(Clone, Debug, Eq, PartialEq, Encode, Decode)]
+#[derive(Clone, Eq, PartialEq, Debug, Decode, Encode)]
 pub struct Unit<H: Hasher> {
     pre_unit: PreUnit<H>,
     hash: H::Hash,

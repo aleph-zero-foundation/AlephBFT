@@ -93,7 +93,7 @@ async fn request_missing_coord() {
     for (network, _) in networks {
         let ix = network.index();
         let (batch_rx, _, exit_tx, handle) =
-            spawn_honest_member(spawner.clone(), ix, n_members, vec![], network);
+            spawn_honest_member(spawner, ix, n_members, vec![], network);
         batch_rxs.push(batch_rx);
         exits.push(exit_tx);
         handles.push(handle);

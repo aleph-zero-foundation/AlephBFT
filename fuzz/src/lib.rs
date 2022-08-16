@@ -80,6 +80,7 @@ pub struct Spawner {
     delay: Duration,
 }
 
+#[derive(Clone)]
 struct SpawnFuture<T> {
     task: Pin<Box<T>>,
     wake_flag: Arc<AtomicBool>,
@@ -235,6 +236,7 @@ pub fn spawn_honest_member_with_config(
 
 pub type FuzzNetworkData = NetworkData<Hasher64, Data, Signature, PartialMultisignature>;
 
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Default, Decode, Encode)]
 struct SpyingNetworkHook<W: Write> {
     node: NodeIndex,
     encoder: NetworkDataEncoding,
@@ -265,7 +267,7 @@ impl<W: Write + Send> NetworkHook<FuzzNetworkData> for SpyingNetworkHook<W> {
     }
 }
 
-#[derive(Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default, Decode, Encode)]
 pub(crate) struct NetworkDataEncoding {}
 
 impl NetworkDataEncoding {
@@ -286,6 +288,7 @@ impl NetworkDataEncoding {
     }
 }
 
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Default, Decode, Encode)]
 struct NetworkDataIterator<R> {
     input: R,
     encoding: NetworkDataEncoding,
@@ -314,6 +317,7 @@ impl<R: Read> Iterator for NetworkDataIterator<R> {
     }
 }
 
+#[derive(Debug)]
 struct PlaybackNetwork<I, C> {
     data: I,
     exit: Receiver<()>,
@@ -351,6 +355,7 @@ impl<I: Iterator<Item = FuzzNetworkData> + Send, C: FnOnce() + Send> NetworkT<Fu
     }
 }
 
+#[derive(Debug, Decode, Encode)]
 pub struct ReadToNetworkDataIterator<R> {
     read: BufReader<R>,
     decoder: NetworkDataEncoding,

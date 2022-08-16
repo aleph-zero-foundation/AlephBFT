@@ -3,6 +3,7 @@ use itertools::Itertools;
 use log::{trace, warn};
 use std::{collections::HashSet, fmt};
 
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub struct UnitStoreStatus<'a> {
     forkers: &'a NodeSubset,
     size: usize,

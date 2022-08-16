@@ -59,7 +59,7 @@ fn connect_nodes(
         .map(|(network, reconnect_tx)| {
             let ix = network.index();
             let (batch_rx, saved_units, exit_tx, handle) =
-                spawn_honest_member(spawner.clone(), ix, n_members, vec![], network);
+                spawn_honest_member(*spawner, ix, n_members, vec![], network);
             (
                 ix,
                 NodeData {
@@ -96,13 +96,8 @@ async fn reconnect_nodes(
             .expect("receiver should exist");
 
         let network = rx.await.expect("channel should be open");
-        let (batch_rx, saved_units, exit_tx, handle) = spawn_honest_member(
-            spawner.clone(),
-            *node_id,
-            n_members,
-            saved_units.clone(),
-            network,
-        );
+        let (batch_rx, saved_units, exit_tx, handle) =
+            spawn_honest_member(*spawner, *node_id, n_members, saved_units.clone(), network);
         reconnected_nodes.push((
             *node_id,
             NodeData {

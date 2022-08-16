@@ -1,7 +1,8 @@
 use aleph_bft_types::{SpawnHandle, TaskHandle};
+use codec::{Decode, Encode};
 use futures::{channel::oneshot, Future};
 
-#[derive(Clone, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default, Decode, Encode)]
 pub struct Spawner;
 
 impl SpawnHandle for Spawner {

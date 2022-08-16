@@ -1,5 +1,8 @@
 use futures::StreamExt;
-use std::collections::{hash_map::Entry, HashMap, VecDeque};
+use std::{
+    collections::{hash_map::Entry, HashMap, VecDeque},
+    fmt::{Debug, Formatter},
+};
 
 use crate::{
     extender::ExtenderUnit,
@@ -7,10 +10,11 @@ use crate::{
     units::{ControlHash, Unit, UnitCoord},
     Hasher, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Terminator,
 };
+use codec::{Decode, Encode};
 use log::{debug, trace, warn};
 
 /// An enum describing the status of a Unit in the Terminal pipeline.
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Decode, Encode)]
 pub enum UnitStatus {
     ReconstructingParents,
     WrongControlHash,
@@ -31,6 +35,18 @@ pub struct TerminalUnit<H: Hasher> {
     n_miss_par_decoded: NodeCount,
     n_miss_par_dag: NodeCount,
     status: UnitStatus,
+}
+
+impl<H: Hasher> Debug for TerminalUnit<H> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TerminalUnit")
+            .field("unit", &self.unit)
+            .field("parent count", &self.parents.size())
+            .field("miss par decoded count", &self.n_miss_par_decoded)
+            .field("miss par dag count", &self.n_miss_par_dag)
+            .field("status", &self.status)
+            .finish()
+    }
 }
 
 impl<H: Hasher> From<TerminalUnit<H>> for ExtenderUnit<H> {

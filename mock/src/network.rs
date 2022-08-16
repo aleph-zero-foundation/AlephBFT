@@ -11,7 +11,7 @@ use log::debug;
 use std::{
     cell::RefCell,
     collections::HashMap,
-    fmt::Debug,
+    fmt::{Debug, Formatter},
     pin::Pin,
     task::{Context, Poll},
 };
@@ -41,8 +41,13 @@ impl<D: Debug> Network<D> {
             index,
         }
     }
+
     pub fn index(&self) -> NodeIndex {
         self.index
+    }
+
+    pub fn peers(&self) -> Vec<NodeIndex> {
+        self.peers.clone()
     }
 }
 
@@ -93,6 +98,16 @@ pub struct Router<D: Debug> {
     reliability: f64,
 }
 
+impl<D: Debug> Debug for Router<D> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Router")
+            .field("peers", &self.peer_list)
+            .field("hook count", &self.hook_list.borrow().len())
+            .field("reliability", &self.reliability)
+            .finish()
+    }
+}
+
 impl<D: Debug> Router<D> {
     // reliability - a number in the range [0, 1], 1.0 means perfect reliability, 0.0 means no message gets through
     pub fn new(
@@ -137,6 +152,14 @@ impl<D: Debug> Router<D> {
         };
         self.peers.borrow_mut().insert(peer, peer_entry);
         Network::new(rx_out_hub, tx_in_hub, self.peer_list.clone(), peer)
+    }
+
+    pub fn peer_list(&self) -> Vec<NodeIndex> {
+        self.peer_list.clone()
+    }
+
+    pub fn reliability(&self) -> f64 {
+        self.reliability
     }
 }
 

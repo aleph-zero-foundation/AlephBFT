@@ -2,7 +2,7 @@ use aleph_bft_types::{Index, NodeIndex, SignatureSet};
 use codec::{Decode, Encode};
 use std::hash::Hash;
 
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Default, Encode, Decode)]
 pub struct Signature {
     msg: Vec<u8>,
     index: NodeIndex,

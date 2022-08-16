@@ -56,7 +56,7 @@ impl<H: Hasher, D: Data, S: Signature> From<SignatureError<FullUnit<H, D>, S>>
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq, Debug, Hash)]
 pub struct Validator<K: Keychain> {
     session_id: SessionId,
     keychain: K,
@@ -146,7 +146,7 @@ mod tests {
         let max_round = 2;
         let creator = Creator::new(creator_id, n_members);
         let keychain = Keychain::new(n_members, creator_id);
-        let validator = Validator::new(session_id, keychain.clone(), max_round, threshold);
+        let validator = Validator::new(session_id, keychain, max_round, threshold);
         let (preunit, _) = creator
             .create_unit(round)
             .expect("Creation should succeed.");
@@ -168,7 +168,7 @@ mod tests {
         let max_round = 2;
         let creator = Creator::new(creator_id, n_members);
         let keychain = Keychain::new(n_members, creator_id);
-        let validator = Validator::new(session_id, keychain.clone(), max_round, threshold);
+        let validator = Validator::new(session_id, keychain, max_round, threshold);
         let (preunit, _) = creator
             .create_unit(round)
             .expect("Creation should succeed.");
@@ -193,7 +193,7 @@ mod tests {
         let max_round = 2;
         let creator = Creator::new(creator_id, n_members);
         let keychain = Keychain::new(n_plus_one_members, creator_id);
-        let validator = Validator::new(session_id, keychain.clone(), max_round, threshold);
+        let validator = Validator::new(session_id, keychain, max_round, threshold);
         let (preunit, _) = creator
             .create_unit(round)
             .expect("Creation should succeed.");
@@ -226,7 +226,7 @@ mod tests {
         let creator = &mut creators[0];
         creator.add_units(&round_0_units);
         let keychain = Keychain::new(n_members, creator_id);
-        let validator = Validator::new(session_id, keychain.clone(), max_round, threshold);
+        let validator = Validator::new(session_id, keychain, max_round, threshold);
         let (preunit, _) = creator
             .create_unit(round)
             .expect("Creation should succeed.");
@@ -260,7 +260,7 @@ mod tests {
         }
         let creator = &creators[0];
         let keychain = Keychain::new(n_members, creator_id);
-        let validator = Validator::new(session_id, keychain.clone(), max_round, threshold);
+        let validator = Validator::new(session_id, keychain, max_round, threshold);
         let (preunit, _) = creator
             .create_unit(round)
             .expect("Creation should succeed.");

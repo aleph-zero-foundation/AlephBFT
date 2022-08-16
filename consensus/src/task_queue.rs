@@ -1,11 +1,12 @@
 use std::{
     cmp::Ordering,
     collections::{binary_heap::PeekMut, BinaryHeap},
+    fmt::{Debug, Formatter},
     time,
     time::Duration,
 };
 
-#[derive(Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 struct ScheduledTask<T: Eq> {
     task: T,
     scheduled_time: time::Instant,
@@ -24,8 +25,17 @@ impl<T: Eq> Ord for ScheduledTask<T> {
     }
 }
 
+#[derive(Clone, Default)]
 pub struct TaskQueue<T: Eq + PartialEq> {
     queue: BinaryHeap<ScheduledTask<T>>,
+}
+
+impl<T: Eq + PartialEq> Debug for TaskQueue<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TaskQueue")
+            .field("task count", &self.queue.len())
+            .finish()
+    }
 }
 
 /// Implements a queue allowing for scheduling tasks for some time in the future.

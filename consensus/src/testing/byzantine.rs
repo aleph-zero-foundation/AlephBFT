@@ -263,10 +263,10 @@ async fn honest_members_agree_on_batches_byzantine(
     for (network, _) in networks {
         let ix = network.index();
         let (exit_tx, handle) = if !n_honest.into_range().contains(&ix) {
-            spawn_malicious_member(spawner.clone(), ix, n_members, 2, network)
+            spawn_malicious_member(spawner, ix, n_members, 2, network)
         } else {
             let (batch_rx, _, exit_tx, handle) =
-                spawn_honest_member(spawner.clone(), ix, n_members, vec![], network);
+                spawn_honest_member(spawner, ix, n_members, vec![], network);
             batch_rxs.push(batch_rx);
             (exit_tx, handle)
         };

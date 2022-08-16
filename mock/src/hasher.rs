@@ -3,7 +3,7 @@ use std::{collections::hash_map::DefaultHasher, hash::Hasher as StdHasher};
 
 // A hasher from the standard library that hashes to u64, should be enough to
 // avoid collisions in testing.
-#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
 pub struct Hasher64;
 
 impl Hasher for Hasher64 {

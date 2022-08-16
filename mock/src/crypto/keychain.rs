@@ -5,7 +5,7 @@ use aleph_bft_types::{
 };
 use async_trait::async_trait;
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default)]
 pub struct Keychain {
     count: NodeCount,
     index: NodeIndex,

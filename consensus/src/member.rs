@@ -30,7 +30,7 @@ use std::{
 };
 
 /// A message concerning units, either about new units or some requests for them.
-#[derive(Debug, Encode, Decode, Clone)]
+#[derive(Clone, Eq, PartialEq, Debug, Decode, Encode)]
 pub(crate) enum UnitMessage<H: Hasher, D: Data, S: Signature> {
     /// For disseminating newly created units.
     NewUnit(UncheckedSignedUnit<H, D, S>),

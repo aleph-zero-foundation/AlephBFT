@@ -10,6 +10,7 @@ use log::{debug, error, warn};
 use std::{
     collections::{HashMap, HashSet},
     error::Error,
+    fmt::{Debug, Formatter},
     io::Write,
     net::{SocketAddr, SocketAddrV4, TcpStream},
     str::FromStr,
@@ -18,7 +19,7 @@ use tokio::{io::AsyncReadExt, net::TcpListener};
 
 pub type NetworkData = aleph_bft::NetworkData<Hasher64, Data, Signature, PartialMultisignature>;
 
-#[derive(Clone, Debug, Decode, Encode, PartialEq, Eq)]
+#[derive(Clone, Eq, PartialEq, Debug, Decode, Encode)]
 pub struct Address {
     octets: [u8; 4],
     port: u16,
@@ -101,6 +102,18 @@ pub struct NetworkManager {
     consensus_rx: UnboundedReceiver<(NetworkData, Recipient)>,
     block_tx: UnboundedSender<Block>,
     block_rx: UnboundedReceiver<Block>,
+}
+
+impl Debug for NetworkManager {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NetworkManager")
+            .field("id", &self.id)
+            .field("address", &self.address)
+            .field("address count", &self.addresses.len())
+            .field("bootnode count", &self.bootnodes.len())
+            .field("node count", &self.n_nodes)
+            .finish()
+    }
 }
 
 impl NetworkManager {

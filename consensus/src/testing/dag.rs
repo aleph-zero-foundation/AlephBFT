@@ -137,7 +137,7 @@ async fn run_consensus_on_dag(
             rx_in,
             tx_out,
             batch_tx,
-            spawner.clone(),
+            spawner,
             starting_round,
             Terminator::create_root(exit_rx, "AlephBFT-consensus"),
         ),

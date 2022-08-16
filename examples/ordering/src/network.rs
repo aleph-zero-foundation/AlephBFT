@@ -14,6 +14,7 @@ const MAX_UDP_DATAGRAM_BYTES: usize = 65536;
 
 pub type NetworkData = aleph_bft::NetworkData<Hasher64, Data, Signature, PartialMultisignature>;
 
+#[derive(Debug)]
 pub struct Network {
     my_id: usize,
     addresses: Vec<SocketAddr>,

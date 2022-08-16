@@ -5,11 +5,13 @@ use log::debug;
 use parking_lot::Mutex;
 use std::{
     collections::{HashMap, HashSet},
+    fmt::{Debug, Formatter},
     sync::Arc,
 };
 
 pub type Data = BlockNum;
 
+#[derive(Clone)]
 pub struct DataStore {
     next_message_id: u32,
     current_block: Arc<Mutex<BlockNum>>,
@@ -18,6 +20,21 @@ pub struct DataStore {
     dependent_messages: HashMap<BlockNum, Vec<u32>>,
     pending_messages: HashMap<u32, NetworkData>,
     messages_for_member: UnboundedSender<NetworkData>,
+}
+
+impl Debug for DataStore {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DataStore")
+            .field("next message id", &self.next_message_id)
+            .field("available block count", &self.available_blocks.len())
+            .field(
+                "message requirement count",
+                &self.message_requirements.len(),
+            )
+            .field("dependent message count", &self.dependent_messages.len())
+            .field("pending message count", &self.pending_messages.len())
+            .finish()
+    }
 }
 
 impl DataStore {

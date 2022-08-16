@@ -1,7 +1,9 @@
 use crate::NodeIndex;
 
+use codec::{Decode, Encode};
+
 /// A recipient of a message, either a specific node or everyone.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Decode, Encode)]
 pub enum Recipient {
     Everyone,
     Node(NodeIndex),

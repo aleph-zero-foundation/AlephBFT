@@ -19,8 +19,8 @@ mod io;
 
 pub(crate) type ForkProof<H, D, S> = (UncheckedSignedUnit<H, D, S>, UncheckedSignedUnit<H, D, S>);
 
-#[derive(Debug, Decode, Encode, Derivative)]
-#[derivative(PartialEq, Eq, Hash)]
+#[derive(Debug, Decode, Derivative, Encode)]
+#[derivative(Eq, PartialEq, Hash)]
 pub struct Alert<H: Hasher, D: Data, S: Signature> {
     sender: NodeIndex,
     proof: ForkProof<H, D, S>,
@@ -100,7 +100,7 @@ impl<H: Hasher, D: Data, S: Signature> Signable for Alert<H, D, S> {
 }
 
 /// A message concerning alerts.
-#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Decode, Encode)]
 pub enum AlertMessage<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> {
     /// Alert regarding forks, signed by the person claiming misconduct.
     ForkAlert(UncheckedSigned<Alert<H, D, S>, S>),
@@ -124,7 +124,7 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> AlertMessage<H
 ///
 /// Certain calls to the alerter may generate responses. It is the caller's responsibility to
 /// forward them appropriately.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Decode, Encode)]
 enum AlerterResponse<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> {
     /// A copy of a fork alert.
     ///
@@ -149,7 +149,7 @@ enum AlerterResponse<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature
 
 // Notifications being sent to consensus, so that it can learn about proven forkers and receive
 // legitimized units.
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Decode, Encode)]
 pub enum ForkingNotification<H: Hasher, D: Data, S: Signature> {
     Forker(ForkProof<H, D, S>),
     Units(Vec<UncheckedSignedUnit<H, D, S>>),
@@ -168,6 +168,7 @@ struct Alerter<'a, H: Hasher, D: Data, MK: MultiKeychain> {
     exiting: bool,
 }
 
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Default)]
 pub(crate) struct AlertConfig {
     pub n_members: NodeCount,
     pub session_id: SessionId,

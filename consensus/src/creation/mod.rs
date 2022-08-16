@@ -7,18 +7,32 @@ use crate::{
 use futures::{channel::oneshot, FutureExt, StreamExt};
 use futures_timer::Delay;
 use log::{debug, error, warn};
-use std::time::Duration;
+use std::{
+    fmt::{Debug, Formatter},
+    time::Duration,
+};
 
 mod creator;
 
 pub use creator::Creator;
 
 /// The configuration needed for the process creating new units.
+#[derive(Clone)]
 pub struct Config {
     node_id: NodeIndex,
     n_members: NodeCount,
     create_lag: DelaySchedule,
     max_round: Round,
+}
+
+impl Debug for Config {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("node id", &self.node_id)
+            .field("member count", &self.n_members)
+            .field("max round", &self.max_round)
+            .finish()
+    }
 }
 
 impl From<GeneralConfig> for Config {

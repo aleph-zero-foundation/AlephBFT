@@ -265,7 +265,7 @@ impl TestCase {
     }
 
     async fn run(self, run_as: NodeIndex) {
-        let keychain = self.keychain(run_as).clone();
+        let keychain = *self.keychain(run_as);
         let mut timeout = Delay::new(Duration::from_millis(500)).fuse();
         futures::select! {
             _ = self.test(keychain).fuse() => {},

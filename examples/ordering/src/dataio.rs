@@ -2,6 +2,7 @@ use aleph_bft_types::{
     DataProvider as DataProviderT, FinalizationHandler as FinalizationHandlerT, NodeIndex,
 };
 use async_trait::async_trait;
+use codec::{Decode, Encode};
 use futures::{channel::mpsc::unbounded, future::pending};
 use log::{error, info};
 
@@ -10,7 +11,7 @@ type Sender<T> = futures::channel::mpsc::UnboundedSender<T>;
 
 pub type Data = (NodeIndex, u32);
 
-#[derive(Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default, Decode, Encode)]
 pub struct DataProvider {
     id: NodeIndex,
     counter: u32,
@@ -49,6 +50,7 @@ impl DataProviderT<Data> for DataProvider {
     }
 }
 
+#[derive(Clone)]
 pub struct FinalizationHandler {
     tx: Sender<Data>,
 }

@@ -73,7 +73,7 @@ pub fn spawn_honest_member(
     let (finalization_handler, finalization_rx) = FinalizationHandler::new();
     let config = gen_config(node_index, n_members);
     let (exit_tx, exit_rx) = oneshot::channel();
-    let spawner_inner = spawner.clone();
+    let spawner_inner = spawner;
     let unit_loader = Loader::new(units);
     let saved_state = Arc::new(Mutex::new(vec![]));
     let unit_saver = Saver::new(saved_state.clone());
@@ -85,7 +85,7 @@ pub fn spawn_honest_member(
             local_io,
             network,
             keychain,
-            spawner_inner.clone(),
+            spawner_inner,
             Terminator::create_root(exit_rx, "AlephBFT-member"),
         )
         .await

@@ -1,5 +1,9 @@
 use crate::{NodeCount, NodeIndex, Round, SessionId};
-use std::{sync::Arc, time::Duration};
+use std::{
+    fmt::{Debug, Formatter},
+    sync::Arc,
+    time::Duration,
+};
 
 pub type DelaySchedule = Arc<dyn Fn(usize) -> Duration + Sync + Send + 'static>;
 
@@ -19,9 +23,26 @@ pub struct DelayConfig {
     pub unit_creation_delay: DelaySchedule,
 }
 
+impl Debug for DelayConfig {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DelayConfig")
+            .field("tick interval", &self.tick_interval)
+            .field("request interval", &self.requests_interval)
+            .field(
+                "min unit rebroadcast interval",
+                &self.unit_rebroadcast_interval_min,
+            )
+            .field(
+                "max unit rebroadcast interval",
+                &self.unit_rebroadcast_interval_max,
+            )
+            .finish()
+    }
+}
+
 /// Main configuration of the consensus. We refer to [the documentation](https://cardinal-cryptography.github.io/AlephBFT/aleph_bft_api.html#34-alephbft-sessions)
 /// Section 3.4 for a discussion of some of these parameters and their significance.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Config {
     /// Identification number of the Member=0,..,(n_members-1).
     pub node_ix: NodeIndex,

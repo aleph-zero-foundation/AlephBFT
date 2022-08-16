@@ -7,7 +7,7 @@ use futures::{FutureExt, StreamExt};
 use log::{debug, error, warn};
 use std::fmt::Debug;
 
-#[derive(Encode, Decode, Clone, Debug)]
+#[derive(Clone, Eq, PartialEq, Debug, Decode, Encode)]
 pub(crate) enum NetworkDataInner<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> {
     Units(UnitMessage<H, D, S>),
     Alert(AlertMessage<H, D, S, MS>),
@@ -23,7 +23,7 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> NetworkDataInn
 }
 
 /// NetworkData is the opaque format for all data that a committee member needs to send to other nodes.
-#[derive(Encode, Decode, Clone, Debug)]
+#[derive(Clone, Eq, PartialEq, Debug, Decode, Encode)]
 pub struct NetworkData<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature>(
     pub(crate) NetworkDataInner<H, D, S, MS>,
 );
