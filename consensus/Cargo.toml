@@ -28,7 +28,7 @@ rand = "0.8"
 [dev-dependencies]
 aleph-bft-mock = { path = "../mock" }
 env_logger = "0.9"
-tokio = { version = "1.6.1", features = ["macros", "rt", "rt-multi-thread", "time"] }
+tokio = { version = "1.21.2", features = ["macros", "rt", "rt-multi-thread", "time"] }
 serial_test = "0.8.0"
 
 [features]
