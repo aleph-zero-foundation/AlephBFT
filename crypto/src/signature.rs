@@ -337,7 +337,7 @@ impl<T: Signable + Clone, MK: MultiKeychain> Clone for Multisigned<T, MK> {
 /// # use aleph_bft_crypto::{MultiKeychain, PartiallyMultisigned, Signable};
 /// # trait Hash {};
 /// impl<'a, T: Hash + Signable, MK: Hash + MultiKeychain>
-///    Hash for PartiallyMultisigned<'a, T, MK>
+///    Hash for PartiallyMultisigned<T, MK>
 /// where MK::PartialMultisignature: Hash {}
 /// ```
 /// i.e. Rust automatically adds `where MK::PartialMultisignature: Hash`.

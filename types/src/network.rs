@@ -22,7 +22,7 @@ pub enum Recipient {
 /// Note on Network Reliability: it is not assumed that each message that AlephBFT orders to send
 /// reaches its intended recipient, there are some built-in reliability mechanisms within AlephBFT
 /// that will automatically detect certain failures and resend messages as needed. Clearly, the less
-/// reliable the network is, the worse the performarmence of AlephBFT will be (generally slower to
+/// reliable the network is, the worse the performance of AlephBFT will be (generally slower to
 /// produce output). Also, not surprisingly if the percentage of dropped messages is too high
 /// AlephBFT might stop making progress, but from what we observe in tests, this happens only when
 /// the reliability is extremely bad, i.e., drops below 50% (which means there is some significant
