@@ -1,5 +1,5 @@
 use crate::{
-    testing::{init_log, spawn_honest_member, Network, ReconnectSender},
+    testing::{init_log, spawn_honest_member, HonestMember, Network, ReconnectSender},
     units::UncheckedSignedUnit,
     NodeCount, NodeIndex, SpawnHandle, TaskHandle,
 };
@@ -58,16 +58,20 @@ fn connect_nodes(
         .into_iter()
         .map(|(network, reconnect_tx)| {
             let ix = network.index();
-            let (batch_rx, saved_units, exit_tx, handle) =
-                spawn_honest_member(*spawner, ix, n_members, vec![], network);
+            let HonestMember {
+                finalization_rx,
+                saved_state,
+                exit_tx,
+                handle,
+            } = spawn_honest_member(*spawner, ix, n_members, vec![], network);
             (
                 ix,
                 NodeData {
-                    batch_rx,
+                    batch_rx: finalization_rx,
                     exit_tx,
                     reconnect_tx,
                     handle,
-                    saved_units,
+                    saved_units: saved_state,
                     batches: vec![],
                 },
             )
@@ -96,16 +100,20 @@ async fn reconnect_nodes(
             .expect("receiver should exist");
 
         let network = rx.await.expect("channel should be open");
-        let (batch_rx, saved_units, exit_tx, handle) =
-            spawn_honest_member(*spawner, *node_id, n_members, saved_units.clone(), network);
+        let HonestMember {
+            finalization_rx,
+            saved_state,
+            exit_tx,
+            handle,
+        } = spawn_honest_member(*spawner, *node_id, n_members, saved_units.clone(), network);
         reconnected_nodes.push((
             *node_id,
             NodeData {
-                batch_rx,
+                batch_rx: finalization_rx,
                 exit_tx,
                 reconnect_tx: reconnect_tx.clone(),
                 handle,
-                saved_units,
+                saved_units: saved_state,
                 batches: vec![],
             },
         ));

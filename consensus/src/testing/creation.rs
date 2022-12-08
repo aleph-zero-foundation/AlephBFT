@@ -63,15 +63,15 @@ impl TestController {
     }
 }
 
-fn setup_test(
-    n_members: NodeCount,
-) -> (
-    TestController,
-    Vec<oneshot::Sender<()>>,
-    Vec<tokio::task::JoinHandle<()>>,
-    Receiver<Unit>,
-    Vec<Sender<Unit>>,
-) {
+struct TestSetup {
+    test_controller: TestController,
+    killers: Vec<oneshot::Sender<()>>,
+    handles: Vec<tokio::task::JoinHandle<()>>,
+    units_from_controller: Receiver<Unit>,
+    units_for_creators: Vec<Sender<Unit>>,
+}
+
+fn setup_test(n_members: NodeCount) -> TestSetup {
     let (notifications_for_controller, notifications_from_creators) = mpsc::unbounded();
     let (units_for_creators, units_from_controller) = mpsc::unbounded();
 
@@ -113,13 +113,13 @@ fn setup_test(
         handles.push(handle);
     }
 
-    (
+    TestSetup {
         test_controller,
         killers,
         handles,
         units_from_controller,
         units_for_creators,
-    )
+    }
 }
 
 async fn finish(killers: Vec<oneshot::Sender<()>>, mut handles: Vec<tokio::task::JoinHandle<()>>) {
@@ -138,8 +138,13 @@ async fn synchronous_creators_should_create_dag() {
     let n_members = NodeCount(7);
     let max_round: Round = 50;
 
-    let (mut test_controller, killers, handles, mut units_from_controller, units_for_creators) =
-        setup_test(n_members);
+    let TestSetup {
+        mut test_controller,
+        killers,
+        handles,
+        mut units_from_controller,
+        units_for_creators,
+    } = setup_test(n_members);
     loop {
         futures::select! {
             _ = test_controller.control_until(max_round).fuse() => break,
@@ -167,8 +172,13 @@ async fn disconnected_creators_should_create_dag() {
     let n_members = NodeCount(7);
     let max_round: Round = 25;
 
-    let (mut test_controller, killers, handles, mut units_from_controller, units_for_creators) =
-        setup_test(n_members);
+    let TestSetup {
+        mut test_controller,
+        killers,
+        handles,
+        mut units_from_controller,
+        units_for_creators,
+    } = setup_test(n_members);
     loop {
         futures::select! {
             _ = test_controller.control_until(max_round).fuse() => break,
@@ -239,8 +249,13 @@ async fn late_creators_should_create_dag() {
     let n_members = NodeCount(7);
     let max_round: Round = 25;
 
-    let (mut test_controller, killers, handles, mut units_from_controller, units_for_creators) =
-        setup_test(n_members);
+    let TestSetup {
+        mut test_controller,
+        killers,
+        handles,
+        mut units_from_controller,
+        units_for_creators,
+    } = setup_test(n_members);
     let mut dropped_units = Vec::new();
     loop {
         futures::select! {

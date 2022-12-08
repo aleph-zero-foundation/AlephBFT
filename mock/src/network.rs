@@ -108,12 +108,11 @@ impl<D: Debug> Debug for Router<D> {
     }
 }
 
+type RouterWithNetworks<D> = (Router<D>, Vec<(Network<D>, ReconnectSender<D>)>);
+
 impl<D: Debug> Router<D> {
     // reliability - a number in the range [0, 1], 1.0 means perfect reliability, 0.0 means no message gets through
-    pub fn new(
-        n_members: NodeCount,
-        reliability: f64,
-    ) -> (Router<D>, Vec<(Network<D>, ReconnectSender<D>)>) {
+    pub fn new(n_members: NodeCount, reliability: f64) -> RouterWithNetworks<D> {
         let peer_list = n_members.into_iterator().collect();
         let (reconnect_tx, peer_reconnect_rx) = unbounded();
         let mut router = Router {

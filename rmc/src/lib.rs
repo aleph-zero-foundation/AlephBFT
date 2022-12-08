@@ -348,14 +348,12 @@ mod tests {
         message_filter: Box<dyn FnMut(NodeIndex, TestMessage) -> bool>,
     }
 
+    type ReceiversSenders = Vec<(UnboundedReceiver<TestMessage>, UnboundedSender<TestMessage>)>;
     impl TestNetwork {
         fn new(
             node_count: NodeCount,
             message_filter: impl FnMut(NodeIndex, TestMessage) -> bool + 'static,
-        ) -> (
-            Self,
-            Vec<(UnboundedReceiver<TestMessage>, UnboundedSender<TestMessage>)>,
-        ) {
+        ) -> (Self, ReceiversSenders) {
             let all_nodes: Vec<_> = (0..node_count.0).map(NodeIndex).collect();
             let (incomng_txs, incoming_rxs): (Vec<_>, Vec<_>) =
                 all_nodes.iter().map(|_| unbounded::<TestMessage>()).unzip();

@@ -113,16 +113,15 @@ mod tests {
     const NODE_ID: NodeIndex = NodeIndex(0);
     const N_MEMBERS: NodeCount = NodeCount(4);
 
-    fn prepare(
-        keychain: Keychain,
-    ) -> (
-        Sender<PreUnit<Hasher64>>,
-        Receiver<SignedUnit<Hasher64, Data, Keychain>>,
-        Packer<Hasher64, Data, DataProvider, Keychain>,
-        oneshot::Sender<()>,
-        Terminator,
-        PreUnit<Hasher64>,
-    ) {
+    struct Preliminaries {
+        preunits_channel: Sender<PreUnit<Hasher64>>,
+        signed_units_channel: Receiver<SignedUnit<Hasher64, Data, Keychain>>,
+        packer: Packer<Hasher64, Data, DataProvider, Keychain>,
+        terminator: Terminator,
+        preunit: PreUnit<Hasher64>,
+    }
+
+    fn prepare(keychain: Keychain) -> Preliminaries {
         let data_provider = DataProvider::new();
         let (preunits_channel, preunits_from_runway) = mpsc::unbounded();
         let (signed_units_for_runway, signed_units_channel) = mpsc::unbounded();
@@ -133,25 +132,30 @@ mod tests {
             keychain,
             SESSION_ID,
         );
-        let (exit_tx, exit_rx) = oneshot::channel();
+        let (_exit_tx, exit_rx) = oneshot::channel();
         let parent_map = NodeMap::with_size(N_MEMBERS);
         let control_hash = ControlHash::new(&parent_map);
+        let terminator = Terminator::create_root(exit_rx, "AlephBFT-packer");
         let preunit = PreUnit::new(NODE_ID, 0, control_hash);
-        (
+        Preliminaries {
             preunits_channel,
             signed_units_channel,
             packer,
-            exit_tx,
-            Terminator::create_root(exit_rx, "AlephBFT-packer"),
+            terminator,
             preunit,
-        )
+        }
     }
 
     #[tokio::test]
     async fn unit_packed() {
         let keychain = Keychain::new(N_MEMBERS, NODE_ID);
-        let (preunits_channel, signed_units_channel, mut packer, _exit_tx, terminator, preunit) =
-            prepare(keychain);
+        let Preliminaries {
+            preunits_channel,
+            signed_units_channel,
+            mut packer,
+            terminator,
+            preunit,
+        } = prepare(keychain);
         let packer_handle = packer.run(terminator).fuse();
         preunits_channel
             .unbounded_send(preunit.clone())
@@ -174,14 +178,24 @@ mod tests {
     #[tokio::test]
     async fn preunits_channel_closed() {
         let keychain = Keychain::new(N_MEMBERS, NODE_ID);
-        let (_, _signed_units_channel, mut packer, _exit_tx, terminator, _) = prepare(keychain);
+        let Preliminaries {
+            mut packer,
+            terminator,
+            ..
+        } = prepare(keychain);
         assert_eq!(packer.run(terminator).await, Err(()));
     }
 
     #[tokio::test]
     async fn signed_units_channel_closed() {
         let keychain = Keychain::new(N_MEMBERS, NODE_ID);
-        let (preunits_channel, _, mut packer, _exit_tx, terminator, preunit) = prepare(keychain);
+        let Preliminaries {
+            preunits_channel,
+            mut packer,
+            terminator,
+            preunit,
+            ..
+        } = prepare(keychain);
         preunits_channel
             .unbounded_send(preunit)
             .expect("Packer PreUnit channel closed");

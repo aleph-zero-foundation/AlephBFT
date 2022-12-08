@@ -1,5 +1,5 @@
 use crate::{
-    testing::{init_log, spawn_honest_member},
+    testing::{init_log, spawn_honest_member, HonestMember},
     NodeCount, SpawnHandle,
 };
 use aleph_bft_mock::{Router, Spawner};
@@ -23,9 +23,13 @@ async fn honest_members_agree_on_batches(
     for (network, _) in networks {
         let ix = network.index();
         if n_alive.into_range().contains(&ix) {
-            let (batch_rx, _, exit_tx, handle) =
-                spawn_honest_member(spawner, ix, n_members, vec![], network);
-            batch_rxs.push(batch_rx);
+            let HonestMember {
+                finalization_rx,
+                exit_tx,
+                handle,
+                ..
+            } = spawn_honest_member(spawner, ix, n_members, vec![], network);
+            batch_rxs.push(finalization_rx);
             exits.push(exit_tx);
             handles.push(handle);
         }

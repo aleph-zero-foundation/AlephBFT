@@ -2,6 +2,6 @@
 
 set -e
 
-cargo clippy --all-targets --all-features -- -D warnings -A clippy::type_complexity
+cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all
 cargo test --lib -- --skip medium

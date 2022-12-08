@@ -65,18 +65,20 @@ pub fn gen_config(node_ix: NodeIndex, n_members: NodeCount) -> Config {
     }
 }
 
+pub struct HonestMember {
+    finalization_rx: UnboundedReceiver<Data>,
+    saved_state: Arc<Mutex<Vec<u8>>>,
+    exit_tx: oneshot::Sender<()>,
+    handle: TaskHandle,
+}
+
 pub fn spawn_honest_member(
     spawner: Spawner,
     node_index: NodeIndex,
     n_members: NodeCount,
     units: Vec<u8>,
     network: impl 'static + NetworkT<NetworkData>,
-) -> (
-    UnboundedReceiver<Data>,
-    Arc<Mutex<Vec<u8>>>,
-    oneshot::Sender<()>,
-    TaskHandle,
-) {
+) -> HonestMember {
     let data_provider = DataProvider::new();
     let (finalization_handler, finalization_rx) = FinalizationHandler::new();
     let config = gen_config(node_index, n_members);
@@ -99,5 +101,10 @@ pub fn spawn_honest_member(
         .await
     };
     let handle = spawner.spawn_essential("member", member_task);
-    (finalization_rx, saved_state, exit_tx, handle)
+    HonestMember {
+        finalization_rx,
+        saved_state,
+        exit_tx,
+        handle,
+    }
 }

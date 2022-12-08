@@ -1,7 +1,7 @@
 use crate::{
     member::UnitMessage::NewUnit,
     network::NetworkDataInner::Units,
-    testing::{init_log, spawn_honest_member, Network, NetworkData},
+    testing::{init_log, spawn_honest_member, HonestMember, Network, NetworkData},
     units::{ControlHash, FullUnit, PreUnit, SignedUnit, UnitCoord},
     Hasher, Network as NetworkT, NetworkData as NetworkDataT, NodeCount, NodeIndex, NodeMap,
     Recipient, Round, SessionId, Signed, SpawnHandle, TaskHandle,
@@ -265,9 +265,13 @@ async fn honest_members_agree_on_batches_byzantine(
         let (exit_tx, handle) = if !n_honest.into_range().contains(&ix) {
             spawn_malicious_member(spawner, ix, n_members, 2, network)
         } else {
-            let (batch_rx, _, exit_tx, handle) =
-                spawn_honest_member(spawner, ix, n_members, vec![], network);
-            batch_rxs.push(batch_rx);
+            let HonestMember {
+                finalization_rx,
+                exit_tx,
+                handle,
+                ..
+            } = spawn_honest_member(spawner, ix, n_members, vec![], network);
+            batch_rxs.push(finalization_rx);
             (exit_tx, handle)
         };
         exits.push(exit_tx);

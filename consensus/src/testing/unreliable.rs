@@ -1,7 +1,7 @@
 use crate::{
     member::UnitMessage,
     network::NetworkDataInner,
-    testing::{init_log, spawn_honest_member, NetworkData},
+    testing::{init_log, spawn_honest_member, HonestMember, NetworkData},
     Index, NodeCount, NodeIndex, Round, Signed, SpawnHandle,
 };
 use aleph_bft_mock::{BadSigning, Keychain, NetworkHook, Router, Spawner};
@@ -92,9 +92,13 @@ async fn request_missing_coord() {
     let mut batch_rxs = Vec::new();
     for (network, _) in networks {
         let ix = network.index();
-        let (batch_rx, _, exit_tx, handle) =
-            spawn_honest_member(spawner, ix, n_members, vec![], network);
-        batch_rxs.push(batch_rx);
+        let HonestMember {
+            finalization_rx,
+            exit_tx,
+            handle,
+            ..
+        } = spawn_honest_member(spawner, ix, n_members, vec![], network);
+        batch_rxs.push(finalization_rx);
         exits.push(exit_tx);
         handles.push(handle);
     }

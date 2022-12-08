@@ -1,7 +1,7 @@
 use crate::{
-    units::UncheckedSignedUnit, Data, Hasher, Index, MultiKeychain, Multisigned, NodeCount,
-    NodeIndex, PartialMultisignature, Receiver, Recipient, Sender, SessionId, Signable, Signature,
-    Signed, Terminator, UncheckedSigned,
+    units::UncheckedSignedUnit, Data, Hasher, Index, Keychain, MultiKeychain, Multisigned,
+    NodeCount, NodeIndex, PartialMultisignature, Receiver, Recipient, Sender, SessionId, Signable,
+    Signature, Signed, Terminator, UncheckedSigned,
 };
 use aleph_bft_rmc::{DoublingDelayScheduler, Message as RmcMessage, ReliableMulticast};
 use codec::{Decode, Encode};
@@ -155,6 +155,9 @@ pub enum ForkingNotification<H: Hasher, D: Data, S: Signature> {
     Units(Vec<UncheckedSignedUnit<H, D, S>>),
 }
 
+type KnownAlerts<H, D, MK> =
+    HashMap<<H as Hasher>::Hash, Signed<Alert<H, D, <MK as Keychain>::Signature>, MK>>;
+
 /// The component responsible for fork alerts in AlephBFT. We refer to the documentation
 /// https://cardinal-cryptography.github.io/AlephBFT/how_alephbft_does_it.html Section 2.5 and
 /// https://cardinal-cryptography.github.io/AlephBFT/reliable_broadcast.html and to the Aleph
@@ -163,7 +166,7 @@ struct Alerter<'a, H: Hasher, D: Data, MK: MultiKeychain> {
     session_id: SessionId,
     keychain: &'a MK,
     known_forkers: HashMap<NodeIndex, ForkProof<H, D, MK::Signature>>,
-    known_alerts: HashMap<H::Hash, Signed<Alert<H, D, MK::Signature>, MK>>,
+    known_alerts: KnownAlerts<H, D, MK>,
     known_rmcs: HashMap<(NodeIndex, NodeIndex), H::Hash>,
     exiting: bool,
 }
@@ -173,6 +176,11 @@ pub(crate) struct AlertConfig {
     pub n_members: NodeCount,
     pub session_id: SessionId,
 }
+
+type NetworkAlert<H, D, MK> = Option<(
+    Option<ForkingNotification<H, D, <MK as Keychain>::Signature>>,
+    <H as Hasher>::Hash,
+)>;
 
 impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
     fn new(keychain: &'a MK, config: AlertConfig) -> Self {
@@ -305,7 +313,7 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
     fn on_network_alert(
         &mut self,
         alert: UncheckedSigned<Alert<H, D, MK::Signature>, MK::Signature>,
-    ) -> Option<(Option<ForkingNotification<H, D, MK::Signature>>, H::Hash)> {
+    ) -> NetworkAlert<H, D, MK> {
         let alert = match alert.check(self.keychain) {
             Ok(alert) => alert,
             Err(e) => {
@@ -398,13 +406,13 @@ impl<'a, H: Hasher, D: Data, MK: MultiKeychain> Alerter<'a, H, D, MK> {
     }
 }
 
+pub type NetworkMessage<H, D, MK> =
+    AlertMessage<H, D, <MK as Keychain>::Signature, <MK as MultiKeychain>::PartialMultisignature>;
+
 pub(crate) async fn run<H: Hasher, D: Data, MK: MultiKeychain>(
     keychain: MK,
-    messages_for_network: Sender<(
-        AlertMessage<H, D, MK::Signature, MK::PartialMultisignature>,
-        Recipient,
-    )>,
-    messages_from_network: Receiver<AlertMessage<H, D, MK::Signature, MK::PartialMultisignature>>,
+    messages_for_network: Sender<(NetworkMessage<H, D, MK>, Recipient)>,
+    messages_from_network: Receiver<NetworkMessage<H, D, MK>>,
     notifications_for_units: Sender<ForkingNotification<H, D, MK::Signature>>,
     alerts_from_units: Receiver<Alert<H, D, MK::Signature>>,
     config: AlertConfig,
