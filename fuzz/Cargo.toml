@@ -19,7 +19,7 @@ futures-timer = "3.0"
 log = "0.4"
 parking_lot = "0.12"
 structopt = "0.3.21"
-tokio = { version = "1.6.1", features = ["rt"] }
+tokio = { version = "1.23.0", features = ["rt"] }
 
 libfuzzer-sys = { version = "0.4.2", optional = true }
 afl = { version = "0.10.1", optional = true }
