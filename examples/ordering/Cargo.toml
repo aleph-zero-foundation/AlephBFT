@@ -13,7 +13,7 @@ aleph-bft-types = { path = "../../types", version = "*" }
 async-trait = "0.1"
 clap = { version = "3.2.1", features = ["derive"] }
 codec = { package = "parity-scale-codec", version = "3.0", default-features = false, features = ["derive"] }
-env_logger = "0.9"
+env_logger = "0.10"
 futures = "0.3"
 log = "0.4"
 parking_lot = "0.12"

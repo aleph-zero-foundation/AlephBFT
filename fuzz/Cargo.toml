@@ -13,7 +13,7 @@ aleph-bft = { path = "../consensus", version = "*" }
 aleph-bft-mock = { path = "../mock", version = "*" }
 async-trait = "0.1"
 codec = { package = "parity-scale-codec", version = "3.0", default-features = false, features = ["derive", "std"] }
-env_logger = "0.9"
+env_logger = "0.10"
 futures = "0.3"
 futures-timer = "3.0"
 log = "0.4"

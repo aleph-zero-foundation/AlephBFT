@@ -29,7 +29,7 @@ thiserror = "1.0"
 
 [dev-dependencies]
 aleph-bft-mock = { path = "../mock" }
-env_logger = "0.9"
+env_logger = "0.10"
 tokio = { version = "1.6.1", features = ["macros", "rt", "rt-multi-thread", "time"] }
 serial_test = "0.8.0"
 
