@@ -17,7 +17,7 @@ futures = "0.3"
 futures-timer = "3.0"
 log = "0.4"
 parking_lot = "0.12"
-sha3 = "0.9"
+sha3 = "0.10"
 time = { version = "0.3", features = ["formatting", "macros", "local-offset"] }
 tokio = { version = "1.18", features = ["macros", "rt", "rt-multi-thread", "io-util", "net", "time"] }
 unsigned-varint = { version = "0.7.0", features = ["futures", "asynchronous_codec"] }
