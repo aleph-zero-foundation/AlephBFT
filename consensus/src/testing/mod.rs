@@ -86,7 +86,7 @@ pub fn spawn_honest_member(
     let spawner_inner = spawner;
     let unit_loader = Loader::new(units);
     let saved_state = Arc::new(Mutex::new(vec![]));
-    let unit_saver = Saver::new(saved_state.clone());
+    let unit_saver: Saver = saved_state.clone().into();
     let local_io = LocalIO::new(data_provider, finalization_handler, unit_saver, unit_loader);
     let member_task = async move {
         let keychain = Keychain::new(n_members, node_index);

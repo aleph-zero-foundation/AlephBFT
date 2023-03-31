@@ -92,7 +92,15 @@ pub struct Saver {
 }
 
 impl Saver {
-    pub fn new(data: Arc<Mutex<Vec<u8>>>) -> Self {
+    pub fn new() -> Self {
+        Self {
+            data: Arc::new(Mutex::new(vec![])),
+        }
+    }
+}
+
+impl From<Arc<Mutex<Vec<u8>>>> for Saver {
+    fn from(data: Arc<Mutex<Vec<u8>>>) -> Self {
         Self { data }
     }
 }

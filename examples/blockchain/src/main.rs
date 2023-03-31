@@ -2,14 +2,12 @@ use std::{
     collections::HashMap,
     io::Write,
     str::FromStr,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
 use clap::Parser;
 use futures::{channel::oneshot, StreamExt};
 use log::{debug, error, info};
-use parking_lot::Mutex;
 use time::{macros::format_description, OffsetDateTime};
 
 use aleph_bft::{run_session, NodeIndex, Terminator};
@@ -132,7 +130,7 @@ async fn main() {
         let keychain = Keychain::new(args.n_members.into(), args.my_id.into());
         let config = aleph_bft::default_config(args.n_members.into(), args.my_id.into(), 0);
         let backup_loader = Loader::new(vec![]);
-        let backup_saver = Saver::new(Arc::new(Mutex::new(vec![])));
+        let backup_saver = Saver::new();
         let local_io = aleph_bft::LocalIO::new(
             data_provider,
             finalization_handler,

@@ -219,9 +219,8 @@ pub fn spawn_honest_member_with_config(
     network: impl 'static + NetworkT<FuzzNetworkData>,
     mk: Keychain,
 ) -> (oneshot::Sender<()>, UReceiver<Data>) {
-    let units = Arc::new(Mutex::new(vec![]));
-    let unit_loader = Loader::new((*units.lock()).clone());
-    let unit_saver = Saver::new(units);
+    let unit_loader = Loader::new(vec![]);
+    let unit_saver = Saver::new();
     let data_provider = DataProvider::new();
     let (finalization_handler, finalization_rx) = FinalizationHandler::new();
     let local_io = LocalIO::new(data_provider, finalization_handler, unit_saver, unit_loader);
