@@ -26,10 +26,7 @@ pub struct UnitCoord {
 
 impl UnitCoord {
     pub fn new(round: Round, creator: NodeIndex) -> Self {
-        Self {
-            creator,
-            round: round as u16,
-        }
+        Self { creator, round }
     }
 
     pub fn creator(&self) -> NodeIndex {

@@ -271,7 +271,7 @@ impl StdIndex<NodeIndex> for NodeSubset {
     type Output = bool;
 
     fn index(&self, vidx: NodeIndex) -> &bool {
-        &self.0[vidx.0 as usize]
+        &self.0[vidx.0]
     }
 }
 

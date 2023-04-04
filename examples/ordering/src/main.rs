@@ -42,7 +42,7 @@ struct Args {
 
 fn create_backup(node_id: NodeIndex) -> Result<(File, io::Cursor<Vec<u8>>), io::Error> {
     let stash_path = Path::new("./aleph-bft-examples-ordering-backup");
-    fs::create_dir_all(&stash_path)?;
+    fs::create_dir_all(stash_path)?;
     let file_path = stash_path.join(format!("{}.units", node_id.0));
     let loader = if file_path.exists() {
         io::Cursor::new(fs::read(&file_path)?)
