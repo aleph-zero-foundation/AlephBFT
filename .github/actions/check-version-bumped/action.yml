@@ -1,0 +1,20 @@
+---
+name: Check if version bumped
+description: Checks if version in Cargo.toml is bumped
+
+inputs:
+  cargo-toml-path:
+    description: "Path to Cargo.toml"
+    type: string
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Check
+      run: |
+        if ! git diff HEAD origin/main -- "${{ inputs.cargo-toml-path }}" | grep -q '^+version ='; then
+          echo "None of commits in this PR has changed version in ${{ inputs.cargo-toml-path }}!"
+          exit 1
+        fi
+      shell: bash

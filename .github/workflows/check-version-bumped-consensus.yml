@@ -12,17 +12,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check-version-bumped-consensus:
+  main:
     runs-on: ubuntu-latest
     steps:
-      - name: checkout
+      - name: GIT | Checkout
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-      - name: check-cargo-toml-version-bumped
-        run: |
-          if ! git diff HEAD origin/main -- consensus/Cargo.toml | grep -q '^+version ='; then
-            echo "None of commits in this PR has changed version in consensus/Cargo.toml!"
-            exit 1
-          fi
-        shell: bash
+
+      - name: Check if version bumped for 'consensus'
+        uses: ./.github/actions/check-version-bumped
+        with:
+          cargo-toml-path: consensus/Cargo.toml

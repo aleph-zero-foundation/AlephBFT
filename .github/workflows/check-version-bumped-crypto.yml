@@ -12,17 +12,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check-version-bumped-crypto:
+  main:
     runs-on: ubuntu-latest
     steps:
-      - name: checkout
+      - name: GIT | Checkout
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-      - name: check-cargo-toml-version-bumped
-        run: |
-          if ! git diff HEAD origin/main -- crypto/Cargo.toml | grep -q '^+version ='; then
-            echo "None of commits in this PR has changed version in crypto/Cargo.toml!"
-            exit 1
-          fi
-        shell: bash
+
+      - name: Check if version bumped for 'crypto'
+        uses: ./.github/actions/check-version-bumped
+        with:
+          cargo-toml-path: crypto/Cargo.toml
