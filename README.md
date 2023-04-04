@@ -124,7 +124,7 @@ rid of this dependency.
 
 ### Toolchain
 
-This release was built and tested against the `nightly-2021-10-24` Rust toolchain.
+This release was built and tested against the `nightly-2022-10-30` Rust toolchain.
 If you want to use another version, edit the `rust-toolchain` file, or use an [override](https://rust-lang.github.io/rustup/overrides.html) with higher priority.
 
 ### Tests

@@ -1,6 +1,6 @@
 [package]
 name = "aleph-bft-examples-ordering"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2021"
 authors = ["Cardinal Cryptography"]
 license = "Apache-2.0"
@@ -11,11 +11,11 @@ aleph-bft = { path = "../../consensus", version = "*" }
 aleph-bft-mock = { path = "../../mock", version = "*" }
 aleph-bft-types = { path = "../../types", version = "*" }
 async-trait = "0.1"
-clap = { version = "4.0.32", features = ["derive"] }
+clap = { version = "4", features = ["derive"] }
 codec = { package = "parity-scale-codec", version = "3.0", default-features = false, features = ["derive"] }
 env_logger = "0.10"
 futures = "0.3"
 log = "0.4"
 parking_lot = "0.12"
 time = { version = "0.3", features = ["formatting", "macros", "local-offset"] }
-tokio = { version = "1.18", features = ["macros", "rt", "rt-multi-thread", "io-util", "net", "time"] }
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "io-util", "net", "time"] }

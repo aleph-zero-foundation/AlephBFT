@@ -1,6 +1,6 @@
 [package]
 name = "aleph-bft-crypto"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2021"
 authors = ["Cardinal Cryptography"]
 documentation = "https://docs.rs/?"
@@ -19,4 +19,4 @@ derive_more = "0.99"
 log = "0.4"
 
 [dev-dependencies]
-tokio = { version = "1.6.1", features = ["macros", "rt", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
