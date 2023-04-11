@@ -1,0 +1,91 @@
+---
+name: Install rust toolchain
+description: |
+  Parses rust-toolchain.toml file and installs rust toolchain based on its contents:
+    * channel, e.g nightly-2022-10-30
+    * list of targets, e.g. ["wasm32-unknown-unknown"]
+    * list of components, e.g. ["clippy", "rustfmt"]
+  Also, this action contains set of inputs that can override any of the above.
+  Existence of rust-toolchain.toml file is not mandatory, yet channel is then required to be
+  passed as an input.
+inputs:
+  channel:
+    description: |
+      Toolchain channel. It's required only when rust-toolchain.toml file does not specify it.
+    required: false
+  targets:
+    description: Optional. List of targets to install with the given channel.
+    required: false
+  components:
+    description: Optional. List of cargo components to install.
+    required: false
+
+runs:
+  using: composite
+  steps:
+    # This step needs to be extracted either to docker image or to setup of self-hosted runner
+    - name: Install rustup
+      shell: bash
+      run: |
+        if ! command -v rustup &>/dev/null; then
+          curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused -fsSL \
+            "https://sh.rustup.rs" | sh -s -- --default-toolchain none -y
+          echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> $GITHUB_PATH
+        fi
+
+    - name: Read channel from rust-toolchain.toml
+      id: toolchain-channel
+      uses: SebRollen/toml-action@v1.0.2
+      with:
+        file: 'rust-toolchain.toml'
+        field: 'toolchain.channel'
+
+    - name: Read components from rust-toolchain.toml
+      id: toolchain-components
+      uses: SebRollen/toml-action@v1.0.2
+      with:
+        file: 'rust-toolchain.toml'
+        field: 'toolchain.components'
+
+    - name: Read targets from rust-toolchain.toml
+      id: toolchain-targets
+      uses: SebRollen/toml-action@v1.0.2
+      with:
+        file: 'rust-toolchain.toml'
+        field: 'toolchain.targets'
+
+    - name: Install rust toolchain
+      id: install-rust-toolchain
+      shell: bash
+      env:
+        CHANNEL: ${{ inputs.channel || steps.toolchain-channel.outputs.value }}
+      run: |
+        if [[ -z "${{  steps.toolchain-channel.outputs.value }}" ]]; then
+          echo "Could not find value for toolchain.channel in rust-toolchain.toml!"
+          exit 1
+        fi
+        rustup toolchain install ${{ env.CHANNEL }}
+        echo "channel=${{ env.CHANNEL }}" >> $GITHUB_OUTPUT
+
+    - name: Add components (optional)
+      if: inputs.components != '' || steps.toolchain-components.outputs.value != ''
+      shell: bash
+      env:
+        COMPONENTS: ${{ inputs.components || steps.toolchain-components.outputs.value }}
+      run: |
+        components=$(echo ${{ env.COMPONENTS }} | tr -d '[]' | sed 's/,/ /g')
+        for component in $components; do
+          rustup component add $component
+        done
+
+    - name: Add targets (optional)
+      if: inputs.targets != '' || steps.toolchain-targets.outputs.value != ''
+      shell: bash
+      env:
+        TARGETS: ${{ inputs.targets || steps.toolchain-targets.outputs.value }}
+      run: |
+        targets=$(echo ${{ env.TARGETS }} | tr -d '[]' | sed 's/,/ /g')
+        for target in $targets; do
+          rustup target add $target \
+          --toolchain ${{ steps.install-rust-toolchain.outputs.channel }}
+        done
