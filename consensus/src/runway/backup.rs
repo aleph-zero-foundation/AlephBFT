@@ -229,78 +229,65 @@ mod tests {
     const NODE_ID: NodeIndex = NodeIndex(0);
     const N_MEMBERS: NodeCount = NodeCount(4);
 
-    struct Unit {
-        creator: NodeIndex,
-        session_id: SessionId,
-        round: Round,
-        ammount: usize,
-        corrupted: bool,
-    }
-
-    impl Unit {
-        fn new_correct(round: Round) -> Unit {
-            Unit {
-                creator: NODE_ID,
-                session_id: SESSION_ID,
-                round,
-                ammount: 1,
-                corrupted: false,
-            }
-        }
-    }
-
-    async fn prepare_test<'a>(
-        units: Vec<Unit>,
-    ) -> (
-        impl futures::Future,
-        Receiver<Vec<UncheckedSignedUnit>>,
-        Sender<Round>,
-        Receiver<Option<Round>>,
-        Vec<UncheckedSignedUnit>,
-    ) {
-        let mut encoded_data = Vec::new();
-        let mut data = Vec::new();
-
+    async fn produce_units(rounds: usize, session_id: SessionId) -> Vec<Vec<UncheckedSignedUnit>> {
         let mut creators = creator_set(N_MEMBERS);
         let keychains: Vec<_> = (0..N_MEMBERS.0)
             .map(|id| Keychain::new(N_MEMBERS, NodeIndex(id)))
             .collect();
 
-        for unit in units {
-            let Unit {
-                round,
-                creator,
-                session_id,
-                ammount,
-                corrupted,
-            } = unit;
+        let mut units_per_round = Vec::with_capacity(rounds);
+
+        for round in 0..rounds {
             let pre_units = create_units(creators.iter(), round as Round);
 
-            let unit = preunit_to_unchecked_signed_unit(
-                pre_units[creator.0].clone().0,
-                session_id,
-                &keychains[creator.0],
-            )
-            .await;
-            for _ in 0..ammount {
-                if corrupted {
-                    let backup = unit.clone().encode();
-                    encoded_data.extend_from_slice(&backup[..backup.len() - 1]);
-                } else {
-                    encoded_data.append(&mut unit.clone().encode());
-                }
-            }
-            data.push(unit);
-
-            let new_units: Vec<_> = pre_units
-                .into_iter()
-                .map(|(pre_unit, _)| preunit_to_unit(pre_unit, session_id))
+            let units: Vec<_> = pre_units
+                .iter()
+                .map(|(pre_unit, _)| preunit_to_unit(pre_unit.clone(), session_id))
                 .collect();
             for creator in creators.iter_mut() {
-                creator.add_units(&new_units);
+                creator.add_units(&units);
             }
+
+            let mut unchecked_signed_units = Vec::with_capacity(pre_units.len());
+            for ((pre_unit, _), keychain) in pre_units.into_iter().zip(keychains.iter()) {
+                unchecked_signed_units
+                    .push(preunit_to_unchecked_signed_unit(pre_unit, session_id, keychain).await)
+            }
+
+            units_per_round.push(unchecked_signed_units);
         }
-        let unit_loader = UnitLoader::new(Loader::new(encoded_data));
+
+        // units_per_round[i][j] is the unit produced in round i by creator j
+        units_per_round
+    }
+
+    fn units_of_creator(
+        units: Vec<Vec<UncheckedSignedUnit>>,
+        creator: NodeIndex,
+    ) -> Vec<UncheckedSignedUnit> {
+        units
+            .into_iter()
+            .map(|units_per_round| units_per_round[creator.0].clone())
+            .collect()
+    }
+
+    fn encode_all(units: Vec<UncheckedSignedUnit>) -> Vec<Vec<u8>> {
+        units.iter().map(|u| u.encode()).collect()
+    }
+
+    fn concatenate_encodings(unit_encodings: Vec<Vec<u8>>) -> Vec<u8> {
+        unit_encodings.into_iter().flatten().collect()
+    }
+
+    async fn prepare_test<'a>(
+        encoded_units: Vec<u8>,
+    ) -> (
+        impl futures::Future,
+        Receiver<Vec<UncheckedSignedUnit>>,
+        Sender<Round>,
+        Receiver<Option<Round>>,
+    ) {
+        let unit_loader = UnitLoader::new(Loader::new(encoded_units));
         let (loaded_unit_tx, loaded_unit_rx) = oneshot::channel();
         let (starting_round_tx, starting_round_rx) = oneshot::channel();
         let (highest_response_tx, highest_response_rx) = oneshot::channel();
@@ -317,13 +304,12 @@ mod tests {
             loaded_unit_rx,
             highest_response_tx,
             starting_round_rx,
-            data,
         )
     }
 
     #[tokio::test]
     async fn nothing_loaded_nothing_collected() {
-        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx, data) =
+        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx) =
             prepare_test(Vec::new()).await;
 
         let handle = tokio::spawn(async {
@@ -335,13 +321,16 @@ mod tests {
         handle.await.unwrap();
 
         assert_eq!(starting_round_rx.await, Ok(Some(0)));
-        assert_eq!(loaded_unit_rx.await, Ok(data));
+        assert_eq!(loaded_unit_rx.await, Ok(Vec::new()));
     }
 
     #[tokio::test]
     async fn something_loaded_nothing_collected() {
-        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx, data) =
-            prepare_test((0..5).map(Unit::new_correct).collect()).await;
+        let units = units_of_creator(produce_units(5, SESSION_ID).await, NodeIndex(0));
+        let encoded_units = concatenate_encodings(encode_all(units.clone()));
+
+        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx) =
+            prepare_test(encoded_units).await;
 
         let handle = tokio::spawn(async {
             task.await;
@@ -352,13 +341,16 @@ mod tests {
         handle.await.unwrap();
 
         assert_eq!(starting_round_rx.await, Ok(Some(5)));
-        assert_eq!(loaded_unit_rx.await, Ok(data));
+        assert_eq!(loaded_unit_rx.await, Ok(units));
     }
 
     #[tokio::test]
     async fn something_loaded_something_collected() {
-        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx, data) =
-            prepare_test((0..5).map(Unit::new_correct).collect()).await;
+        let units = units_of_creator(produce_units(5, SESSION_ID).await, NodeIndex(0));
+        let encoded_units = concatenate_encodings(encode_all(units.clone()));
+
+        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx) =
+            prepare_test(encoded_units).await;
 
         let handle = tokio::spawn(async {
             task.await;
@@ -369,12 +361,12 @@ mod tests {
         handle.await.unwrap();
 
         assert_eq!(starting_round_rx.await, Ok(Some(5)));
-        assert_eq!(loaded_unit_rx.await, Ok(data));
+        assert_eq!(loaded_unit_rx.await, Ok(units));
     }
 
     #[tokio::test]
     async fn nothing_loaded_something_collected() {
-        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx, data) =
+        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx) =
             prepare_test(Vec::new()).await;
 
         let handle = tokio::spawn(async {
@@ -386,13 +378,16 @@ mod tests {
         handle.await.unwrap();
 
         assert_eq!(starting_round_rx.await, Ok(None));
-        assert_eq!(loaded_unit_rx.await, Ok(data));
+        assert_eq!(loaded_unit_rx.await, Ok(Vec::new()));
     }
 
     #[tokio::test]
     async fn loaded_smaller_then_collected() {
-        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx, data) =
-            prepare_test((0..3).map(Unit::new_correct).collect()).await;
+        let units = units_of_creator(produce_units(3, SESSION_ID).await, NodeIndex(0));
+        let encoded_units = concatenate_encodings(encode_all(units.clone()));
+
+        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx) =
+            prepare_test(encoded_units).await;
 
         let handle = tokio::spawn(async {
             task.await;
@@ -403,13 +398,16 @@ mod tests {
         handle.await.unwrap();
 
         assert_eq!(starting_round_rx.await, Ok(None));
-        assert_eq!(loaded_unit_rx.await, Ok(data));
+        assert_eq!(loaded_unit_rx.await, Ok(units));
     }
 
     #[tokio::test]
     async fn nothing_collected() {
-        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx, data) =
-            prepare_test((0..3).map(Unit::new_correct).collect()).await;
+        let units = units_of_creator(produce_units(3, SESSION_ID).await, NodeIndex(0));
+        let encoded_units = concatenate_encodings(encode_all(units.clone()));
+
+        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx) =
+            prepare_test(encoded_units).await;
 
         let handle = tokio::spawn(async {
             task.await;
@@ -420,21 +418,19 @@ mod tests {
         handle.await.unwrap();
 
         assert_eq!(starting_round_rx.await, Ok(None));
-        assert_eq!(loaded_unit_rx.await, Ok(data));
+        assert_eq!(loaded_unit_rx.await, Ok(units));
     }
 
     #[tokio::test]
     async fn corrupted_backup_codec() {
-        let mut units: Vec<_> = (0..5).map(Unit::new_correct).collect();
-        units[2] = Unit {
-            creator: NODE_ID,
-            session_id: SESSION_ID,
-            round: 2,
-            ammount: 1,
-            corrupted: true,
-        };
-        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx, _) =
-            prepare_test(units).await;
+        let units = units_of_creator(produce_units(5, SESSION_ID).await, NodeIndex(0));
+        let mut unit_encodings = encode_all(units);
+        let unit2_encoding_len = unit_encodings[2].len();
+        unit_encodings[2].resize(unit2_encoding_len - 1, 0); // remove the last byte
+        let encoded_units = concatenate_encodings(unit_encodings);
+
+        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx) =
+            prepare_test(encoded_units).await;
         let handle = tokio::spawn(async {
             task.await;
         });
@@ -449,16 +445,12 @@ mod tests {
 
     #[tokio::test]
     async fn corrupted_backup_missing() {
-        let mut units: Vec<_> = (0..5).map(Unit::new_correct).collect();
-        units[2] = Unit {
-            creator: NODE_ID,
-            session_id: SESSION_ID,
-            round: 2,
-            ammount: 0,
-            corrupted: true,
-        };
-        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx, _) =
-            prepare_test(units).await;
+        let mut units = units_of_creator(produce_units(5, SESSION_ID).await, NodeIndex(0));
+        units.remove(2);
+        let encoded_units = concatenate_encodings(encode_all(units));
+
+        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx) =
+            prepare_test(encoded_units).await;
         let handle = tokio::spawn(async {
             task.await;
         });
@@ -473,16 +465,13 @@ mod tests {
 
     #[tokio::test]
     async fn corrupted_backup_duplicate() {
-        let mut units: Vec<_> = (0..5).map(Unit::new_correct).collect();
-        units[2] = Unit {
-            creator: NODE_ID,
-            session_id: SESSION_ID,
-            round: 2,
-            ammount: 2,
-            corrupted: true,
-        };
-        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx, _) =
-            prepare_test(units).await;
+        let mut units = units_of_creator(produce_units(5, SESSION_ID).await, NodeIndex(0));
+        let unit2_duplicate = units[2].clone();
+        units.insert(3, unit2_duplicate);
+        let encoded_units = concatenate_encodings(encode_all(units));
+
+        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx) =
+            prepare_test(encoded_units).await;
 
         let handle = tokio::spawn(async {
             task.await;
@@ -498,12 +487,11 @@ mod tests {
 
     #[tokio::test]
     async fn corrupted_backup_wrong_creator() {
-        let mut units: Vec<_> = (0..5).map(Unit::new_correct).collect();
-        units
-            .iter_mut()
-            .for_each(|u| u.creator = NodeIndex(NODE_ID.0 + 1));
-        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx, _) =
-            prepare_test(units).await;
+        let units = units_of_creator(produce_units(5, SESSION_ID).await, NodeIndex(NODE_ID.0 + 1));
+        let encoded_units = concatenate_encodings(encode_all(units));
+
+        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx) =
+            prepare_test(encoded_units).await;
 
         let handle = tokio::spawn(async {
             task.await;
@@ -519,10 +507,11 @@ mod tests {
 
     #[tokio::test]
     async fn corrupted_backup_wrong_session() {
-        let mut units: Vec<_> = (0..5).map(Unit::new_correct).collect();
-        units.iter_mut().for_each(|u| u.session_id += 1);
-        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx, _) =
-            prepare_test(units).await;
+        let units = units_of_creator(produce_units(5, SESSION_ID + 1).await, NodeIndex(0));
+        let encoded_units = concatenate_encodings(encode_all(units));
+
+        let (task, loaded_unit_rx, highest_response_tx, starting_round_rx) =
+            prepare_test(encoded_units).await;
 
         let handle = tokio::spawn(async {
             task.await;
