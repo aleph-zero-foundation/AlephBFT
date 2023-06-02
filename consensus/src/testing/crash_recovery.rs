@@ -1,6 +1,6 @@
 use crate::{
     testing::{init_log, spawn_honest_member, HonestMember, Network, ReconnectSender},
-    units::UncheckedSignedUnit,
+    units::{UncheckedSignedUnit, UnitCoord},
     NodeCount, NodeIndex, SpawnHandle, TaskHandle,
 };
 use aleph_bft_mock::{Data, Hasher64, Router, Signature, Spawner};
@@ -11,7 +11,11 @@ use futures::{
 };
 use parking_lot::Mutex;
 use serial_test::serial;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
 
 struct NodeData {
     batch_rx: mpsc::UnboundedReceiver<Data>,
@@ -121,6 +125,26 @@ async fn reconnect_nodes(
     reconnected_nodes
 }
 
+fn verify_backup(buf: &mut &[u8]) -> HashSet<UnitCoord> {
+    let mut already_saved = HashSet::new();
+
+    while !buf.is_empty() {
+        let unit = UncheckedSignedUnit::<Hasher64, Data, Signature>::decode(buf).unwrap();
+        let full_unit = unit.as_signable();
+        let coord = full_unit.coord();
+        let parent_ids = &full_unit.as_pre_unit().control_hash().parents_mask;
+
+        for parent_id in parent_ids.elements() {
+            let parent = UnitCoord::new(coord.round() - 1, parent_id);
+            assert!(already_saved.contains(&parent));
+        }
+
+        already_saved.insert(coord);
+    }
+
+    already_saved
+}
+
 /// Tests that finalization continues after some nodes restart.
 ///
 /// Performs the following steps:
@@ -194,32 +218,16 @@ async fn crashed_nodes_recover(n_members: NodeCount, n_batches: usize) {
     }
 
     let expected_batches = &node_data[&NodeIndex(0)].batches;
-    for (ix, data) in node_data.iter() {
-        assert_eq!((ix, expected_batches), (ix, &data.batches));
+    for (_, data) in node_data.iter() {
+        assert_eq!(expected_batches, &data.batches);
     }
 
     for (ix, (_, saved_units_before)) in killed {
-        let buf = &mut &saved_units_before[..];
-        let mut counter = 0;
-        while !buf.is_empty() {
-            let u = UncheckedSignedUnit::<Hasher64, Data, Signature>::decode(buf).unwrap();
-            let su = u.as_signable();
-            let coord = su.coord();
-            assert_eq!(coord.creator(), ix);
-            assert_eq!(coord.round(), counter);
-            counter += 1;
-        }
+        let saved_before_coords = verify_backup(&mut &saved_units_before[..]);
         let NodeData { saved_units, .. } = node_data.get(&ix).expect("should contain killed node");
 
-        let buf = &mut &saved_units.lock()[..];
-        while !buf.is_empty() {
-            let u = UncheckedSignedUnit::<Hasher64, Data, Signature>::decode(buf).unwrap();
-            let su = u.as_signable();
-            let coord = su.coord();
-            assert_eq!(coord.creator(), ix);
-            assert_eq!(coord.round(), counter,);
-            counter += 1;
-        }
+        let saved_after_coords = verify_backup(&mut &saved_units.lock()[..]);
+        assert!(saved_before_coords.is_subset(&saved_after_coords));
     }
 
     shutdown(node_data).await;
@@ -227,7 +235,7 @@ async fn crashed_nodes_recover(n_members: NodeCount, n_batches: usize) {
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn saves_created_units() {
+async fn saves_units_properly() {
     init_log();
     let n_batches = 2;
     let n_members = NodeCount(4);
@@ -251,17 +259,8 @@ async fn saves_created_units() {
         killed.insert(i, saved_units);
     }
 
-    for (ix, saved_units) in killed {
-        let buf = &mut &saved_units[..];
-        let mut counter = 0;
-        while !buf.is_empty() {
-            let u = UncheckedSignedUnit::<Hasher64, Data, Signature>::decode(buf).unwrap();
-            let su = u.as_signable();
-            let coord = su.coord();
-            assert_eq!(coord.creator(), ix);
-            assert_eq!(coord.round(), counter);
-            counter += 1;
-        }
+    for (_, saved_units) in killed {
+        let _ = verify_backup(&mut &saved_units[..]);
     }
 }
 
