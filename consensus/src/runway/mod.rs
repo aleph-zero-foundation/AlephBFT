@@ -880,8 +880,8 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
     let (alert_notifications_for_units, notifications_from_alerter) = mpsc::unbounded();
     let (alerts_for_alerter, alerts_from_units) = mpsc::unbounded();
     let alert_config = AlertConfig {
-        session_id: config.session_id,
-        n_members: config.n_members,
+        session_id: config.session_id(),
+        n_members: config.n_members(),
     };
     let alerter_terminator = terminator.add_offspring_connection("AlephBFT-alerter");
     let alerter_keychain = keychain.clone();
@@ -938,21 +938,22 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
     let index = keychain.index();
     let threshold = (keychain.node_count() * 2) / 3 + NodeCount(1);
     let validator = Validator::new(
-        config.session_id,
+        config.session_id(),
         keychain.clone(),
-        config.max_round,
+        config.max_round(),
         threshold,
     );
     let (responses_for_collection, responses_from_runway) = mpsc::unbounded();
     let (unit_collections_sender, unit_collection_result) = oneshot::channel();
     let (loaded_units_tx, loaded_units_rx) = oneshot::channel();
+    let session_id = config.session_id();
 
     let backup_loading_handle = spawn_handle
         .spawn_essential("runway/loading", async move {
             backup::run_loading_mechanism(
                 runway_io.unit_loader,
                 index,
-                config.session_id,
+                session_id,
                 loaded_units_tx,
                 starting_round_sender,
                 unit_collection_result,
@@ -1005,7 +1006,7 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
                 ordered_batch_rx,
                 responses_for_collection,
                 resolved_requests: network_io.resolved_requests,
-                max_round: config.max_round,
+                max_round: config.max_round(),
                 preunits_for_packer,
                 signed_units_from_packer,
             };
@@ -1027,7 +1028,7 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
                 preunits_from_runway,
                 signed_units_for_runway,
                 keychain.clone(),
-                config.session_id,
+                config.session_id(),
             );
 
             async move {

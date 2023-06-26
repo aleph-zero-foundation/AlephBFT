@@ -1,6 +1,6 @@
 use aleph_bft::{
-    run_session, Config, DelayConfig, LocalIO, Network as NetworkT, NetworkData, NodeCount,
-    NodeIndex, Recipient, SpawnHandle, TaskHandle, Terminator,
+    create_config, run_session, Config, DelayConfig, LocalIO, Network as NetworkT, NetworkData,
+    NodeCount, NodeIndex, Recipient, SpawnHandle, TaskHandle, Terminator,
 };
 use aleph_bft_mock::{
     Data, DataProvider, FinalizationHandler, Hasher64, Keychain, Loader, NetworkHook,
@@ -186,8 +186,8 @@ fn init_log() {
         .try_init();
 }
 
-pub fn gen_config(node_ix: NodeIndex, n_members: NodeCount) -> Config {
-    let delay_config = DelayConfig {
+pub fn gen_delay_config() -> DelayConfig {
+    DelayConfig {
         tick_interval: Duration::from_millis(5),
         unit_rebroadcast_interval_min: Duration::from_millis(400),
         unit_rebroadcast_interval_max: Duration::from_millis(500),
@@ -203,14 +203,12 @@ pub fn gen_config(node_ix: NodeIndex, n_members: NodeCount) -> Config {
         parent_request_recipients: Arc::new(|_| 1),
         // 50, 50, 50, 50, ...
         newest_request_delay: Arc::new(|_| Duration::from_millis(50)),
-    };
-    Config {
-        node_ix,
-        session_id: 0,
-        n_members,
-        delay_config,
-        max_round: 5000,
     }
+}
+
+pub fn gen_config(node_ix: NodeIndex, n_members: NodeCount, delay_config: DelayConfig) -> Config {
+    create_config(n_members, node_ix, 0, 5000, delay_config, Duration::ZERO)
+        .expect("Should always succeed with Duration::ZERO")
 }
 
 pub fn spawn_honest_member_with_config(
@@ -289,7 +287,7 @@ impl NetworkDataEncoding {
     pub(crate) fn decode_from<R: Read>(
         &self,
         reader: &mut R,
-    ) -> core::result::Result<FuzzNetworkData, codec::Error> {
+    ) -> Result<FuzzNetworkData, codec::Error> {
         let mut reader = IoReader(reader);
         <FuzzNetworkData>::decode(&mut reader)
     }
@@ -409,7 +407,7 @@ async fn execute_generate_fuzz<'a, W: Write + Send + 'static>(
     let (mut router, networks) = Router::new(n_members.into(), 1.0);
     router.add_hook(spy);
 
-    let delay_config = gen_config(0.into(), n_members.into()).delay_config;
+    let delay_config = gen_delay_config();
     let spawner = Spawner::new(&delay_config);
     spawner.spawn("network", router);
 
@@ -417,7 +415,7 @@ async fn execute_generate_fuzz<'a, W: Write + Send + 'static>(
     let mut exits = Vec::new();
     for (network, _) in networks.into_iter().take(threshold) {
         let keychain = Keychain::new(NodeCount(n_members), network.index());
-        let config = gen_config(network.index(), n_members.into());
+        let config = gen_config(network.index(), n_members.into(), delay_config.clone());
         let (exit_tx, batch_rx) =
             spawn_honest_member_with_config(spawner.clone(), config, network, keychain);
         exits.push(exit_tx);
@@ -440,7 +438,8 @@ async fn execute_fuzz(
     n_members: usize,
     n_batches: Option<usize>,
 ) {
-    let config = gen_config(0.into(), n_members.into());
+    let delay_config = gen_delay_config();
+    let config = gen_config(0.into(), n_members.into(), delay_config.clone());
     let (net_exit, net_exit_rx) = oneshot::channel();
     let (playback_finished_tx, mut playback_finished_rx) = oneshot::channel();
     let finished_callback = move || {
@@ -450,7 +449,7 @@ async fn execute_fuzz(
     };
     let network = PlaybackNetwork::new(data, net_exit_rx, finished_callback);
 
-    let spawner = Spawner::new(&config.delay_config);
+    let spawner = Spawner::new(&delay_config);
     let node_index = NodeIndex(0);
     let keychain = Keychain::new(NodeCount(n_members), node_index);
     let (exit_tx, mut batch_rx) =
@@ -460,7 +459,7 @@ async fn execute_fuzz(
         if let Some(batches) = n_batches {
             (batches, true)
         } else {
-            (usize::max_value(), false)
+            (usize::MAX, false)
         }
     };
     let mut batches_count = 0;

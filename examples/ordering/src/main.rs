@@ -8,7 +8,7 @@ use dataio::{Data, DataProvider, FinalizationHandler};
 use futures::{channel::oneshot, StreamExt};
 use log::{debug, error, info};
 use network::Network;
-use std::{collections::HashMap, fs, fs::File, io, io::Write, path::Path};
+use std::{collections::HashMap, fs, fs::File, io, io::Write, path::Path, time::Duration};
 use time::{macros::format_description, OffsetDateTime};
 
 /// Example node producing linear order.
@@ -116,7 +116,8 @@ async fn main() {
     let member_terminator = Terminator::create_root(exit_rx, "AlephBFT-member");
     let member_handle = tokio::spawn(async move {
         let keychain = Keychain::new(n_members, id);
-        let config = aleph_bft::default_config(n_members, id, 0);
+        let config = aleph_bft::default_config(n_members, id, 0, 5000, Duration::ZERO)
+            .expect("Should always succeed with Duration::ZERO");
         run_session(
             config,
             local_io,
@@ -159,7 +160,7 @@ async fn main() {
         } else if count_finalized.values().all(|c| c >= &(n_data)) {
             info!("Finalized required number of items.");
             info!("Waiting 10 seconds for other nodes...");
-            tokio::time::sleep(core::time::Duration::from_secs(10)).await;
+            tokio::time::sleep(Duration::from_secs(10)).await;
             info!("Shutdown.");
             break;
         }

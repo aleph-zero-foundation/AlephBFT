@@ -41,10 +41,10 @@ impl Debug for Config {
 impl From<GeneralConfig> for Config {
     fn from(conf: GeneralConfig) -> Self {
         Config {
-            node_id: conf.node_ix,
-            n_members: conf.n_members,
-            create_lag: conf.delay_config.unit_creation_delay,
-            max_round: conf.max_round,
+            node_id: conf.node_ix(),
+            n_members: conf.n_members(),
+            create_lag: conf.delay_config().unit_creation_delay.clone(),
+            max_round: conf.max_round(),
         }
     }
 }

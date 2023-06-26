@@ -254,10 +254,10 @@ where
         notifications_from_runway: Receiver<RunwayNotificationOut<H, D, S>>,
         resolved_requests: Receiver<Request<H>>,
     ) -> Self {
-        let n_members = config.n_members;
+        let n_members = config.n_members();
         let peers = (0..n_members.0)
             .map(NodeIndex)
-            .filter(|x| *x != config.node_ix)
+            .filter(|x| *x != config.node_ix())
             .map(Recipient::Node)
             .collect();
 
@@ -353,7 +353,7 @@ where
     }
 
     fn index(&self) -> NodeIndex {
-        self.config.node_ix
+        self.config.node_ix()
     }
 
     fn send_unit_message(&mut self, message: UnitMessage<H, D, S>, recipient: Recipient) {
@@ -394,10 +394,12 @@ where
     fn recipients(&self, task: &Task<H, D, S>, counter: usize) -> Vec<Recipient> {
         match task {
             CoordRequest(_) => {
-                self.random_peers((self.config.delay_config.coord_request_recipients)(counter))
+                self.random_peers((self.config.delay_config().coord_request_recipients)(
+                    counter,
+                ))
             }
             ParentsRequest(_) => {
-                self.random_peers((self.config.delay_config.parent_request_recipients)(
+                self.random_peers((self.config.delay_config().parent_request_recipients)(
                     counter,
                 ))
             }
@@ -428,14 +430,14 @@ where
     fn delay(&self, task: &Task<H, D, S>, counter: usize) -> Duration {
         match task {
             UnitBroadcast(_) => {
-                let low = self.config.delay_config.unit_rebroadcast_interval_min;
-                let high = self.config.delay_config.unit_rebroadcast_interval_max;
+                let low = self.config.delay_config().unit_rebroadcast_interval_min;
+                let high = self.config.delay_config().unit_rebroadcast_interval_max;
                 let millis = rand::thread_rng().gen_range(low.as_millis()..high.as_millis());
                 Duration::from_millis(millis as u64)
             }
-            CoordRequest(_) => (self.config.delay_config.coord_request_delay)(counter),
-            ParentsRequest(_) => (self.config.delay_config.parent_request_delay)(counter),
-            RequestNewest(_) => (self.config.delay_config.newest_request_delay)(counter),
+            CoordRequest(_) => (self.config.delay_config().coord_request_delay)(counter),
+            ParentsRequest(_) => (self.config.delay_config().parent_request_delay)(counter),
+            RequestNewest(_) => (self.config.delay_config().newest_request_delay)(counter),
         }
     }
 
@@ -476,7 +478,7 @@ where
     }
 
     async fn run(mut self, mut terminator: Terminator) {
-        let ticker_delay = self.config.delay_config.tick_interval;
+        let ticker_delay = self.config.delay_config().tick_interval;
         let mut ticker = Delay::new(ticker_delay).fuse();
         let status_ticker_delay = Duration::from_secs(10);
         let mut status_ticker = Delay::new(status_ticker_delay).fuse();
@@ -584,7 +586,7 @@ pub async fn run_session<
     spawn_handle: SH,
     mut terminator: Terminator,
 ) {
-    let index = config.node_ix;
+    let index = config.node_ix();
     info!(target: "AlephBFT-member", "{:?} Starting a new session.", index);
     debug!(target: "AlephBFT-member", "{:?} Spawning party for a session.", index);
 
@@ -698,15 +700,22 @@ pub async fn run_session<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::gen_config;
+    use crate::{
+        testing::{gen_config, gen_delay_config},
+        DelayConfig,
+    };
     use aleph_bft_mock::{Hasher64, Signature};
     use aleph_bft_types::NodeCount;
     use futures::channel::mpsc::unbounded;
     use itertools::Itertools;
     use std::sync::Arc;
 
-    fn mock_member(node_ix: NodeIndex, node_count: NodeCount) -> Member<Hasher64, u32, Signature> {
-        let config = gen_config(node_ix, node_count);
+    fn mock_member(
+        node_ix: NodeIndex,
+        node_count: NodeCount,
+        delay_config: DelayConfig,
+    ) -> Member<Hasher64, u32, Signature> {
+        let config = gen_config(node_ix, node_count, delay_config);
         let (unit_messages_for_network_sx, _) = unbounded();
         let (_, unit_messages_from_network_rx) = unbounded();
         let (notifications_for_runway_sx, _) = unbounded();
@@ -725,9 +734,10 @@ mod tests {
 
     #[test]
     fn delay_for_coord_request() {
-        let mut member = mock_member(NodeIndex(7), NodeCount(20));
-        member.config.delay_config.coord_request_delay =
-            Arc::new(|t| Duration::from_millis(123 + t as u64));
+        let mut delay_config = gen_delay_config();
+        delay_config.coord_request_delay = Arc::new(|t| Duration::from_millis(123 + t as u64));
+
+        let member = mock_member(NodeIndex(7), NodeCount(20), delay_config);
 
         let delay = member.delay(&CoordRequest(UnitCoord::new(1, NodeIndex(3))), 10);
 
@@ -736,9 +746,10 @@ mod tests {
 
     #[test]
     fn delay_for_parent_request() {
-        let mut member = mock_member(NodeIndex(7), NodeCount(20));
-        member.config.delay_config.parent_request_delay =
-            Arc::new(|t| Duration::from_millis(123 + t as u64));
+        let mut delay_config = gen_delay_config();
+        delay_config.parent_request_delay = Arc::new(|t| Duration::from_millis(123 + t as u64));
+
+        let member = mock_member(NodeIndex(7), NodeCount(20), delay_config);
 
         let delay = member.delay(&ParentsRequest(Hasher64::hash(&[0x0])), 10);
 
@@ -747,9 +758,10 @@ mod tests {
 
     #[test]
     fn delay_for_newest_request() {
-        let mut member = mock_member(NodeIndex(7), NodeCount(20));
-        member.config.delay_config.newest_request_delay =
-            Arc::new(|t| Duration::from_millis(123 + t as u64));
+        let mut delay_config = gen_delay_config();
+        delay_config.newest_request_delay = Arc::new(|t| Duration::from_millis(123 + t as u64));
+
+        let member = mock_member(NodeIndex(7), NodeCount(20), delay_config);
 
         let delay = member.delay(&RequestNewest(12345), 10);
 
@@ -759,8 +771,10 @@ mod tests {
     #[test]
     fn recipients_for_coord_request() {
         let node_ix = NodeIndex(7);
-        let mut member = mock_member(node_ix, NodeCount(20));
-        member.config.delay_config.coord_request_recipients = Arc::new(|t| 10 - t);
+        let mut delay_config = gen_delay_config();
+        delay_config.coord_request_recipients = Arc::new(|t| 10 - t);
+
+        let member = mock_member(node_ix, NodeCount(20), delay_config);
 
         let request = CoordRequest(UnitCoord::new(1, NodeIndex(3)));
         let recipients = member.recipients(&request, 3);
@@ -776,8 +790,10 @@ mod tests {
     #[test]
     fn recipients_for_parent_request() {
         let node_ix = NodeIndex(7);
-        let mut member = mock_member(node_ix, NodeCount(20));
-        member.config.delay_config.parent_request_recipients = Arc::new(|t| 10 - t);
+        let mut delay_config = gen_delay_config();
+        delay_config.parent_request_recipients = Arc::new(|t| 10 - t);
+
+        let member = mock_member(node_ix, NodeCount(20), delay_config);
 
         let request = ParentsRequest(Hasher64::hash(&[0x0]));
         let recipients = member.recipients(&request, 3);
@@ -792,19 +808,23 @@ mod tests {
 
     #[test]
     fn at_most_n_members_recipients_for_coord_request() {
-        let mut member = mock_member(NodeIndex(7), NodeCount(20));
-        member.config.delay_config.coord_request_recipients = Arc::new(move |_| 30);
+        let mut delay_config = gen_delay_config();
+        delay_config.coord_request_recipients = Arc::new(move |_| 30);
+
+        let member = mock_member(NodeIndex(7), NodeCount(20), delay_config);
 
         let request = CoordRequest(UnitCoord::new(1, NodeIndex(3)));
         let recipients = member.recipients(&request, 10);
 
-        assert_eq!(recipients.len(), member.config.n_members.0 - 1);
+        assert_eq!(recipients.len(), member.config.n_members().0 - 1);
     }
 
     #[test]
     fn no_recipients_for_coord_request_in_one_node_setup() {
-        let mut member = mock_member(NodeIndex(0), NodeCount(1));
-        member.config.delay_config.coord_request_recipients = Arc::new(move |_| 30);
+        let mut delay_config = gen_delay_config();
+        delay_config.coord_request_recipients = Arc::new(move |_| 30);
+
+        let member = mock_member(NodeIndex(0), NodeCount(1), delay_config);
 
         let request = CoordRequest(UnitCoord::new(1, NodeIndex(3)));
         let recipients = member.recipients(&request, 10);

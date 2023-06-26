@@ -1,7 +1,7 @@
 use crate::{
     creation::{run, IO},
     runway::NotificationOut as GenericNotificationOut,
-    testing::gen_config,
+    testing::{gen_config, gen_delay_config},
     units::{FullUnit as GenericFullUnit, PreUnit as GenericPreUnit, Unit as GenericUnit},
     NodeCount, Receiver, Round, Sender, Terminator,
 };
@@ -89,7 +89,7 @@ fn setup_test(n_members: NodeCount) -> TestSetup {
             incoming_parents: parents_from_controller,
             outgoing_units: notifications_for_controller.clone(),
         };
-        let config = gen_config(node_ix.into(), n_members);
+        let config = gen_config(node_ix.into(), n_members, gen_delay_config());
         let (starting_round_for_consensus, starting_round) = oneshot::channel();
 
         units_for_creators.push(parents_for_creator);

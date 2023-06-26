@@ -1,7 +1,7 @@
 use crate::{
     consensus,
     runway::{NotificationIn, NotificationOut},
-    testing::{complete_oneshot, gen_config},
+    testing::{complete_oneshot, gen_config, gen_delay_config},
     units::{ControlHash, PreUnit, Unit},
     NodeCount, NodeIndex, NodeMap, NodeSubset, Receiver, Round, Sender, SpawnHandle, Terminator,
 };
@@ -125,7 +125,7 @@ async fn run_consensus_on_dag(
     deadline_ms: u64,
 ) -> Vec<Vec<Hash64>> {
     let (feeder, rx_in, tx_out) = ConsensusDagFeeder::new(units);
-    let conf = gen_config(NodeIndex(0), n_members);
+    let conf = gen_config(NodeIndex(0), n_members, gen_delay_config());
     let (_exit_tx, exit_rx) = oneshot::channel();
     let (batch_tx, mut batch_rx) = mpsc::unbounded();
     let spawner = Spawner::new();

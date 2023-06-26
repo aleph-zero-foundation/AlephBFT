@@ -24,7 +24,9 @@ pub use aleph_bft_types::{
     PartialMultisignature, PartiallyMultisigned, Recipient, Round, SessionId, Signable, Signature,
     SignatureError, SignatureSet, Signed, SpawnHandle, TaskHandle, UncheckedSigned,
 };
-pub use config::{default_config, exponential_slowdown, Config, DelayConfig};
+pub use config::{
+    create_config, default_config, default_delay_config, exponential_slowdown, Config, DelayConfig,
+};
 pub use member::{run_session, LocalIO};
 pub use network::NetworkData;
 pub use terminator::{handle_task_termination, Terminator};

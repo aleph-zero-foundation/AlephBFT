@@ -23,10 +23,10 @@ pub(crate) async fn run<H: Hasher + 'static>(
     starting_round: oneshot::Receiver<Option<Round>>,
     mut terminator: Terminator,
 ) {
-    debug!(target: "AlephBFT", "{:?} Starting all services...", conf.node_ix);
+    debug!(target: "AlephBFT", "{:?} Starting all services...", conf.node_ix());
 
-    let n_members = conf.n_members;
-    let index = conf.node_ix;
+    let n_members = conf.n_members();
+    let index = conf.node_ix();
 
     let (electors_tx, electors_rx) = mpsc::unbounded();
     let mut extender = Extender::<H>::new(index, n_members, electors_rx, ordered_batch_tx);

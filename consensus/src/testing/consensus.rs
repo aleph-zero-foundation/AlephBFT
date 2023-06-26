@@ -1,7 +1,7 @@
 use crate::{
     consensus,
     runway::{NotificationIn, NotificationOut},
-    testing::{complete_oneshot, gen_config, init_log},
+    testing::{complete_oneshot, gen_config, gen_delay_config, init_log},
     units::{ControlHash, PreUnit, Unit, UnitCoord},
     Hasher, NodeIndex, SpawnHandle, Terminator,
 };
@@ -161,7 +161,7 @@ async fn agree_on_first_batch() {
 
     for node_ix in 0..n_members {
         let (tx, rx) = hub.connect(NodeIndex(node_ix));
-        let conf = gen_config(NodeIndex(node_ix), n_members.into());
+        let conf = gen_config(NodeIndex(node_ix), n_members.into(), gen_delay_config());
         let (exit_tx, exit_rx) = oneshot::channel();
         exits.push(exit_tx);
         let (batch_tx, batch_rx) = unbounded();
@@ -204,7 +204,7 @@ async fn catches_wrong_control_hash() {
     let (mut tx_in, rx_in) = unbounded();
     let (tx_out, mut rx_out) = unbounded();
 
-    let conf = gen_config(NodeIndex(node_ix), n_nodes.into());
+    let conf = gen_config(NodeIndex(node_ix), n_nodes.into(), gen_delay_config());
     let (exit_tx, exit_rx) = oneshot::channel();
     let (batch_tx, _batch_rx) = unbounded();
     let starting_round = complete_oneshot(Some(0));
