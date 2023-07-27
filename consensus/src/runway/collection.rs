@@ -345,10 +345,7 @@ mod tests {
         result
     }
 
-    async fn create_responses<
-        'a,
-        R: Iterator<Item = (&'a Keychain, Option<UncheckedSignedUnit>)>,
-    >(
+    fn create_responses<'a, R: Iterator<Item = (&'a Keychain, Option<UncheckedSignedUnit>)>>(
         presponses: R,
         salt: Salt,
         requester: NodeIndex,
@@ -356,18 +353,18 @@ mod tests {
         let mut result = Vec::new();
         for (keychain, maybe_unit) in presponses {
             let response = NewestUnitResponse::new(requester, keychain.index(), maybe_unit, salt);
-            result.push(Signed::sign(response, keychain).await.into_unchecked());
+            result.push(Signed::sign(response, keychain).into_unchecked());
         }
         result
     }
 
-    async fn preunit_to_unchecked_signed_unit(
+    fn preunit_to_unchecked_signed_unit(
         pu: PreUnit,
         session_id: SessionId,
         keychain: &Keychain,
     ) -> UncheckedSignedUnit {
         let full_unit = FullUnit::new(pu, Some(0), session_id);
-        let signed_unit = Signed::sign(full_unit, keychain).await;
+        let signed_unit = Signed::sign(full_unit, keychain);
         signed_unit.into()
     }
 
@@ -384,8 +381,8 @@ mod tests {
         assert_eq!(collection.status(), Pending);
     }
 
-    #[tokio::test]
-    async fn pending_with_too_few_messages() {
+    #[test]
+    fn pending_with_too_few_messages() {
         let n_members = NodeCount(7);
         let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
@@ -399,16 +396,15 @@ mod tests {
             keychains.iter().skip(1).take(3).zip(repeat(None)),
             salt,
             creator_id,
-        )
-        .await;
+        );
         for response in responses {
             assert_eq!(collection.on_newest_response(response), Ok(Pending));
         }
         assert_eq!(collection.status(), Pending);
     }
 
-    #[tokio::test]
-    async fn pending_with_repeated_messages() {
+    #[test]
+    fn pending_with_repeated_messages() {
         let n_members = NodeCount(7);
         let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
@@ -422,16 +418,15 @@ mod tests {
             repeat(&keychains[1]).take(43).zip(repeat(None)),
             salt,
             creator_id,
-        )
-        .await;
+        );
         for response in responses {
             assert_eq!(collection.on_newest_response(response), Ok(Pending));
         }
         assert_eq!(collection.status(), Pending);
     }
 
-    #[tokio::test]
-    async fn ready_with_just_enough_messages() {
+    #[test]
+    fn ready_with_just_enough_messages() {
         let n_members = NodeCount(7);
         let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
@@ -445,8 +440,7 @@ mod tests {
             keychains.iter().skip(1).take(4).zip(repeat(None)),
             salt,
             creator_id,
-        )
-        .await;
+        );
         for response in responses.iter().take(3) {
             assert_eq!(collection.on_newest_response(response.clone()), Ok(Pending));
         }
@@ -457,8 +451,8 @@ mod tests {
         assert_eq!(collection.status(), Ready(0));
     }
 
-    #[tokio::test]
-    async fn finished_and_higher_starting_round_with_last_message() {
+    #[test]
+    fn finished_and_higher_starting_round_with_last_message() {
         let n_members = NodeCount(7);
         let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
@@ -470,7 +464,7 @@ mod tests {
         let validator = Validator::new(session_id, *keychain, max_round, threshold);
         let (mut collection, salt) = Collection::new(keychain, &validator, threshold);
         let (preunit, _) = creator.create_unit(0).expect("Creation should succeed.");
-        let unit = preunit_to_unchecked_signed_unit(preunit, session_id, keychain).await;
+        let unit = preunit_to_unchecked_signed_unit(preunit, session_id, keychain);
         let responses = create_responses(
             keychains
                 .iter()
@@ -478,8 +472,7 @@ mod tests {
                 .zip(repeat(None).take(5).chain(once(Some(unit)))),
             salt,
             creator_id,
-        )
-        .await;
+        );
         for response in responses.iter().take(3) {
             assert_eq!(collection.on_newest_response(response.clone()), Ok(Pending));
         }
@@ -496,8 +489,8 @@ mod tests {
         assert_eq!(collection.status(), Finished(1));
     }
 
-    #[tokio::test]
-    async fn detects_salt_mismatch() {
+    #[test]
+    fn detects_salt_mismatch() {
         let n_members = NodeCount(7);
         let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
@@ -512,8 +505,7 @@ mod tests {
             keychains.iter().skip(1).zip(repeat(None)),
             other_salt,
             creator_id,
-        )
-        .await;
+        );
         for response in responses {
             assert_eq!(
                 collection.on_newest_response(response),
@@ -523,8 +515,8 @@ mod tests {
         assert_eq!(collection.status(), Pending);
     }
 
-    #[tokio::test]
-    async fn detects_invalid_unit() {
+    #[test]
+    fn detects_invalid_unit() {
         let n_members = NodeCount(7);
         let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
@@ -537,13 +529,12 @@ mod tests {
         let validator = Validator::new(session_id, *keychain, max_round, threshold);
         let (mut collection, salt) = Collection::new(keychain, &validator, threshold);
         let (preunit, _) = creator.create_unit(0).expect("Creation should succeed.");
-        let unit = preunit_to_unchecked_signed_unit(preunit, wrong_session_id, keychain).await;
+        let unit = preunit_to_unchecked_signed_unit(preunit, wrong_session_id, keychain);
         let responses = create_responses(
-            keychains.iter().skip(1).zip(repeat(Some(unit.clone()))),
+            keychains.iter().skip(1).zip(repeat(Some(unit))),
             salt,
             creator_id,
-        )
-        .await;
+        );
         for response in responses {
             match collection.on_newest_response(response) {
                 Err(Error::InvalidUnit(_)) => (),
@@ -553,8 +544,8 @@ mod tests {
         assert_eq!(collection.status(), Pending);
     }
 
-    #[tokio::test]
-    async fn detects_foreign_unit() {
+    #[test]
+    fn detects_foreign_unit() {
         let n_members = NodeCount(7);
         let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
@@ -567,13 +558,12 @@ mod tests {
         let validator = Validator::new(session_id, *keychain, max_round, threshold);
         let (mut collection, salt) = Collection::new(keychain, &validator, threshold);
         let (preunit, _) = creator.create_unit(0).expect("Creation should succeed.");
-        let unit = preunit_to_unchecked_signed_unit(preunit, session_id, &keychains[1]).await;
+        let unit = preunit_to_unchecked_signed_unit(preunit, session_id, &keychains[1]);
         let responses = create_responses(
-            keychains.iter().skip(1).zip(repeat(Some(unit.clone()))),
+            keychains.iter().skip(1).zip(repeat(Some(unit))),
             salt,
             creator_id,
-        )
-        .await;
+        );
         for response in responses {
             assert_eq!(
                 collection.on_newest_response(response),

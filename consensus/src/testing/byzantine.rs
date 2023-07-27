@@ -7,7 +7,6 @@ use crate::{
     Recipient, Round, SessionId, Signed, SpawnHandle, TaskHandle,
 };
 use aleph_bft_mock::{Data, Hash64, Hasher64, Keychain, NetworkHook, Router, Spawner};
-use async_trait::async_trait;
 use futures::{channel::oneshot, StreamExt};
 use log::{debug, error, trace};
 use parking_lot::Mutex;
@@ -104,14 +103,14 @@ impl<'a> MaliciousMember<'a> {
         }
     }
 
-    async fn create_if_possible(&mut self, round: Round) -> bool {
+    fn create_if_possible(&mut self, round: Round) -> bool {
         if let Some(parents) = self.pick_parents(round) {
             debug!(target: "malicious-member", "Creating a legit unit for round {}.", round);
             let control_hash = ControlHash::<Hasher64>::new(&parents);
             let new_preunit = PreUnit::<Hasher64>::new(self.node_ix, round, control_hash);
             if round != self.forking_round {
                 let full_unit = FullUnit::new(new_preunit, Some(0), self.session_id);
-                let signed_unit = Signed::sign(full_unit, self.keychain).await;
+                let signed_unit = Signed::sign(full_unit, self.keychain);
                 self.on_unit_received(signed_unit.clone());
                 self.send_legit_unit(signed_unit);
             } else {
@@ -120,7 +119,7 @@ impl<'a> MaliciousMember<'a> {
                 let mut variants = Vec::new();
                 for data in 0u32..2u32 {
                     let full_unit = FullUnit::new(new_preunit.clone(), Some(data), self.session_id);
-                    let signed = Signed::sign(full_unit, self.keychain).await;
+                    let signed = Signed::sign(full_unit, self.keychain);
                     variants.push(signed);
                 }
                 self.send_two_variants(variants[0].clone(), variants[1].clone());
@@ -155,7 +154,7 @@ impl<'a> MaliciousMember<'a> {
     pub async fn run_session(mut self, mut exit: oneshot::Receiver<()>) {
         let mut round: Round = 0;
         loop {
-            if self.create_if_possible(round).await {
+            if self.create_if_possible(round) {
                 round += 1;
             }
             tokio::select! {
@@ -223,14 +222,8 @@ impl AlertHook {
     }
 }
 
-#[async_trait]
 impl NetworkHook<NetworkData> for AlertHook {
-    async fn update_state(
-        &mut self,
-        data: &mut NetworkData,
-        sender: NodeIndex,
-        recipient: NodeIndex,
-    ) {
+    fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, recipient: NodeIndex) {
         use crate::{alerts::AlertMessage::*, network::NetworkDataInner::*};
         if let crate::NetworkData(Alert(ForkAlert(_))) = data {
             *self

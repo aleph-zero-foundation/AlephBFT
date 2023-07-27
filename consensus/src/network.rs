@@ -171,7 +171,7 @@ mod tests {
     use aleph_bft_mock::{Data, Hasher64, Keychain, PartialMultisignature, Signature};
     use codec::{Decode, Encode};
 
-    async fn test_unchecked_unit(
+    fn test_unchecked_unit(
         creator: NodeIndex,
         round: Round,
         data: Data,
@@ -182,9 +182,7 @@ mod tests {
         };
         let pu = PreUnit::new(creator, round, control_hash);
         let signable = FullUnit::new(pu, Some(data), 0);
-        Signed::sign(signable, &Keychain::new(0.into(), creator))
-            .await
-            .into_unchecked()
+        Signed::sign(signable, &Keychain::new(0.into(), creator)).into_unchecked()
     }
 
     type TestNetworkData = super::NetworkData<Hasher64, Data, Signature, PartialMultisignature>;
@@ -196,11 +194,11 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn decoding_network_data_units_new_unit() {
+    #[test]
+    fn decoding_network_data_units_new_unit() {
         use UnitMessage::NewUnit;
 
-        let uu = test_unchecked_unit(5.into(), 43, 1729).await;
+        let uu = test_unchecked_unit(5.into(), 43, 1729);
         let included_data = uu.as_signable().included_data();
         let nd = TestNetworkData::new(Units(NewUnit(uu.clone())));
         let decoded = TestNetworkData::decode(&mut &nd.encode()[..]);
@@ -243,11 +241,11 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn decoding_network_data_units_response_coord() {
+    #[test]
+    fn decoding_network_data_units_response_coord() {
         use UnitMessage::ResponseCoord;
 
-        let uu = test_unchecked_unit(5.into(), 43, 1729).await;
+        let uu = test_unchecked_unit(5.into(), 43, 1729);
         let included_data = uu.as_signable().included_data();
         let nd = TestNetworkData::new(Units(ResponseCoord(uu.clone())));
         let decoded = TestNetworkData::decode(&mut &nd.encode()[..]);
@@ -290,14 +288,14 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn decoding_network_data_units_response_parents() {
+    #[test]
+    fn decoding_network_data_units_response_parents() {
         use UnitMessage::ResponseParents;
 
         let h = 43.using_encoded(Hasher64::hash);
-        let p1 = test_unchecked_unit(5.into(), 43, 1729).await;
-        let p2 = test_unchecked_unit(13.into(), 43, 1729).await;
-        let p3 = test_unchecked_unit(17.into(), 43, 1729).await;
+        let p1 = test_unchecked_unit(5.into(), 43, 1729);
+        let p2 = test_unchecked_unit(13.into(), 43, 1729);
+        let p3 = test_unchecked_unit(17.into(), 43, 1729);
         let included_data: Vec<Data> = p1
             .as_signable()
             .included_data()
@@ -335,24 +333,22 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn decoding_network_data_alert_fork_alert() {
+    #[test]
+    fn decoding_network_data_alert_fork_alert() {
         use AlertMessage::ForkAlert;
 
         let forker = 9.into();
-        let f1 = test_unchecked_unit(forker, 10, 0).await;
-        let f2 = test_unchecked_unit(forker, 10, 1).await;
-        let lu1 = test_unchecked_unit(forker, 11, 0).await;
-        let lu2 = test_unchecked_unit(forker, 12, 0).await;
+        let f1 = test_unchecked_unit(forker, 10, 0);
+        let f2 = test_unchecked_unit(forker, 10, 1);
+        let lu1 = test_unchecked_unit(forker, 11, 0);
+        let lu2 = test_unchecked_unit(forker, 12, 0);
         let mut included_data = lu1.as_signable().included_data();
         included_data.extend(lu2.as_signable().included_data());
         let sender: NodeIndex = 7.into();
         let alert = crate::alerts::Alert::new(sender, (f1, f2), vec![lu1, lu2]);
 
         let nd = TestNetworkData::new(Alert(ForkAlert(
-            Signed::sign(alert.clone(), &Keychain::new(0.into(), sender))
-                .await
-                .into_unchecked(),
+            Signed::sign(alert.clone(), &Keychain::new(0.into(), sender)).into_unchecked(),
         )));
         let decoded = TestNetworkData::decode(&mut &nd.encode()[..]);
         assert!(decoded.is_ok(), "Bug in encode/decode for ForkAlert");

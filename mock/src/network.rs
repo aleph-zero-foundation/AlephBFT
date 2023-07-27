@@ -1,5 +1,4 @@
 use aleph_bft_types::{Network as NetworkT, NodeCount, NodeIndex, Recipient};
-use async_trait::async_trait;
 use futures::{
     channel::{
         mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
@@ -80,11 +79,8 @@ pub struct Peer<D> {
     rx: NetworkReceiver<D>,
 }
 
-#[async_trait]
 pub trait NetworkHook<D>: Send {
-    /// This must complete during a single poll - the current implementation
-    /// of Router will panic if polling this method returns Poll::Pending.
-    async fn update_state(&mut self, data: &mut D, sender: NodeIndex, recipient: NodeIndex);
+    fn update_state(&mut self, data: &mut D, sender: NodeIndex, recipient: NodeIndex);
 }
 
 type ReconnectReceiver<D> = UnboundedReceiver<(NodeIndex, oneshot::Sender<Network<D>>)>;
@@ -213,16 +209,8 @@ impl<D: Debug> Future for Router<D> {
 
             if let Some(peer) = this.peers.borrow().get(&recipient) {
                 for hook in this.hook_list.borrow_mut().iter_mut() {
-                    match hook
-                        .update_state(&mut data, sender, recipient)
-                        .as_mut()
-                        .poll(cx)
-                    {
-                        Poll::Ready(()) => (),
-                        Poll::Pending => panic!(),
-                    }
+                    hook.update_state(&mut data, sender, recipient)
                 }
-
                 peer.tx.unbounded_send((data, sender)).ok();
             }
         }

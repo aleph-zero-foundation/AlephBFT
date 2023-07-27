@@ -2,7 +2,6 @@ use crate::crypto::{PartialMultisignature, Signature};
 use aleph_bft_types::{
     Index, Keychain as KeychainT, MultiKeychain as MultiKeychainT, NodeCount, NodeIndex,
 };
-use async_trait::async_trait;
 use codec::{Decode, Encode};
 use std::fmt::Debug;
 
@@ -34,19 +33,18 @@ impl<T: MK> Index for BadSigning<T> {
     }
 }
 
-#[async_trait]
 impl<T: MK> KeychainT for BadSigning<T> {
     type Signature = T::Signature;
 
-    async fn sign(&self, msg: &[u8]) -> Self::Signature {
-        let signature = self.0.sign(msg).await;
+    fn node_count(&self) -> NodeCount {
+        self.0.node_count()
+    }
+
+    fn sign(&self, msg: &[u8]) -> Self::Signature {
+        let signature = self.0.sign(msg);
         let mut msg = b"BAD".to_vec();
         msg.extend(signature.msg().clone());
         Signature::new(msg, signature.index())
-    }
-
-    fn node_count(&self) -> NodeCount {
-        self.0.node_count()
     }
 
     fn verify(&self, msg: &[u8], sgn: &Self::Signature, index: NodeIndex) -> bool {

@@ -67,7 +67,7 @@ where
             let data = self.data_provider.get_data().await;
             debug!(target: "AlephBFT-packer", "{:?} Received data.", self.index());
             let full_unit = FullUnit::new(preunit, data, self.session_id);
-            let signed_unit = Signed::sign(full_unit, &self.keychain).await;
+            let signed_unit = Signed::sign(full_unit, &self.keychain);
             if self
                 .signed_units_for_runway
                 .unbounded_send(signed_unit)

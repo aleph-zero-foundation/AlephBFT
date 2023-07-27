@@ -11,7 +11,7 @@ readme = "./README.md"
 description = "Traits that need to be implemented by the user of the aleph-bft package."
 
 [dependencies]
-aleph-bft-crypto = { path = "../crypto", version = "0.6" }
+aleph-bft-crypto = { path = "../crypto", version = "0.7" }
 async-trait = "0.1"
 codec = { package = "parity-scale-codec", version = "3.0", default-features = false, features = ["derive"] }
 futures = "0.3"

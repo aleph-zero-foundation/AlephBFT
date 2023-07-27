@@ -216,9 +216,9 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
     }
 
     /// Initiate a new instance of RMC for `hash`.
-    pub async fn start_rmc(&mut self, hash: H) {
+    pub fn start_rmc(&mut self, hash: H) {
         debug!(target: "AlephBFT-rmc", "starting rmc for {:?}", hash);
-        let signed_hash = Signed::sign_with_index(hash, self.keychain).await;
+        let signed_hash = Signed::sign_with_index(hash, self.keychain);
 
         let message = Message::SignedHash(signed_hash.into_unchecked());
         self.handle_message(message.clone());
@@ -456,7 +456,7 @@ mod tests {
 
         let hash: Signable = "56".into();
         for i in 0..node_count.0 {
-            data.rmcs[i].start_rmc(hash.clone()).await;
+            data.rmcs[i].start_rmc(hash.clone());
         }
 
         let hashes = data.collect_multisigned_hashes(node_count.0).await;
@@ -478,7 +478,7 @@ mod tests {
 
         let hash: Signable = "56".into();
         for i in 0..node_count.0 {
-            data.rmcs[i].start_rmc(hash.clone()).await;
+            data.rmcs[i].start_rmc(hash.clone());
         }
 
         let hashes = data.collect_multisigned_hashes(node_count.0).await;
@@ -503,7 +503,7 @@ mod tests {
         let threshold = (2 * node_count.0 + 1) / 3;
         let hash: Signable = "56".into();
         for i in 0..threshold {
-            data.rmcs[i].start_rmc(hash.clone()).await;
+            data.rmcs[i].start_rmc(hash.clone());
         }
 
         let hashes = data.collect_multisigned_hashes(node_count.0).await;
@@ -525,14 +525,11 @@ mod tests {
         let bad_hash: Signable = "65".into();
         let bad_keychain: BadSigning<Keychain> = Keychain::new(node_count, 0.into()).into();
         let bad_msg = TestMessage::SignedHash(
-            Signed::sign_with_index(bad_hash.clone(), &bad_keychain)
-                .await
-                .into(),
+            Signed::sign_with_index(bad_hash.clone(), &bad_keychain).into(),
         );
         data.network.broadcast_message(bad_msg);
         let bad_msg = TestMessage::MultisignedHash(
             Signed::sign_with_index(bad_hash.clone(), &bad_keychain)
-                .await
                 .into_partially_multisigned(&bad_keychain)
                 .into_unchecked(),
         );
@@ -540,7 +537,7 @@ mod tests {
 
         let hash: Signable = "56".into();
         for i in 0..node_count.0 {
-            data.rmcs[i].start_rmc(hash.clone()).await;
+            data.rmcs[i].start_rmc(hash.clone());
         }
 
         let hashes = data.collect_multisigned_hashes(node_count.0).await;

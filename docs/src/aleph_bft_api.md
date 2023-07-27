@@ -60,7 +60,7 @@ The `Keychain` trait is an abstraction for digitally signing arbitrary data and 
 ```rust
 pub trait Keychain: Index + Clone + Send + Sync + 'static {
     type Signature: Signature;
-    async fn sign(&self, msg: &[u8]) -> Self::Signature;
+    fn sign(&self, msg: &[u8]) -> Self::Signature;
     fn verify(&self, msg: &[u8], sgn: &Self::Signature, index: NodeIndex) -> bool;
 }
 ```

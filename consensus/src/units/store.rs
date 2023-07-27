@@ -207,7 +207,7 @@ mod tests {
     };
     use aleph_bft_mock::{Data, Hasher64, Keychain};
 
-    async fn create_unit<'a>(
+    fn create_unit(
         round: Round,
         node_idx: NodeIndex,
         count: NodeCount,
@@ -220,11 +220,11 @@ mod tests {
             ControlHash::new(&NodeMap::with_size(count)),
         );
         let full_unit = FullUnit::new(preunit, Some(0), session_id);
-        Signed::sign(full_unit, keychain).await
+        Signed::sign(full_unit, keychain)
     }
 
-    #[tokio::test]
-    async fn mark_forker_restore_state() {
+    #[test]
+    fn mark_forker_restore_state() {
         let n_nodes = NodeCount(10);
 
         let mut store = UnitStore::<Hasher64, Data, Keychain>::new(n_nodes, 100);
@@ -237,7 +237,7 @@ mod tests {
 
         for round in 0..4 {
             for (i, keychain) in keychains.iter().enumerate() {
-                let unit = create_unit(round, NodeIndex(i), n_nodes, 0, keychain).await;
+                let unit = create_unit(round, NodeIndex(i), n_nodes, 0, keychain);
                 if i == 0 {
                     forker_hashes.push(unit.as_signable().hash());
                 }
@@ -247,7 +247,7 @@ mod tests {
 
         // Forker's units
         for round in 4..7 {
-            let unit = create_unit(round, NodeIndex(0), n_nodes, 0, &keychains[0]).await;
+            let unit = create_unit(round, NodeIndex(0), n_nodes, 0, &keychains[0]);
             forker_hashes.push(unit.as_signable().hash());
             store.add_unit(unit, false);
         }

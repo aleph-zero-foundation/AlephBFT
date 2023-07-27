@@ -41,12 +41,12 @@ impl Creator {
     }
 }
 
-pub async fn preunit_to_unchecked_signed_unit(
+pub fn preunit_to_unchecked_signed_unit(
     pu: PreUnit,
     session_id: SessionId,
     keychain: &Keychain,
 ) -> UncheckedSignedUnit {
     let full_unit = FullUnit::new(pu, Some(0), session_id);
-    let signed_unit = Signed::sign(full_unit, keychain).await;
+    let signed_unit = Signed::sign(full_unit, keychain);
     signed_unit.into()
 }

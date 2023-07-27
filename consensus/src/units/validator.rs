@@ -136,8 +136,8 @@ mod tests {
     type Validator = GenericValidator<Keychain>;
     type Creator = GenericCreator<Hasher64>;
 
-    #[tokio::test]
-    async fn validates_initial_unit() {
+    #[test]
+    fn validates_initial_unit() {
         let n_members = NodeCount(7);
         let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
@@ -150,15 +150,15 @@ mod tests {
         let (preunit, _) = creator
             .create_unit(round)
             .expect("Creation should succeed.");
-        let unchecked_unit = preunit_to_unchecked_signed_unit(preunit, session_id, &keychain).await;
+        let unchecked_unit = preunit_to_unchecked_signed_unit(preunit, session_id, &keychain);
         let checked_unit = validator
             .validate_unit(unchecked_unit.clone())
             .expect("Unit should validate.");
         assert_eq!(unchecked_unit, checked_unit.into());
     }
 
-    #[tokio::test]
-    async fn detects_wrong_session_id() {
+    #[test]
+    fn detects_wrong_session_id() {
         let n_members = NodeCount(7);
         let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
@@ -172,8 +172,7 @@ mod tests {
         let (preunit, _) = creator
             .create_unit(round)
             .expect("Creation should succeed.");
-        let unchecked_unit =
-            preunit_to_unchecked_signed_unit(preunit, wrong_session_id, &keychain).await;
+        let unchecked_unit = preunit_to_unchecked_signed_unit(preunit, wrong_session_id, &keychain);
         let full_unit = match validator.validate_unit(unchecked_unit.clone()) {
             Ok(_) => panic!("Validated bad unit."),
             Err(WrongSession(full_unit)) => full_unit,
@@ -182,8 +181,8 @@ mod tests {
         assert_eq!(full_unit, unchecked_unit.into_signable());
     }
 
-    #[tokio::test]
-    async fn detects_wrong_number_of_members() {
+    #[test]
+    fn detects_wrong_number_of_members() {
         let n_members = NodeCount(7);
         let n_plus_one_members = NodeCount(8);
         let threshold = NodeCount(5);
@@ -198,7 +197,7 @@ mod tests {
             .create_unit(round)
             .expect("Creation should succeed.");
         let unchecked_unit =
-            preunit_to_unchecked_signed_unit(preunit.clone(), session_id, &keychain).await;
+            preunit_to_unchecked_signed_unit(preunit.clone(), session_id, &keychain);
         let other_preunit = match validator.validate_unit(unchecked_unit) {
             Ok(_) => panic!("Validated bad unit."),
             Err(WrongNumberOfMembers(other_preunit)) => other_preunit,
@@ -207,8 +206,8 @@ mod tests {
         assert_eq!(other_preunit, preunit);
     }
 
-    #[tokio::test]
-    async fn detects_below_threshold() {
+    #[test]
+    fn detects_below_threshold() {
         let n_members = NodeCount(7);
         // This is the easiest way of testing this I can think off, but it also suggests we are
         // doing something wrong by having multiple sources for what is "threshold".
@@ -231,7 +230,7 @@ mod tests {
             .create_unit(round)
             .expect("Creation should succeed.");
         let unchecked_unit =
-            preunit_to_unchecked_signed_unit(preunit.clone(), session_id, &keychain).await;
+            preunit_to_unchecked_signed_unit(preunit.clone(), session_id, &keychain);
         let other_preunit = match validator.validate_unit(unchecked_unit) {
             Ok(_) => panic!("Validated bad unit."),
             Err(NotEnoughParents(other_preunit)) => other_preunit,
@@ -240,8 +239,8 @@ mod tests {
         assert_eq!(other_preunit, preunit);
     }
 
-    #[tokio::test]
-    async fn detects_too_high_round() {
+    #[test]
+    fn detects_too_high_round() {
         let n_members = NodeCount(7);
         let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
@@ -264,7 +263,7 @@ mod tests {
         let (preunit, _) = creator
             .create_unit(round)
             .expect("Creation should succeed.");
-        let unchecked_unit = preunit_to_unchecked_signed_unit(preunit, session_id, &keychain).await;
+        let unchecked_unit = preunit_to_unchecked_signed_unit(preunit, session_id, &keychain);
         let full_unit = match validator.validate_unit(unchecked_unit.clone()) {
             Ok(_) => panic!("Validated bad unit."),
             Err(RoundTooHigh(full_unit)) => full_unit,

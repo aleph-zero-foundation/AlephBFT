@@ -3,7 +3,6 @@ use aleph_bft_types::{
     Index, Keychain as KeychainT, MultiKeychain as MultiKeychainT, NodeCount, NodeIndex,
     PartialMultisignature as PartialMultisignatureT, SignatureSet,
 };
-use async_trait::async_trait;
 
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default)]
 pub struct Keychain {
@@ -33,7 +32,6 @@ impl Index for Keychain {
     }
 }
 
-#[async_trait]
 impl KeychainT for Keychain {
     type Signature = Signature;
 
@@ -41,7 +39,7 @@ impl KeychainT for Keychain {
         self.count
     }
 
-    async fn sign(&self, msg: &[u8]) -> Self::Signature {
+    fn sign(&self, msg: &[u8]) -> Self::Signature {
         Signature::new(msg.to_vec(), self.index)
     }
 

@@ -87,22 +87,20 @@ impl TestCase {
         &self.keychains[node.0]
     }
 
-    async fn unchecked_signed<T: Signable + Index>(
+    fn unchecked_signed<T: Signable + Index>(
         &self,
         to_sign: T,
         signer: NodeIndex,
     ) -> UncheckedSigned<T, Signature> {
-        Signed::sign(to_sign, self.keychain(signer)).await.into()
+        Signed::sign(to_sign, self.keychain(signer)).into()
     }
 
-    async fn indexed_unchecked_signed<T: Signable>(
+    fn indexed_unchecked_signed<T: Signable>(
         &self,
         to_sign: T,
         signer: NodeIndex,
     ) -> UncheckedSigned<Indexed<T>, Signature> {
-        Signed::sign_with_index(to_sign, self.keychain(signer))
-            .await
-            .into()
+        Signed::sign_with_index(to_sign, self.keychain(signer)).into()
     }
 
     fn full_unit(&self, forker: NodeIndex, round: Round, variant: u32) -> TestFullUnit {
@@ -119,19 +117,18 @@ impl TestCase {
         )
     }
 
-    async fn unchecked_signed_unit(
+    fn unchecked_signed_unit(
         &self,
         creator: NodeIndex,
         round: Round,
         variant: u32,
     ) -> UncheckedSigned<TestFullUnit, Signature> {
         self.unchecked_signed(self.full_unit(creator, round, variant), creator)
-            .await
     }
 
-    async fn fork_proof(&self, forker: NodeIndex, round: Round) -> TestForkProof {
-        let u0 = self.unchecked_signed_unit(forker, round, 0).await;
-        let u1 = self.unchecked_signed_unit(forker, round, 1).await;
+    fn fork_proof(&self, forker: NodeIndex, round: Round) -> TestForkProof {
+        let u0 = self.unchecked_signed_unit(forker, round, 0);
+        let u1 = self.unchecked_signed_unit(forker, round, 1);
         (u0, u1)
     }
 
@@ -282,8 +279,8 @@ async fn distributes_alert_from_units() {
     let own_index = NodeIndex(0);
     let forker = NodeIndex(6);
     let mut test_case = TestCase::new(n_members);
-    let alert = test_case.alert(own_index, test_case.fork_proof(forker, 0).await);
-    let signed_alert = test_case.unchecked_signed(alert.clone(), own_index).await;
+    let alert = test_case.alert(own_index, test_case.fork_proof(forker, 0));
+    let signed_alert = test_case.unchecked_signed(alert.clone(), own_index);
     test_case
         .incoming_alert(alert.clone())
         .outgoing_message(AlertMessage::ForkAlert(signed_alert), Recipient::Everyone);
@@ -297,14 +294,10 @@ async fn reacts_to_correctly_incoming_alert() {
     let alerter_index = NodeIndex(1);
     let forker = NodeIndex(6);
     let mut test_case = TestCase::new(n_members);
-    let fork_proof = test_case.fork_proof(forker, 0).await;
+    let fork_proof = test_case.fork_proof(forker, 0);
     let alert = test_case.alert(alerter_index, fork_proof.clone());
-    let signed_alert_hash = test_case
-        .indexed_unchecked_signed(Signable::hash(&alert), own_index)
-        .await;
-    let signed_alert = test_case
-        .unchecked_signed(alert.clone(), alerter_index)
-        .await;
+    let signed_alert_hash = test_case.indexed_unchecked_signed(Signable::hash(&alert), own_index);
+    let signed_alert = test_case.unchecked_signed(alert.clone(), alerter_index);
     test_case
         .incoming_message(AlertMessage::ForkAlert(signed_alert))
         .outgoing_notification(ForkingNotification::Forker(fork_proof));
@@ -322,21 +315,17 @@ async fn notifies_about_finished_alert() {
     let alerter_index = NodeIndex(1);
     let forker = NodeIndex(6);
     let mut test_case = TestCase::new(n_members);
-    let fork_proof = test_case.fork_proof(forker, 0).await;
+    let fork_proof = test_case.fork_proof(forker, 0);
     let alert = test_case.alert(alerter_index, fork_proof.clone());
     let alert_hash = Signable::hash(&alert);
-    let signed_alert = test_case
-        .unchecked_signed(alert.clone(), alerter_index)
-        .await;
+    let signed_alert = test_case.unchecked_signed(alert.clone(), alerter_index);
     test_case
         .incoming_message(AlertMessage::ForkAlert(signed_alert))
         .outgoing_notification(ForkingNotification::Forker(fork_proof))
         .wait();
     for i in 1..n_members.0 - 1 {
         let node_id = NodeIndex(i);
-        let signed_alert_hash = test_case
-            .indexed_unchecked_signed(alert_hash, node_id)
-            .await;
+        let signed_alert_hash = test_case.indexed_unchecked_signed(alert_hash, node_id);
         test_case.incoming_message(AlertMessage::RmcMessage(
             node_id,
             RmcMessage::SignedHash(signed_alert_hash),
@@ -353,12 +342,10 @@ async fn asks_about_unknown_alert() {
     let alerter_index = NodeIndex(1);
     let forker = NodeIndex(6);
     let mut test_case = TestCase::new(n_members);
-    let fork_proof = test_case.fork_proof(forker, 0).await;
+    let fork_proof = test_case.fork_proof(forker, 0);
     let alert = test_case.alert(alerter_index, fork_proof.clone());
     let alert_hash = Signable::hash(&alert);
-    let signed_alert_hash = test_case
-        .indexed_unchecked_signed(alert_hash, alerter_index)
-        .await;
+    let signed_alert_hash = test_case.indexed_unchecked_signed(alert_hash, alerter_index);
     test_case
         .incoming_message(AlertMessage::RmcMessage(
             alerter_index,
@@ -378,15 +365,12 @@ async fn ignores_wrong_alert() {
     let alerter_index = NodeIndex(1);
     let forker = NodeIndex(6);
     let mut test_case = TestCase::new(n_members);
-    let valid_unit = test_case.unchecked_signed_unit(alerter_index, 0, 0).await;
+    let valid_unit = test_case.unchecked_signed_unit(alerter_index, 0, 0);
     let wrong_fork_proof = (valid_unit.clone(), valid_unit);
     let wrong_alert = test_case.alert(forker, wrong_fork_proof.clone());
-    let signed_wrong_alert = test_case
-        .unchecked_signed(wrong_alert.clone(), forker)
-        .await;
-    let signed_wrong_alert_hash = test_case
-        .indexed_unchecked_signed(Signable::hash(&wrong_alert), own_index)
-        .await;
+    let signed_wrong_alert = test_case.unchecked_signed(wrong_alert.clone(), forker);
+    let signed_wrong_alert_hash =
+        test_case.indexed_unchecked_signed(Signable::hash(&wrong_alert), own_index);
     test_case
         .incoming_message(AlertMessage::ForkAlert(signed_wrong_alert))
         .unexpected_notification(ForkingNotification::Forker(wrong_fork_proof));
@@ -400,11 +384,9 @@ async fn ignores_wrong_alert() {
         );
     }
     // We also make a proper alert to actually have something to wait for.
-    let fork_proof = test_case.fork_proof(forker, 0).await;
+    let fork_proof = test_case.fork_proof(forker, 0);
     let alert = test_case.alert(alerter_index, fork_proof.clone());
-    let signed_alert = test_case
-        .unchecked_signed(alert.clone(), alerter_index)
-        .await;
+    let signed_alert = test_case.unchecked_signed(alert.clone(), alerter_index);
     test_case
         .incoming_message(AlertMessage::ForkAlert(signed_alert))
         .outgoing_notification(ForkingNotification::Forker(fork_proof));
@@ -418,12 +400,10 @@ async fn responds_to_alert_queries() {
     let querier = NodeIndex(1);
     let forker = NodeIndex(6);
     let mut test_case = TestCase::new(n_members);
-    let alert = test_case.alert(own_index, test_case.fork_proof(forker, 0).await);
+    let alert = test_case.alert(own_index, test_case.fork_proof(forker, 0));
     let alert_hash = Signable::hash(&alert);
-    let signed_alert = test_case.unchecked_signed(alert.clone(), own_index).await;
-    let signed_alert_hash = test_case
-        .indexed_unchecked_signed(alert_hash, own_index)
-        .await;
+    let signed_alert = test_case.unchecked_signed(alert.clone(), own_index);
+    let signed_alert_hash = test_case.indexed_unchecked_signed(alert_hash, own_index);
     test_case
         .incoming_alert(alert.clone())
         .outgoing_message(
@@ -460,15 +440,12 @@ async fn notifies_only_about_multisigned_alert() {
     let double_committer = NodeIndex(5);
     let forker = NodeIndex(6);
     let mut test_case = TestCase::new(n_members);
-    let fork_proof = test_case.fork_proof(forker, 0).await;
+    let fork_proof = test_case.fork_proof(forker, 0);
     let empty_alert = test_case.alert(double_committer, fork_proof.clone());
     let empty_alert_hash = Signable::hash(&empty_alert);
-    let signed_empty_alert = test_case
-        .unchecked_signed(empty_alert.clone(), double_committer)
-        .await;
-    let signed_empty_alert_hash = test_case
-        .indexed_unchecked_signed(empty_alert_hash, double_committer)
-        .await;
+    let signed_empty_alert = test_case.unchecked_signed(empty_alert.clone(), double_committer);
+    let signed_empty_alert_hash =
+        test_case.indexed_unchecked_signed(empty_alert_hash, double_committer);
     test_case
         .incoming_message(AlertMessage::ForkAlert(signed_empty_alert))
         .incoming_message(AlertMessage::RmcMessage(
@@ -485,12 +462,10 @@ async fn notifies_only_about_multisigned_alert() {
         vec![forker_unit.clone()],
     );
     let nonempty_alert_hash = Signable::hash(&nonempty_alert);
-    let signed_nonempty_alert = test_case
-        .unchecked_signed(nonempty_alert.clone(), double_committer)
-        .await;
-    let signed_nonempty_alert_hash = test_case
-        .indexed_unchecked_signed(nonempty_alert_hash, double_committer)
-        .await;
+    let signed_nonempty_alert =
+        test_case.unchecked_signed(nonempty_alert.clone(), double_committer);
+    let signed_nonempty_alert_hash =
+        test_case.indexed_unchecked_signed(nonempty_alert_hash, double_committer);
     let keychain = test_case.keychain(double_committer);
     let mut multisigned_nonempty_alert_hash = signed_nonempty_alert_hash
         .check(keychain)
@@ -498,9 +473,8 @@ async fn notifies_only_about_multisigned_alert() {
         .into_partially_multisigned(keychain);
     for i in 1..n_members.0 - 2 {
         let node_id = NodeIndex(i);
-        let signed_nonempty_alert_hash = test_case
-            .indexed_unchecked_signed(nonempty_alert_hash, node_id)
-            .await;
+        let signed_nonempty_alert_hash =
+            test_case.indexed_unchecked_signed(nonempty_alert_hash, node_id);
         multisigned_nonempty_alert_hash = multisigned_nonempty_alert_hash.add_signature(
             signed_nonempty_alert_hash
                 .check(keychain)

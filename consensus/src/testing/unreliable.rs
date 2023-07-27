@@ -5,7 +5,6 @@ use crate::{
     Index, NodeCount, NodeIndex, Round, Signed, SpawnHandle,
 };
 use aleph_bft_mock::{BadSigning, Keychain, NetworkHook, Router, Spawner};
-use async_trait::async_trait;
 use futures::StreamExt;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -17,14 +16,8 @@ struct CorruptPacket {
     round: Round,
 }
 
-#[async_trait]
 impl NetworkHook<NetworkData> for CorruptPacket {
-    async fn update_state(
-        &mut self,
-        data: &mut NetworkData,
-        sender: NodeIndex,
-        recipient: NodeIndex,
-    ) {
+    fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, recipient: NodeIndex) {
         if self.recipient != recipient || self.sender != sender {
             return;
         }
@@ -33,7 +26,7 @@ impl NetworkHook<NetworkData> for CorruptPacket {
             let index = full_unit.index();
             if full_unit.round() == self.round && full_unit.creator() == self.creator {
                 let bad_keychain: BadSigning<Keychain> = Keychain::new(0.into(), index).into();
-                *us = Signed::sign(full_unit, &bad_keychain).await.into();
+                *us = Signed::sign(full_unit, &bad_keychain).into();
             }
         }
     }
@@ -46,9 +39,8 @@ struct NoteRequest {
     requested: Arc<Mutex<bool>>,
 }
 
-#[async_trait]
 impl NetworkHook<NetworkData> for NoteRequest {
-    async fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, _: NodeIndex) {
+    fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, _: NodeIndex) {
         use NetworkDataInner::Units;
         use UnitMessage::RequestCoord;
         if sender == self.sender {

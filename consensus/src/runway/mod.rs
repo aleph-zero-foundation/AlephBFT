@@ -271,7 +271,7 @@ where
         self.keychain.node_count()
     }
 
-    async fn on_unit_message(&mut self, message: RunwayNotificationIn<H, D, MK::Signature>) {
+    fn on_unit_message(&mut self, message: RunwayNotificationIn<H, D, MK::Signature>) {
         match message {
             RunwayNotificationIn::NewUnit(u) => {
                 trace!(target: "AlephBFT-runway", "{:?} New unit received {:?}.", self.index(), &u);
@@ -289,7 +289,7 @@ where
                 }
                 Request::NewestUnit(salt) => {
                     trace!(target: "AlephBFT-runway", "{:?} Newest unit request received {:?}.", self.index(), salt);
-                    self.on_request_newest(node_id, salt).await
+                    self.on_request_newest(node_id, salt)
                 }
             },
 
@@ -422,13 +422,11 @@ where
         }
     }
 
-    async fn on_request_newest(&mut self, requester: NodeIndex, salt: u64) {
+    fn on_request_newest(&mut self, requester: NodeIndex, salt: u64) {
         let unit = self.store.newest_unit(requester);
         let response = NewestUnitResponse::new(requester, self.index(), unit, salt);
 
-        let signed_response = Signed::sign(response, &self.keychain)
-            .await
-            .into_unchecked();
+        let signed_response = Signed::sign(response, &self.keychain).into_unchecked();
 
         if let Err(e) =
             self.unit_messages_for_network
@@ -723,7 +721,7 @@ where
                 },
 
                 event = self.unit_messages_from_network.next() => match event {
-                    Some(event) => self.on_unit_message(event).await,
+                    Some(event) => self.on_unit_message(event),
                     None => {
                         error!(target: "AlephBFT-runway", "{:?} Unit message stream closed.", index);
                         break;
