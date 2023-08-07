@@ -14,6 +14,7 @@ pub struct Terminator {
     parent_exit: Receiver<()>,
     parent_connection: Option<TerminatorConnection>,
     offspring_connections: Vec<(&'static str, (Sender<()>, TerminatorConnection))>,
+    returned_result: Option<Result<(), ()>>,
 }
 
 impl Debug for Terminator {
@@ -39,6 +40,7 @@ impl Terminator {
             parent_exit,
             parent_connection,
             offspring_connections: Vec::new(),
+            returned_result: None,
         }
     }
 
@@ -47,9 +49,16 @@ impl Terminator {
         Self::new(exit, None, name)
     }
 
-    /// Get exit channel for current component
-    pub fn get_exit(&mut self) -> &mut Receiver<()> {
-        &mut self.parent_exit
+    /// When ready, returns reason why we should exit. `Ok` should be interpreted as "all good, our parent decided to gracefully
+    /// exit". `Err` is returned when our parent autonomously decided to exit, without first receiving such request from its
+    /// parent.
+    pub async fn get_exit(&mut self) -> Result<(), ()> {
+        if let Some(returned) = self.returned_result {
+            return returned;
+        }
+        self.returned_result
+            .insert((&mut self.parent_exit).await.map_err(|_| ()))
+            .to_owned()
     }
 
     /// Add a connection to an offspring component/task
@@ -222,7 +231,7 @@ mod tests {
             _ = leaf_handle_1 => assert!(with_crash, "leaf crashed when it wasn't supposed to"),
             _ = leaf_handle_2 => assert!(with_crash, "leaf crashed when it wasn't supposed to"),
             _ = internal_handle => assert!(with_crash, "internal_1 crashed when it wasn't supposed to"),
-            _ = terminator.get_exit() => assert!(!with_crash, "exited when we expected internal crash"),
+            _ = terminator.get_exit().fuse() => assert!(!with_crash, "exited when we expected internal crash"),
         }
 
         let terminator_handle = terminator.terminate_sync().fuse();
@@ -253,7 +262,7 @@ mod tests {
         select! {
             _ = leaf_handle => assert!(with_crash, "leaf crashed when it wasn't supposed to"),
             _ = internal_handle => assert!(with_crash, "internal_2 crashed when it wasn't supposed to"),
-            _ = terminator.get_exit() => assert!(!with_crash, "exited when we expected internal crash"),
+            _ = terminator.get_exit().fuse() => assert!(!with_crash, "exited when we expected internal crash"),
         }
 
         let terminator_handle = terminator.terminate_sync().fuse();

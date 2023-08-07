@@ -1,8 +1,9 @@
 use futures::{
     channel::{mpsc, oneshot},
+    future::pending,
     FutureExt,
 };
-use log::debug;
+use log::{debug, error, warn};
 
 use crate::{
     config::Config,
@@ -44,19 +45,31 @@ pub(crate) async fn run<H: Hasher + 'static>(
         outgoing_units: outgoing_notifications.clone(),
         incoming_parents: parents_from_terminal,
     };
-    let mut creator_handle = spawn_handle
-        .spawn_essential("consensus/creation", async move {
-            creation::run(conf.clone().into(), io, starting_round, creator_terminator).await;
-        })
-        .fuse();
+    let creator_handle = spawn_handle
+        .spawn_essential(
+            "consensus/creation",
+            creation::run(conf.into(), io, starting_round, creator_terminator),
+        )
+        .shared();
+    let creator_handle_for_panic = creator_handle.clone();
+    let creator_panic_handle = async move {
+        if creator_handle_for_panic.await.is_err() {
+            return;
+        }
+        pending().await
+    };
 
     let mut terminal = Terminal::new(index, incoming_notifications, outgoing_notifications);
 
     // send a new parent candidate to the creator
+    let mut parents_for_creator = Some(parents_for_creator);
     terminal.register_post_insert_hook(Box::new(move |u| {
-        parents_for_creator
-            .unbounded_send(u.into())
-            .expect("Channel to creator should be open.");
+        if let Some(parents_for_creator_tx) = &parents_for_creator {
+            if parents_for_creator_tx.unbounded_send(u.into()).is_err() {
+                warn!(target: "AlephBFT", "Channel to creator was closed.");
+                parents_for_creator = None;
+            }
+        }
     }));
     // try to extend the partial order after adding a unit to the dag
     terminal.register_post_insert_hook(Box::new(move |u| {
@@ -74,12 +87,12 @@ pub(crate) async fn run<H: Hasher + 'static>(
     debug!(target: "AlephBFT", "{:?} All services started.", index);
 
     futures::select! {
-        _ = terminator.get_exit() => {},
+        _ = terminator.get_exit().fuse() => {},
         _ = terminal_handle => {
             debug!(target: "AlephBFT-consensus", "{:?} terminal task terminated early.", index);
         },
-        _ = creator_handle => {
-            debug!(target: "AlephBFT-consensus", "{:?} creator task terminated early.", index);
+        _ = creator_panic_handle.fuse() => {
+            error!(target: "AlephBFT-consensus", "{:?} creator task terminated early with its task being dropped.", index);
         },
         _ = extender_handle => {
             debug!(target: "AlephBFT-consensus", "{:?} extender task terminated early.", index);

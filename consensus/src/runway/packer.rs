@@ -87,7 +87,7 @@ where
 
         futures::select! {
             _ = pack => Err(()),
-            _ = terminator.get_exit() => {
+            _ = terminator.get_exit().fuse() => {
                 terminator.terminate_sync().await;
                 Ok(())
             },
@@ -117,7 +117,7 @@ mod tests {
         preunits_channel: Sender<PreUnit<Hasher64>>,
         signed_units_channel: Receiver<SignedUnit<Hasher64, Data, Keychain>>,
         packer: Packer<Hasher64, Data, DataProvider, Keychain>,
-        terminator: Terminator,
+        terminator: (Terminator, oneshot::Sender<()>),
         preunit: PreUnit<Hasher64>,
     }
 
@@ -141,7 +141,7 @@ mod tests {
             preunits_channel,
             signed_units_channel,
             packer,
-            terminator,
+            terminator: (terminator, _exit_tx),
             preunit,
         }
     }
@@ -155,8 +155,9 @@ mod tests {
             mut packer,
             terminator,
             preunit,
+            ..
         } = prepare(keychain);
-        let packer_handle = packer.run(terminator).fuse();
+        let packer_handle = packer.run(terminator.0).fuse();
         preunits_channel
             .unbounded_send(preunit.clone())
             .expect("Packer PreUnit channel closed");
@@ -183,7 +184,7 @@ mod tests {
             terminator,
             ..
         } = prepare(keychain);
-        assert_eq!(packer.run(terminator).await, Err(()));
+        assert_eq!(packer.run(terminator.0).await, Err(()));
     }
 
     #[tokio::test]
@@ -199,7 +200,7 @@ mod tests {
         preunits_channel
             .unbounded_send(preunit)
             .expect("Packer PreUnit channel closed");
-        assert_eq!(packer.run(terminator).await, Err(()));
+        assert_eq!(packer.run(terminator.0).await, Err(()));
     }
 
     #[tokio::test]

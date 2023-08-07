@@ -1,4 +1,4 @@
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use std::collections::{HashMap, VecDeque};
 
 use log::{debug, warn};
@@ -304,7 +304,7 @@ impl<H: Hasher> Extender<H> {
                         self.progress(v_hash)
                     }
                 }
-                _ = &mut terminator.get_exit() => {
+                _ = terminator.get_exit().fuse() => {
                     debug!(target: "AlephBFT-extender", "{:?} received exit signal.", self.node_id);
                     self.exiting = true;
                 }

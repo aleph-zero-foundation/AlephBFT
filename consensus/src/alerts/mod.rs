@@ -498,7 +498,7 @@ pub(crate) async fn run<H: Hasher, D: Data, MK: MultiKeychain>(
                     io.send_notification_for_units(notification, &mut alerter.exiting);
                 }
             },
-            _ = &mut terminator.get_exit() => {
+            _ = terminator.get_exit().fuse() => {
                 debug!(target: "AlephBFT-alerter", "{:?} received exit signal", alerter.index());
                 alerter.exiting = true;
             },

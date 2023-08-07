@@ -3,7 +3,7 @@ use crate::{
     Data, Hasher, NodeIndex, Receiver, Round, Sender, SessionId, Signature, Terminator,
 };
 use codec::{Decode, Encode, Error as CodecError};
-use futures::{channel::oneshot, StreamExt};
+use futures::{channel::oneshot, FutureExt, StreamExt};
 use log::{debug, error, info, warn};
 use std::{
     collections::HashSet,
@@ -265,7 +265,7 @@ pub async fn run_saving_mechanism<'a, H: Hasher, D: Data, S: Signature, W: Write
                     break;
                 }
             },
-            _ = terminator.get_exit() => {
+            _ = terminator.get_exit().fuse() => {
                 debug!(target: "AlephBFT-backup-saver", "Backup saver received exit signal.");
                 terminator_exit = true;
             }

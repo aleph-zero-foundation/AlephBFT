@@ -4,7 +4,7 @@ use aleph_bft_mock::{Hasher64, PartialMultisignature, Signature};
 use codec::{Decode, Encode};
 use futures::{
     channel::mpsc::{self, UnboundedReceiver, UnboundedSender},
-    StreamExt,
+    FutureExt, StreamExt,
 };
 use log::{debug, error, warn};
 use std::{
@@ -276,7 +276,7 @@ impl NetworkManager {
                     self.send(Message::Block(block), Recipient::Everyone);
                 }
 
-               _ = &mut terminator.get_exit()  => {
+               _ = terminator.get_exit().fuse()  => {
                     terminator.terminate_sync().await;
                     break;
                },

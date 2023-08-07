@@ -1,4 +1,4 @@
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
     fmt::{Debug, Formatter},
@@ -87,7 +87,7 @@ pub enum TerminalEvent<H: Hasher> {
     ParentsInDag(H::Hash),
 }
 
-type SyncClosure<X, Y> = Box<dyn Fn(X) -> Y + Sync + Send + 'static>;
+type SyncClosure<X, Y> = Box<dyn FnMut(X) -> Y + Sync + Send + 'static>;
 
 /// A process whose goal is to receive new units and place them in our local Dag.
 /// Importantly, our local Dag is a set of units that are *guaranteed* to be sooner or later
@@ -255,7 +255,7 @@ impl<H: Hasher> Terminal<H> {
             .get(u_hash)
             .expect("Unit to be added to dag must be in store")
             .clone();
-        self.post_insert.iter().for_each(|f| f(u.clone()));
+        self.post_insert.iter_mut().for_each(|f| f(u.clone()));
         if let Some(children) = self.children_hash.remove(u_hash) {
             for v_hash in children {
                 self.new_parent_in_dag(&v_hash);
@@ -382,7 +382,7 @@ impl<H: Hasher> Terminal<H> {
                         _ => {}
                     }
                 }
-                _ = &mut terminator.get_exit() => {
+                _ = terminator.get_exit().fuse() => {
                     debug!(target: "AlephBFT-terminal", "{:?} received exit signal", self.node_id);
                     self.exiting = true;
                 }
