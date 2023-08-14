@@ -80,7 +80,7 @@ impl NodeCount {
     }
 
     pub fn into_iterator(self) -> impl Iterator<Item = NodeIndex> {
-        (0..self.0).into_iter().map(NodeIndex)
+        (0..self.0).map(NodeIndex)
     }
 }
 
