@@ -170,11 +170,11 @@ impl<T: Send + Sync + Clone> TaskScheduler<T> for DoublingDelayScheduler<T> {
 
 /// Reliable Multicast Box
 ///
-/// The instance of [`ReliableMulticast<'a, H, MK>`] reliably broadcasts hashes of type `H`,
+/// The instance of [`ReliableMulticast<H, MK>`] reliably broadcasts hashes of type `H`,
 /// and when a hash is successfully broadcasted, the multisigned hash `Multisigned<H, MK>`
 /// is asynchronously returned.
 ///
-/// A node with an instance of [`ReliableMulticast<'a, H, MK>`] can initiate broadcasting
+/// A node with an instance of [`ReliableMulticast<H, MK>`] can initiate broadcasting
 /// a message `msg: H` by calling the [`ReliableMulticast::start_rmc`] method. As a result,
 /// the node signs `msg` and starts broadcasting the signed message via the network.
 /// When sufficintly many nodes call [`ReliableMulticast::start_rmc`] with the same message `msg`
@@ -184,21 +184,21 @@ impl<T: Send + Sync + Clone> TaskScheduler<T> for DoublingDelayScheduler<T> {
 ///
 /// We refer to the documentation https://cardinal-cryptography.github.io/AlephBFT/reliable_broadcast.html
 /// for a high-level description of this protocol and how it is used for fork alerts.
-pub struct ReliableMulticast<'a, H: Signable + Hash, MK: MultiKeychain> {
+pub struct ReliableMulticast<H: Signable + Hash, MK: MultiKeychain> {
     hash_states: HashMap<H, PartiallyMultisigned<H, MK>>,
     network_rx: UnboundedReceiver<Message<H, MK::Signature, MK::PartialMultisignature>>,
     network_tx: UnboundedSender<Message<H, MK::Signature, MK::PartialMultisignature>>,
-    keychain: &'a MK,
+    keychain: MK,
     scheduler: Box<dyn TaskScheduler<Task<H, MK>>>,
     multisigned_hashes_tx: UnboundedSender<Multisigned<H, MK>>,
     multisigned_hashes_rx: UnboundedReceiver<Multisigned<H, MK>>,
 }
 
-impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMulticast<'a, H, MK> {
+impl<H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMulticast<H, MK> {
     pub fn new(
         network_rx: UnboundedReceiver<Message<H, MK::Signature, MK::PartialMultisignature>>,
         network_tx: UnboundedSender<Message<H, MK::Signature, MK::PartialMultisignature>>,
-        keychain: &'a MK,
+        keychain: MK,
         //kept for compatibility
         _node_count: NodeCount,
         scheduler: impl TaskScheduler<Task<H, MK>> + 'static,
@@ -218,7 +218,7 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
     /// Initiate a new instance of RMC for `hash`.
     pub fn start_rmc(&mut self, hash: H) {
         debug!(target: "AlephBFT-rmc", "starting rmc for {:?}", hash);
-        let signed_hash = Signed::sign_with_index(hash, self.keychain);
+        let signed_hash = Signed::sign_with_index(hash, &self.keychain);
 
         let message = Message::SignedHash(signed_hash.into_unchecked());
         self.handle_message(message.clone());
@@ -250,7 +250,7 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
             return;
         }
         match message {
-            Message::MultisignedHash(unchecked) => match unchecked.check_multi(self.keychain) {
+            Message::MultisignedHash(unchecked) => match unchecked.check_multi(&self.keychain) {
                 Ok(multisigned) => {
                     self.on_complete_multisignature(multisigned);
                 }
@@ -259,7 +259,7 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
                 }
             },
             Message::SignedHash(unchecked) => {
-                let signed_hash = match unchecked.check(self.keychain) {
+                let signed_hash = match unchecked.check(&self.keychain) {
                     Ok(signed_hash) => signed_hash,
                     Err(_) => {
                         warn!(target: "AlephBFT-rmc", "Received a hash with a bad signature");
@@ -268,8 +268,8 @@ impl<'a, H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMul
                 };
 
                 let new_state = match self.hash_states.remove(&hash) {
-                    None => signed_hash.into_partially_multisigned(self.keychain),
-                    Some(partial) => partial.add_signature(signed_hash, self.keychain),
+                    None => signed_hash.into_partially_multisigned(&self.keychain),
+                    Some(partial) => partial.add_signature(signed_hash, &self.keychain),
                 };
                 match new_state {
                     PartiallyMultisigned::Complete { multisigned } => {
@@ -395,15 +395,15 @@ mod tests {
         }
     }
 
-    struct TestData<'a> {
+    struct TestData {
         network: TestNetwork,
-        rmcs: Vec<ReliableMulticast<'a, Signable, Keychain>>,
+        rmcs: Vec<ReliableMulticast<Signable, Keychain>>,
     }
 
-    impl<'a> TestData<'a> {
+    impl TestData {
         fn new(
             node_count: NodeCount,
-            keychains: &'a [Keychain],
+            keychains: &[Keychain],
             message_filter: impl FnMut(NodeIndex, TestMessage) -> bool + 'static,
         ) -> Self {
             let (network, channels) = TestNetwork::new(node_count, message_filter);
@@ -412,7 +412,7 @@ mod tests {
                 let rmc = ReliableMulticast::new(
                     rx,
                     tx,
-                    &keychains[i],
+                    keychains[i],
                     node_count,
                     DoublingDelayScheduler::new(Duration::from_millis(1)),
                 );
