@@ -30,7 +30,8 @@ mod backup;
 mod collection;
 mod packer;
 
-use backup::{UnitLoader, UnitSaver};
+use crate::runway::backup::{BackupLoader, BackupSaver, LoadedData};
+pub use backup::BackupItem;
 #[cfg(feature = "initial_unit_collection")]
 use collection::{Collection, IO as CollectionIO};
 pub use collection::{NewestUnitResponse, Salt};
@@ -669,20 +670,20 @@ where
 
     async fn run(
         mut self,
-        units_from_backup: oneshot::Receiver<Vec<UncheckedSignedUnit<H, D, MK::Signature>>>,
+        data_from_backup: oneshot::Receiver<LoadedData<H, D, MK>>,
         mut terminator: Terminator,
     ) {
         let index = self.index();
-        let units_from_backup = units_from_backup.fuse();
-        pin_mut!(units_from_backup);
+        let data_from_backup = data_from_backup.fuse();
+        pin_mut!(data_from_backup);
 
         let status_ticker_delay = Duration::from_secs(10);
         let mut status_ticker = Delay::new(status_ticker_delay).fuse();
 
-        match units_from_backup.await {
-            Ok(units) => {
-                for u in units {
-                    self.on_unit_received(u, false);
+        match data_from_backup.await {
+            Ok((units, _alert_data)) => {
+                for unit in units {
+                    self.on_unit_received(unit, false);
                 }
             }
             Err(e) => {
@@ -815,40 +816,40 @@ fn trivial_start(
 pub struct RunwayIO<
     H: Hasher,
     D: Data,
-    S: Signature,
-    US: Write + Send + Sync + 'static,
-    UL: Read + Send + Sync + 'static,
+    MK: MultiKeychain,
+    W: Write + Send + Sync + 'static,
+    R: Read + Send + Sync + 'static,
     DP: DataProvider<D>,
     FH: FinalizationHandler<D>,
 > {
     pub data_provider: DP,
     pub finalization_handler: FH,
-    pub unit_saver: UnitSaver<US, H, D, S>,
-    pub unit_loader: UnitLoader<UL, H, D, S>,
-    _phantom: PhantomData<(H, D, S)>,
+    pub backup_write: W,
+    pub backup_read: R,
+    _phantom: PhantomData<(H, D, MK::Signature)>,
 }
 
 impl<
         H: Hasher,
         D: Data,
-        S: Signature,
-        US: Write + Send + Sync + 'static,
-        UL: Read + Send + Sync + 'static,
+        MK: MultiKeychain,
+        W: Write + Send + Sync + 'static,
+        R: Read + Send + Sync + 'static,
         DP: DataProvider<D>,
         FH: FinalizationHandler<D>,
-    > RunwayIO<H, D, S, US, UL, DP, FH>
+    > RunwayIO<H, D, MK, W, R, DP, FH>
 {
     pub fn new(
         data_provider: DP,
         finalization_handler: FH,
-        unit_saver: US,
-        unit_loader: UL,
+        backup_write: W,
+        backup_read: R,
     ) -> Self {
         RunwayIO {
             data_provider,
             finalization_handler,
-            unit_saver: UnitSaver::new(unit_saver),
-            unit_loader: UnitLoader::new(unit_loader),
+            backup_write,
+            backup_read,
             _phantom: PhantomData,
         }
     }
@@ -856,7 +857,7 @@ impl<
 
 pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
     config: Config,
-    runway_io: RunwayIO<H, D, MK::Signature, US, UL, DP, FH>,
+    runway_io: RunwayIO<H, D, MK, US, UL, DP, FH>,
     keychain: &MK,
     spawn_handle: SH,
     network_io: NetworkIO<H, D, MK>,
@@ -924,16 +925,21 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
 
     let (backup_units_for_saver, backup_units_from_runway) = mpsc::unbounded();
     let (backup_units_for_runway, backup_units_from_saver) = mpsc::unbounded();
+    let (_alert_data_for_saver, alert_data_from_alerter) = mpsc::unbounded();
+    let (alert_data_for_alerter, _alert_data_from_saver) = mpsc::unbounded();
 
     let backup_saver_terminator = terminator.add_offspring_connection("AlephBFT-backup-saver");
-    let backup_saver_handle = spawn_handle.spawn_essential("runway/backup_saver", async move {
-        backup::run_saving_mechanism(
-            runway_io.unit_saver,
+    let backup_saver_handle = spawn_handle.spawn_essential("runway/backup_saver", {
+        let mut backup_saver: BackupSaver<_, _, MK, _> = BackupSaver::new(
             backup_units_from_runway,
+            alert_data_from_alerter,
             backup_units_for_runway,
-            backup_saver_terminator,
-        )
-        .await;
+            alert_data_for_alerter,
+            runway_io.backup_write,
+        );
+        async move {
+            backup_saver.run(backup_saver_terminator).await;
+        }
     });
     let mut backup_saver_handle = backup_saver_handle.fuse();
 
@@ -947,20 +953,21 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
     );
     let (responses_for_collection, responses_from_runway) = mpsc::unbounded();
     let (unit_collections_sender, unit_collection_result) = oneshot::channel();
-    let (loaded_units_tx, loaded_units_rx) = oneshot::channel();
+    let (loaded_data_tx, loaded_data_rx) = oneshot::channel();
     let session_id = config.session_id();
 
     let backup_loading_handle = spawn_handle
-        .spawn_essential("runway/loading", async move {
-            backup::run_loading_mechanism(
-                runway_io.unit_loader,
-                index,
-                session_id,
-                loaded_units_tx,
-                starting_round_sender,
-                unit_collection_result,
-            )
-            .await
+        .spawn_essential("runway/loading", {
+            let mut backup_loader = BackupLoader::new(runway_io.backup_read, index, session_id);
+            async move {
+                backup_loader
+                    .run(
+                        loaded_data_tx,
+                        starting_round_sender,
+                        unit_collection_result,
+                    )
+                    .await
+            }
         })
         .fuse();
     pin_mut!(backup_loading_handle);
@@ -1017,7 +1024,7 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
             let keychain = keychain.clone();
             let runway = Runway::new(runway_config, keychain, validator);
 
-            async move { runway.run(loaded_units_rx, runway_terminator).await }
+            async move { runway.run(loaded_data_rx, runway_terminator).await }
         })
         .fuse();
     pin_mut!(runway_handle);
