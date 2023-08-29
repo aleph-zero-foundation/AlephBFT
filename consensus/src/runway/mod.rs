@@ -1,5 +1,5 @@
 use crate::{
-    alerts::{Alert, AlertConfig, ForkProof, ForkingNotification, NetworkMessage},
+    alerts::{Alert, ForkProof, ForkingNotification, NetworkMessage},
     consensus, handle_task_termination,
     member::UnitMessage,
     units::{
@@ -876,34 +876,6 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
     let (consensus_sink, rx_consensus) = mpsc::unbounded();
     let (ordered_batch_tx, ordered_batch_rx) = mpsc::unbounded();
 
-    let (alert_notifications_for_units, notifications_from_alerter) = mpsc::unbounded();
-    let (alerts_for_alerter, alerts_from_units) = mpsc::unbounded();
-    let alert_config = AlertConfig {
-        session_id: config.session_id(),
-        n_members: config.n_members(),
-    };
-    let alerter_terminator = terminator.add_offspring_connection("AlephBFT-alerter");
-    let alerter_keychain = keychain.clone();
-    let alert_messages_for_network = network_io.alert_messages_for_network;
-    let alert_messages_from_network = network_io.alert_messages_from_network;
-
-    let mut alerter_service = crate::alerts::Service::new(
-        alerter_keychain.clone(),
-        alert_messages_for_network,
-        alert_messages_from_network,
-        alert_notifications_for_units,
-        alerts_from_units,
-        alert_config.n_members,
-    );
-    let alerter_handler = crate::alerts::Handler::new(alerter_keychain, alert_config);
-
-    let alerter_handle = spawn_handle.spawn_essential("runway/alerter", async move {
-        alerter_service
-            .run(alerter_handler, alerter_terminator)
-            .await;
-    });
-    let mut alerter_handle = alerter_handle.fuse();
-
     let consensus_terminator = terminator.add_offspring_connection("AlephBFT-consensus");
     let consensus_config = config.clone();
     let consensus_spawner = spawn_handle.clone();
@@ -925,8 +897,8 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
 
     let (backup_units_for_saver, backup_units_from_runway) = mpsc::unbounded();
     let (backup_units_for_runway, backup_units_from_saver) = mpsc::unbounded();
-    let (_alert_data_for_saver, alert_data_from_alerter) = mpsc::unbounded();
-    let (alert_data_for_alerter, _alert_data_from_saver) = mpsc::unbounded();
+    let (alert_data_for_saver, alert_data_from_alerter) = mpsc::unbounded();
+    let (alert_data_for_alerter, alert_data_from_saver) = mpsc::unbounded();
 
     let backup_saver_terminator = terminator.add_offspring_connection("AlephBFT-backup-saver");
     let backup_saver_handle = spawn_handle.spawn_essential("runway/backup_saver", {
@@ -942,6 +914,32 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
         }
     });
     let mut backup_saver_handle = backup_saver_handle.fuse();
+
+    let (alert_notifications_for_units, notifications_from_alerter) = mpsc::unbounded();
+    let (alerts_for_alerter, alerts_from_units) = mpsc::unbounded();
+
+    let alerter_terminator = terminator.add_offspring_connection("AlephBFT-alerter");
+    let alerter_keychain = keychain.clone();
+    let alert_messages_for_network = network_io.alert_messages_for_network;
+    let alert_messages_from_network = network_io.alert_messages_from_network;
+
+    let mut alerter_service = crate::alerts::Service::new(
+        alerter_keychain.clone(),
+        alert_messages_for_network,
+        alert_messages_from_network,
+        alert_notifications_for_units,
+        alerts_from_units,
+        alert_data_for_saver,
+        alert_data_from_saver,
+    );
+    let alerter_handler = crate::alerts::Handler::new(alerter_keychain, config.session_id());
+
+    let alerter_handle = spawn_handle.spawn_essential("runway/alerter", async move {
+        alerter_service
+            .run(alerter_handler, alerter_terminator)
+            .await;
+    });
+    let mut alerter_handle = alerter_handle.fuse();
 
     let index = keychain.index();
     let threshold = (keychain.node_count() * 2) / 3 + NodeCount(1);

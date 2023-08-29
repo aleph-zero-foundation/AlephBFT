@@ -1,10 +1,10 @@
 use crate::{
-    alerts::Alert,
     units::{UncheckedSignedUnit, UnitCoord},
-    Data, Hasher, Keychain, MultiKeychain, Multisigned, NodeIndex, Receiver, Round, Sender,
-    SessionId, Terminator,
+    Data, Hasher, Keychain, MultiKeychain, NodeIndex, Receiver, Round, Sender, SessionId,
+    Terminator,
 };
 
+use crate::alerts::AlertData;
 use codec::{Decode, Encode, Error as CodecError};
 use futures::{channel::oneshot, FutureExt, StreamExt};
 use itertools::{Either, Itertools};
@@ -23,13 +23,6 @@ const LOG_TARGET: &str = "AlephBFT-backup";
 pub enum BackupItem<H: Hasher, D: Data, MK: MultiKeychain> {
     Unit(UncheckedSignedUnit<H, D, MK::Signature>),
     AlertData(AlertData<H, D, MK>),
-}
-
-#[derive(Clone, Debug, Decode, Encode, PartialEq)]
-pub enum AlertData<H: Hasher, D: Data, MK: MultiKeychain> {
-    OwnAlert(Alert<H, D, MK::Signature>),
-    NetworkAlert(Alert<H, D, MK::Signature>),
-    MultisignedHash(Multisigned<H::Hash, MK>),
 }
 
 /// Backup read error. Could be either caused by io error from `BackupReader`, or by decoding.

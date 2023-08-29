@@ -1,5 +1,5 @@
 use crate::{
-    alerts::{Alert, AlertConfig, AlertMessage, ForkProof, ForkingNotification, Handler, Service},
+    alerts::{Alert, AlertMessage, ForkProof, ForkingNotification, Handler, Service},
     units::{ControlHash, FullUnit, PreUnit},
     Index, Indexed, Keychain as _, NodeCount, NodeIndex, NodeMap, Recipient, Round, Signable,
     Signed, Terminator, UncheckedSigned,
@@ -214,7 +214,8 @@ impl TestCase {
         let (notifications_for_units, mut notifications_from_alerter) = mpsc::unbounded();
         let (alerts_for_alerter, alerts_from_units) = mpsc::unbounded();
         let (exit_alerter, exit) = oneshot::channel();
-        let n_members = keychain.node_count();
+        // mock communication with backup - data sent to backup immediately returns to alerter
+        let (data_for_backup, responses_from_backup) = mpsc::unbounded();
 
         let mut alerter_service = Service::new(
             keychain,
@@ -222,15 +223,10 @@ impl TestCase {
             messages_from_network,
             notifications_for_units,
             alerts_from_units,
-            n_members,
+            data_for_backup,
+            responses_from_backup,
         );
-        let alerter_handler = Handler::new(
-            keychain,
-            AlertConfig {
-                n_members,
-                session_id: 0,
-            },
-        );
+        let alerter_handler = Handler::new(keychain, 0);
 
         tokio::spawn(async move {
             alerter_service

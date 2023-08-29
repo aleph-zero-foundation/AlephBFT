@@ -43,7 +43,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "aleph-bft-mock",
  "aleph-bft-rmc",
@@ -149,7 +149,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft-rmc"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "aleph-bft-crypto",
  "aleph-bft-mock",

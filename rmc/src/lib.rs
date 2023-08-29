@@ -199,8 +199,6 @@ impl<H: Signable + Hash + Eq + Clone + Debug, MK: MultiKeychain> ReliableMultica
         network_rx: UnboundedReceiver<Message<H, MK::Signature, MK::PartialMultisignature>>,
         network_tx: UnboundedSender<Message<H, MK::Signature, MK::PartialMultisignature>>,
         keychain: MK,
-        //kept for compatibility
-        _node_count: NodeCount,
         scheduler: impl TaskScheduler<Task<H, MK>> + 'static,
     ) -> Self {
         let (multisigned_hashes_tx, multisigned_hashes_rx) = unbounded();
@@ -413,7 +411,6 @@ mod tests {
                     rx,
                     tx,
                     keychains[i],
-                    node_count,
                     DoublingDelayScheduler::new(Duration::from_millis(1)),
                 );
                 rmcs.push(rmc);

@@ -1,9 +1,11 @@
 use crate::{
-    alerts::{Alert, AlertConfig, AlertMessage, AlerterResponse, ForkProof, ForkingNotification},
-    Data, Hasher, Keychain, MultiKeychain, Multisigned, NodeIndex, Recipient, SessionId, Signed,
-    UncheckedSigned,
+    alerts::{Alert, AlertMessage, ForkProof, ForkingNotification},
+    Data, Hasher, Keychain, MultiKeychain, Multisigned, NodeIndex, PartialMultisignature,
+    Recipient, SessionId, Signature, Signed, UncheckedSigned,
 };
+use aleph_bft_rmc::Message as RmcMessage;
 use aleph_bft_types::Round;
+use codec::{Decode, Encode};
 use std::{
     collections::{HashMap, HashSet},
     fmt::{Display, Formatter},
@@ -46,31 +48,28 @@ impl Display for Error {
 type KnownAlerts<H, D, MK> =
     HashMap<<H as Hasher>::Hash, Signed<Alert<H, D, <MK as Keychain>::Signature>, MK>>;
 
-type OnOwnAlertResult<H, D, MK> = (
+pub type OnOwnAlertResponse<H, D, MK> = (
     AlertMessage<H, D, <MK as Keychain>::Signature, <MK as MultiKeychain>::PartialMultisignature>,
     Recipient,
     <H as Hasher>::Hash,
 );
 
-type OnNetworkAlertResult<H, D, MK> = Result<
-    (
-        Option<ForkingNotification<H, D, <MK as Keychain>::Signature>>,
-        <H as Hasher>::Hash,
-    ),
-    Error,
->;
+pub type OnNetworkAlertResponse<H, D, MK> = (
+    Option<ForkingNotification<H, D, <MK as Keychain>::Signature>>,
+    <H as Hasher>::Hash,
+);
 
-type OnMessageResult<H, D, MK> = Result<
-    Option<
-        AlerterResponse<
-            H,
-            D,
-            <MK as Keychain>::Signature,
-            <MK as MultiKeychain>::PartialMultisignature,
-        >,
-    >,
-    Error,
->;
+type OnAlertRequestResponse<H, D, MK> = (
+    UncheckedSigned<Alert<H, D, <MK as Keychain>::Signature>, <MK as Keychain>::Signature>,
+    Recipient,
+);
+
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Decode, Encode)]
+pub enum RmcResponse<H: Hasher, S: Signature, MS: PartialMultisignature> {
+    RmcMessage(RmcMessage<H::Hash, S, MS>),
+    AlertRequest(H::Hash, Recipient),
+    Noop,
+}
 
 /// The component responsible for fork alerts in AlephBFT. We refer to the documentation
 /// https://cardinal-cryptography.github.io/AlephBFT/how_alephbft_does_it.html Section 2.5 and
@@ -85,9 +84,9 @@ pub struct Handler<H: Hasher, D: Data, MK: MultiKeychain> {
 }
 
 impl<H: Hasher, D: Data, MK: MultiKeychain> Handler<H, D, MK> {
-    pub fn new(keychain: MK, config: AlertConfig) -> Self {
+    pub fn new(keychain: MK, session_id: SessionId) -> Self {
         Self {
-            session_id: config.session_id,
+            session_id,
             keychain,
             known_forkers: HashMap::new(),
             known_alerts: HashMap::new(),
@@ -174,7 +173,7 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Handler<H, D, MK> {
     pub fn on_own_alert(
         &mut self,
         alert: Alert<H, D, MK::Signature>,
-    ) -> OnOwnAlertResult<H, D, MK> {
+    ) -> OnOwnAlertResponse<H, D, MK> {
         let forker = alert.forker();
         self.known_forkers.insert(forker, alert.proof.clone());
         let alert = Signed::sign(alert, &self.keychain);
@@ -187,10 +186,10 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Handler<H, D, MK> {
     }
 
     /// May return a `ForkingNotification`, which should be propagated
-    fn on_network_alert(
+    pub fn on_network_alert(
         &mut self,
         alert: UncheckedSigned<Alert<H, D, MK::Signature>, MK::Signature>,
-    ) -> OnNetworkAlertResult<H, D, MK> {
+    ) -> Result<OnNetworkAlertResponse<H, D, MK>, Error> {
         let alert = match alert.check(&self.keychain) {
             Ok(alert) => alert,
             Err(_) => {
@@ -205,7 +204,7 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Handler<H, D, MK> {
             self.known_alerts.insert(contents.hash(), alert);
             return Err(Error::RepeatedAlert(sender, forker));
         }
-        let propagate_alert = if self.is_forker(forker) {
+        let maybe_notification = if self.is_forker(forker) {
             None
         } else {
             // We learn about this forker for the first time, need to send our own alert
@@ -213,42 +212,49 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Handler<H, D, MK> {
             Some(ForkingNotification::Forker(contents.proof.clone()))
         };
         let hash_for_rmc = self.rmc_alert(forker, alert);
-        Ok((propagate_alert, hash_for_rmc))
+
+        // A response to a valid fork alert.
+        // It should be handled by starting RMC on the contained hash
+        // and sending the contained notification (if present) to runway.
+        Ok((maybe_notification, hash_for_rmc))
     }
 
-    /// May return an `AlerterResponse` which should be propagated
-    pub fn on_message(
-        &mut self,
-        message: AlertMessage<H, D, MK::Signature, MK::PartialMultisignature>,
-    ) -> OnMessageResult<H, D, MK> {
-        use AlertMessage::*;
-        match message {
-            ForkAlert(alert) => self
-                .on_network_alert(alert)
-                .map(|(n, h)| Some(AlerterResponse::ForkResponse(n, h))),
-            RmcMessage(sender, message) => {
-                let hash = message.hash();
-                if let Some(alert) = self.known_alerts.get(hash) {
-                    let alert_id = (alert.as_signable().sender, alert.as_signable().forker());
-                    if self.known_rmcs.get(&alert_id) == Some(hash) || message.is_complete() {
-                        Ok(Some(AlerterResponse::RmcMessage(message)))
-                    } else {
-                        Ok(None)
-                    }
-                } else {
-                    Ok(Some(AlerterResponse::AlertRequest(
-                        *hash,
-                        Recipient::Node(sender),
-                    )))
-                }
+    // returns AlerterResponse::{AlertRequest, RmcMessage} or None (no error, can't fail)
+    pub fn on_rmc_message(
+        &self,
+        sender: NodeIndex,
+        message: RmcMessage<H::Hash, MK::Signature, MK::PartialMultisignature>,
+    ) -> RmcResponse<H, MK::Signature, MK::PartialMultisignature> {
+        let hash = message.hash();
+        if let Some(alert) = self.known_alerts.get(hash) {
+            let alert_id = (alert.as_signable().sender, alert.as_signable().forker());
+            if self.known_rmcs.get(&alert_id) == Some(hash) || message.is_complete() {
+                // An internal RMC message, with the sender being the local node.
+                // It should be handled by sending the message.
+                RmcResponse::RmcMessage(message)
+            } else {
+                // Should be handled by doing nothing.
+                RmcResponse::Noop
             }
-            AlertRequest(node, hash) => match self.known_alerts.get(&hash) {
-                Some(alert) => Ok(Some(AlerterResponse::ForkAlert(
-                    alert.clone().into_unchecked(),
-                    Recipient::Node(node),
-                ))),
-                None => Err(Error::UnknownAlertRequest),
-            },
+        } else {
+            // A request for a fork alert from another node.
+            // It should be handled by sending the request via the network to the contained recipient.
+            RmcResponse::AlertRequest(*hash, Recipient::Node(sender))
+        }
+    }
+
+    pub fn on_alert_request(
+        &self,
+        node: NodeIndex,
+        hash: H::Hash,
+    ) -> Result<OnAlertRequestResponse<H, D, MK>, Error> {
+        match self.known_alerts.get(&hash) {
+            Some(alert) => {
+                // A copy of a fork alert.
+                // It should be handled by sending the contained `Alert` via the network to the contained recipient.
+                Ok((alert.clone().into_unchecked(), Recipient::Node(node)))
+            }
+            None => Err(Error::UnknownAlertRequest),
         }
     }
 
@@ -272,9 +278,8 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Handler<H, D, MK> {
 mod tests {
     use crate::{
         alerts::{
-            handler::{Error, Handler},
-            Alert, AlertConfig, AlertMessage, AlerterResponse, ForkProof, ForkingNotification,
-            RmcMessage,
+            handler::{Error, Handler, RmcResponse},
+            Alert, AlertMessage, ForkProof, ForkingNotification, RmcMessage,
         },
         units::{ControlHash, FullUnit, PreUnit},
         PartiallyMultisigned, Recipient, Round,
@@ -322,13 +327,7 @@ mod tests {
         let forker_index = NodeIndex(6);
         let own_keychain = Keychain::new(n_members, own_index);
         let forker_keychain = Keychain::new(n_members, forker_index);
-        let mut this = Handler::new(
-            own_keychain,
-            AlertConfig {
-                n_members,
-                session_id: 0,
-            },
-        );
+        let mut this = Handler::new(own_keychain, 0);
         let fork_proof = make_fork_proof(forker_index, &forker_keychain, 0, n_members);
         let alert = Alert::new(own_index, fork_proof, vec![]);
         let signed_alert = Signed::sign(alert.clone(), &this.keychain).into_unchecked();
@@ -350,13 +349,7 @@ mod tests {
         let forker_index = NodeIndex(6);
         let own_keychain = Keychain::new(n_members, own_index);
         let forker_keychain = Keychain::new(n_members, forker_index);
-        let mut this = Handler::new(
-            own_keychain,
-            AlertConfig {
-                n_members,
-                session_id: 0,
-            },
-        );
+        let mut this = Handler::new(own_keychain, 0);
         let fork_proof = make_fork_proof(forker_index, &forker_keychain, 0, n_members);
         let alert = Alert::new(own_index, fork_proof.clone(), vec![]);
         let alert_hash = Signable::hash(&alert);
@@ -376,27 +369,17 @@ mod tests {
         let own_keychain = Keychain::new(n_members, own_index);
         let alerter_keychain = Keychain::new(n_members, alerter_index);
         let forker_keychain = Keychain::new(n_members, forker_index);
-        let mut this: Handler<Hasher64, Data, _> = Handler::new(
-            own_keychain,
-            AlertConfig {
-                n_members,
-                session_id: 0,
-            },
-        );
+        let this: Handler<Hasher64, Data, _> = Handler::new(own_keychain, 0);
         let fork_proof = make_fork_proof(forker_index, &forker_keychain, 0, n_members);
         let alert = Alert::new(alerter_index, fork_proof, vec![]);
         let alert_hash = Signable::hash(&alert);
         let signed_alert_hash =
             Signed::sign_with_index(alert_hash, &alerter_keychain).into_unchecked();
-        let message =
-            AlertMessage::RmcMessage(alerter_index, RmcMessage::SignedHash(signed_alert_hash));
-        let response = this.on_message(message);
+        let response =
+            this.on_rmc_message(alerter_index, RmcMessage::SignedHash(signed_alert_hash));
         assert_eq!(
             response,
-            Ok(Some(AlerterResponse::AlertRequest(
-                alert_hash,
-                Recipient::Node(alerter_index),
-            ))),
+            RmcResponse::AlertRequest(alert_hash, Recipient::Node(alerter_index),),
         );
     }
 
@@ -407,13 +390,7 @@ mod tests {
         let forker_index = NodeIndex(6);
         let own_keychain = Keychain::new(n_members, own_index);
         let forker_keychain = Keychain::new(n_members, forker_index);
-        let mut this = Handler::new(
-            own_keychain,
-            AlertConfig {
-                n_members,
-                session_id: 0,
-            },
-        );
+        let mut this = Handler::new(own_keychain, 0);
         let valid_unit = Signed::sign(
             full_unit(n_members, forker_index, 0, Some(0)),
             &forker_keychain,
@@ -423,7 +400,7 @@ mod tests {
         let wrong_alert = Alert::new(own_index, wrong_fork_proof, vec![]);
         let signed_wrong_alert = Signed::sign(wrong_alert, &own_keychain).into_unchecked();
         assert_eq!(
-            this.on_message(AlertMessage::ForkAlert(signed_wrong_alert)),
+            this.on_network_alert(signed_wrong_alert),
             Err(Error::SingleUnit(own_index)),
         );
     }
@@ -435,13 +412,7 @@ mod tests {
         let forker_index = NodeIndex(6);
         let own_keychain = Keychain::new(n_members, own_index);
         let forker_keychain = Keychain::new(n_members, forker_index);
-        let mut this = Handler::new(
-            own_keychain,
-            AlertConfig {
-                n_members,
-                session_id: 0,
-            },
-        );
+        let mut this = Handler::new(own_keychain, 0);
         let alert = Alert::new(
             own_index,
             make_fork_proof(forker_index, &forker_keychain, 0, n_members),
@@ -449,16 +420,12 @@ mod tests {
         );
         let alert_hash = Signable::hash(&alert);
         let signed_alert = Signed::sign(alert, &own_keychain).into_unchecked();
-        this.on_message(AlertMessage::ForkAlert(signed_alert.clone()))
-            .unwrap();
+        this.on_network_alert(signed_alert.clone()).unwrap();
         for i in 1..n_members.0 {
             let node_id = NodeIndex(i);
             assert_eq!(
-                this.on_message(AlertMessage::AlertRequest(node_id, alert_hash)),
-                Ok(Some(AlerterResponse::ForkAlert(
-                    signed_alert.clone(),
-                    Recipient::Node(node_id),
-                ))),
+                this.on_alert_request(node_id, alert_hash),
+                Ok((signed_alert.clone(), Recipient::Node(node_id),)),
             );
         }
     }
@@ -473,13 +440,7 @@ mod tests {
         let keychains: Vec<_> = (0..n_members.0)
             .map(|i| Keychain::new(n_members, NodeIndex(i)))
             .collect();
-        let mut this = Handler::new(
-            keychains[own_index.0],
-            AlertConfig {
-                n_members,
-                session_id: 0,
-            },
-        );
+        let mut this = Handler::new(keychains[own_index.0], 0);
         let fork_proof = make_fork_proof(forker_index, &keychains[forker_index.0], 0, n_members);
         let empty_alert = Alert::new(double_committer, fork_proof.clone(), vec![]);
         let empty_alert_hash = Signable::hash(&empty_alert);
@@ -493,16 +454,16 @@ mod tests {
             .expect("the signature is correct")
             .into_partially_multisigned(&keychains[double_committer.0]);
         assert_eq!(
-            this.on_message(AlertMessage::ForkAlert(signed_empty_alert)),
-            Ok(Some(AlerterResponse::ForkResponse(
+            this.on_network_alert(signed_empty_alert),
+            Ok((
                 Some(ForkingNotification::Forker(fork_proof.clone())),
                 empty_alert_hash,
-            ))),
+            )),
         );
         let message = RmcMessage::MultisignedHash(multisigned_empty_alert_hash.into_unchecked());
         assert_eq!(
-            this.on_message(AlertMessage::RmcMessage(other_honest_node, message.clone())),
-            Ok(Some(AlerterResponse::RmcMessage(message))),
+            this.on_rmc_message(other_honest_node, message.clone()),
+            RmcResponse::RmcMessage(message),
         );
         let forker_unit = fork_proof.0.clone();
         let nonempty_alert = Alert::new(double_committer, fork_proof, vec![forker_unit]);
@@ -530,12 +491,12 @@ mod tests {
         }
         let message = RmcMessage::MultisignedHash(multisigned_nonempty_alert_hash.into_unchecked());
         assert_eq!(
-            this.on_message(AlertMessage::ForkAlert(signed_nonempty_alert)),
+            this.on_network_alert(signed_nonempty_alert),
             Err(Error::RepeatedAlert(double_committer, forker_index)),
         );
         assert_eq!(
-            this.on_message(AlertMessage::RmcMessage(other_honest_node, message.clone())),
-            Ok(Some(AlerterResponse::RmcMessage(message))),
+            this.on_rmc_message(other_honest_node, message.clone()),
+            RmcResponse::RmcMessage(message),
         );
     }
 
@@ -549,24 +510,18 @@ mod tests {
         let keychains: Vec<_> = (0..n_members.0)
             .map(|i| Keychain::new(n_members, NodeIndex(i)))
             .collect();
-        let mut this = Handler::new(
-            keychains[own_index.0],
-            AlertConfig {
-                n_members,
-                session_id: 0,
-            },
-        );
+        let mut this = Handler::new(keychains[own_index.0], 0);
         let fork_proof = make_fork_proof(forker_index, &keychains[forker_index.0], 0, n_members);
         let empty_alert = Alert::new(double_committer, fork_proof.clone(), vec![]);
         let empty_alert_hash = Signable::hash(&empty_alert);
         let signed_empty_alert =
             Signed::sign(empty_alert, &keychains[double_committer.0]).into_unchecked();
         assert_eq!(
-            this.on_message(AlertMessage::ForkAlert(signed_empty_alert)),
-            Ok(Some(AlerterResponse::ForkResponse(
+            this.on_network_alert(signed_empty_alert),
+            Ok((
                 Some(ForkingNotification::Forker(fork_proof.clone())),
                 empty_alert_hash,
-            ))),
+            )),
         );
         let forker_unit = fork_proof.0.clone();
         let nonempty_alert = Alert::new(double_committer, fork_proof, vec![forker_unit]);
@@ -594,12 +549,12 @@ mod tests {
         }
         let message = RmcMessage::MultisignedHash(multisigned_nonempty_alert_hash.into_unchecked());
         assert_eq!(
-            this.on_message(AlertMessage::ForkAlert(signed_nonempty_alert)),
+            this.on_network_alert(signed_nonempty_alert),
             Err(Error::RepeatedAlert(double_committer, forker_index)),
         );
         assert_eq!(
-            this.on_message(AlertMessage::RmcMessage(other_honest_node, message.clone())),
-            Ok(Some(AlerterResponse::RmcMessage(message))),
+            this.on_rmc_message(other_honest_node, message.clone()),
+            RmcResponse::RmcMessage(message),
         );
     }
 
@@ -610,13 +565,7 @@ mod tests {
         let forker_index = NodeIndex(6);
         let own_keychain = Keychain::new(n_members, own_index);
         let forker_keychain = Keychain::new(n_members, forker_index);
-        let this = Handler::new(
-            own_keychain,
-            AlertConfig {
-                n_members,
-                session_id: 0,
-            },
-        );
+        let this = Handler::new(own_keychain, 0);
         let fork_proof = make_fork_proof(forker_index, &forker_keychain, 0, n_members);
         let alert = Alert::new(own_index, fork_proof, vec![]);
         assert_eq!(this.verify_fork(&alert), Ok(()));
@@ -629,13 +578,7 @@ mod tests {
         let forker_index = NodeIndex(6);
         let own_keychain = Keychain::new(n_members, own_index);
         let forker_keychain = Keychain::new(n_members, forker_index);
-        let this = Handler::new(
-            own_keychain,
-            AlertConfig {
-                n_members,
-                session_id: 1,
-            },
-        );
+        let this = Handler::new(own_keychain, 1);
         let fork_proof = make_fork_proof(forker_index, &forker_keychain, 0, n_members);
         let alert = Alert::new(own_index, fork_proof, vec![]);
         assert_eq!(
@@ -650,13 +593,7 @@ mod tests {
         let keychains: Vec<_> = (0..n_members.0)
             .map(|i| Keychain::new(n_members, NodeIndex(i)))
             .collect();
-        let this = Handler::new(
-            keychains[0],
-            AlertConfig {
-                n_members,
-                session_id: 0,
-            },
-        );
+        let this = Handler::new(keychains[0], 0);
         let fork_proof = {
             let unit_0 = full_unit(n_members, NodeIndex(6), 0, Some(0));
             let unit_1 = full_unit(n_members, NodeIndex(5), 0, Some(0));
@@ -676,13 +613,7 @@ mod tests {
         let forker_index = NodeIndex(6);
         let own_keychain = Keychain::new(n_members, own_index);
         let forker_keychain = Keychain::new(n_members, forker_index);
-        let this = Handler::new(
-            own_keychain,
-            AlertConfig {
-                n_members,
-                session_id: 0,
-            },
-        );
+        let this = Handler::new(own_keychain, 0);
         let fork_proof = {
             let unit_0 = full_unit(n_members, forker_index, 0, Some(0));
             let unit_1 = full_unit(n_members, forker_index, 1, Some(0));
@@ -719,13 +650,7 @@ mod tests {
         let keychains: Vec<_> = (0..n_members.0)
             .map(|i| Keychain::new(n_members, NodeIndex(i)))
             .collect();
-        let mut this = Handler::new(
-            keychains[own_index.0],
-            AlertConfig {
-                n_members,
-                session_id: 0,
-            },
-        );
+        let mut this = Handler::new(keychains[own_index.0], 0);
         let fork_proof = if good_commitment {
             make_fork_proof(forker_index, &keychains[forker_index.0], 0, n_members)
         } else {
