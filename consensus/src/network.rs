@@ -300,8 +300,8 @@ mod tests {
             .as_signable()
             .included_data()
             .into_iter()
-            .chain(p2.as_signable().included_data().into_iter())
-            .chain(p3.as_signable().included_data().into_iter())
+            .chain(p2.as_signable().included_data())
+            .chain(p3.as_signable().included_data())
             .collect();
         let parents = vec![p1, p2, p3];
 
