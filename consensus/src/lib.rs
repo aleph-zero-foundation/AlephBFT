@@ -14,6 +14,7 @@ mod terminal;
 mod terminator;
 mod units;
 
+mod backup;
 mod task_queue;
 #[cfg(test)]
 mod testing;

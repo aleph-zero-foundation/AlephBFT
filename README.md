@@ -12,7 +12,7 @@
 
 ### Overview
 
-AlephBFT is an asynchronous and Byzantine fault tolerant consensus protocol aimed
+AlephBFT is an asynchronous and Byzantine fault-tolerant consensus protocol aimed
 at ordering arbitrary messages (transactions). It has been designed to operate
 continuously under conditions where there is no bound on message-delivery delay
 and under the assumption that there is a significant probability of malicious
@@ -60,7 +60,7 @@ More details are available [in the book][reference-link-implementation-details].
 - Import AlephBFT in your crate
   ```toml
   [dependencies]
-  aleph-bft = "^0.27"
+  aleph-bft = "^0.28"
   ```
 - The main entry point is the `run_session` function, which returns a Future that runs the
   consensus algorithm.
