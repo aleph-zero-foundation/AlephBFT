@@ -3,5 +3,5 @@
 set -e
 
 cargo clippy --all-targets --all-features -- -D warnings
-cargo fmt --all
+cargo +nightly fmt --all
 cargo test --lib -- --skip medium

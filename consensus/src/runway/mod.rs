@@ -16,6 +16,7 @@ use futures::{
     pin_mut, Future, FutureExt, StreamExt,
 };
 use futures_timer::Delay;
+use itertools::Itertools;
 use log::{debug, error, info, trace, warn};
 use std::{
     collections::HashSet,
@@ -169,20 +170,72 @@ impl<'a, H: Hasher> RunwayStatus<'a, H> {
             missing_parents,
         }
     }
+
+    fn short_report(rounds_behind: Round, missing_coords: usize) -> String {
+        match (rounds_behind, missing_coords) {
+            (0..=2, 0) => "healthy".to_string(),
+            (0..=2, 1..) => format!("syncing - missing {missing_coords} unit(s)"),
+            (3.., 0) => format!("behind by {rounds_behind} rounds"),
+            _ => format!(
+                "syncing - missing {missing_coords} unit(s) and behind by {rounds_behind} rounds"
+            ),
+        }
+    }
+
+    fn format_missing_coords(c: &[(usize, Round)]) -> String {
+        c.iter()
+            .sorted()
+            .group_by(|(creator, _)| *creator)
+            .into_iter()
+            .map(|(creator, rounds)| {
+                // compress consecutive rounds into one interval to shorten logs
+                let mut intervals: Vec<(Round, Round)> = Vec::new();
+                for (_, round) in rounds {
+                    if matches!(intervals.last(), Some(interval) if interval.1 == round-1) {
+                        intervals.last_mut().unwrap().1 = *round;
+                    } else {
+                        intervals.push((*round, *round));
+                    }
+                }
+
+                let intervals_str = intervals
+                    .into_iter()
+                    .map(|(begin, end)| {
+                        if begin == end {
+                            format!("{begin}")
+                        } else if begin + 1 == end {
+                            format!("{begin}, {end}")
+                        } else {
+                            format!("[{begin}-{end}]")
+                        }
+                    })
+                    .format(", ");
+
+                format!("{{Creator {creator}: {intervals_str}}}")
+            })
+            .join(", ")
+    }
 }
 
 impl<'a, H: Hasher> fmt::Display for RunwayStatus<'a, H> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Runway status report: ")?;
-        write!(f, "{}", self.status)?;
+        write!(
+            f,
+            "Runway status report: {}",
+            Self::short_report(self.status.rounds_behind(), self.missing_coords.len())
+        )?;
+        write!(f, ". {}", self.status)?;
         if !self.missing_coords.is_empty() {
-            let mut v_coords: Vec<(usize, Round)> = self
+            let v_coords: Vec<(usize, Round)> = self
                 .missing_coords
                 .iter()
                 .map(|uc| (uc.creator().into(), uc.round()))
                 .collect();
-            v_coords.sort();
-            write!(f, "; missing coords - {:?}", v_coords)?;
+            write!(
+                f,
+                "; missing coords - {}",
+                Self::format_missing_coords(&v_coords)
+            )?;
         }
         if !self.missing_parents.is_empty() {
             write!(f, "; missing parents - {:?}", self.missing_parents)?;
@@ -659,7 +712,7 @@ where
 
     fn status_report(&self) {
         let runway_status: RunwayStatus<H> = RunwayStatus::new(
-            self.store.get_status(),
+            self.store.get_status_of(self.index()),
             &self.missing_coords,
             &self.missing_parents,
         );
@@ -1098,4 +1151,42 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
     .await;
 
     debug!(target: "AlephBFT-runway", "{:?} Runway ended.", index);
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::runway::RunwayStatus;
+    use aleph_bft_mock::Hasher64;
+
+    #[test]
+    pub fn formats_missing_coords() {
+        let format_missing_coords = RunwayStatus::<Hasher64>::format_missing_coords;
+        assert_eq!(format_missing_coords(&[]), "");
+        assert_eq!(format_missing_coords(&[(0, 13)]), "{Creator 0: 13}");
+        assert_eq!(
+            format_missing_coords(&[(0, 1), (0, 2)]),
+            "{Creator 0: 1, 2}"
+        );
+        assert_eq!(
+            format_missing_coords(&[(0, 1), (0, 2), (0, 3)]),
+            "{Creator 0: [1-3]}"
+        );
+        assert_eq!(
+            format_missing_coords(&[
+                (0, 1),
+                (0, 3),
+                (0, 4),
+                (0, 5),
+                (0, 6),
+                (0, 9),
+                (0, 10),
+                (0, 12)
+            ]),
+            "{Creator 0: 1, [3-6], 9, 10, 12}"
+        );
+        assert_eq!(
+            format_missing_coords(&[(1, 3), (0, 1), (1, 1), (3, 0)]),
+            "{Creator 0: 1}, {Creator 1: 1, 3}, {Creator 3: 0}"
+        );
+    }
 }

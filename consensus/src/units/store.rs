@@ -5,22 +5,25 @@ use std::{collections::HashSet, fmt};
 
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub struct UnitStoreStatus<'a> {
+    index: NodeIndex,
     forkers: &'a NodeSubset,
     size: usize,
-    height: Option<Round>,
+    height: Round,
     top_row: NodeMap<Round>,
     first_missing_rounds: NodeMap<Round>,
 }
 
 impl<'a> UnitStoreStatus<'a> {
     fn new(
+        index: NodeIndex,
         forkers: &'a NodeSubset,
         size: usize,
-        height: Option<Round>,
+        height: Round,
         top_row: NodeMap<Round>,
         first_missing_rounds: NodeMap<Round>,
     ) -> Self {
         Self {
+            index,
             forkers,
             size,
             height,
@@ -28,14 +31,16 @@ impl<'a> UnitStoreStatus<'a> {
             first_missing_rounds,
         }
     }
+
+    pub fn rounds_behind(&self) -> Round {
+        self.height
+            .saturating_sub(self.top_row.get(self.index).cloned().unwrap_or(0))
+    }
 }
 
 impl<'a> fmt::Display for UnitStoreStatus<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "DAG size - {}", self.size)?;
-        if let Some(r) = self.height {
-            write!(f, "; DAG height - {}", r)?;
-        }
+        write!(f, "DAG size - {}; DAG height - {}", self.size, self.height)?;
         if self.first_missing_rounds.item_count() > 0 {
             write!(
                 f,
@@ -78,7 +83,7 @@ impl<H: Hasher, D: Data, K: Keychain> UnitStore<H, D, K> {
         }
     }
 
-    pub fn get_status(&self) -> UnitStoreStatus {
+    pub fn get_status_of(&self, node: NodeIndex) -> UnitStoreStatus {
         let n_nodes: NodeCount = self.is_forker.size().into();
         let gm = self
             .by_coord
@@ -99,9 +104,10 @@ impl<H: Hasher, D: Data, K: Keychain> UnitStore<H, D, K> {
                 .collect(),
         );
         UnitStoreStatus::new(
+            node,
             &self.is_forker,
             self.by_coord.len(),
-            self.by_coord.keys().map(|k| k.round).max(),
+            self.by_coord.keys().map(|k| k.round).max().unwrap_or(0),
             top_row,
             first_missing_rounds,
         )
