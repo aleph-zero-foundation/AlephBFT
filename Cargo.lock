@@ -146,7 +146,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft-rmc"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "aleph-bft-crypto",
  "aleph-bft-mock",
