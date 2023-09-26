@@ -2,10 +2,11 @@ use crate::{
     alerts::{Alert, AlertMessage, ForkProof, ForkingNotification, Handler, Service},
     units::{ControlHash, FullUnit, PreUnit},
     Index, Indexed, Keychain as _, NodeCount, NodeIndex, NodeMap, Recipient, Round, Signable,
-    Signed, Terminator, UncheckedSigned,
+    Signed, UncheckedSigned,
 };
 use aleph_bft_mock::{Data, Hasher64, Keychain, PartialMultisignature, Signature};
 use aleph_bft_rmc::Message as RmcMessage;
+use aleph_bft_types::Terminator;
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,

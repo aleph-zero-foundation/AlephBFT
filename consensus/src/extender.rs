@@ -1,9 +1,10 @@
 use futures::{FutureExt, StreamExt};
 use std::collections::{HashMap, VecDeque};
 
+use aleph_bft_types::Terminator;
 use log::{debug, warn};
 
-use crate::{Hasher, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Terminator};
+use crate::{Hasher, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender};
 
 pub(crate) struct ExtenderUnit<H: Hasher> {
     creator: NodeIndex,

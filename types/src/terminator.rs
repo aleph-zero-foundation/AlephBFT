@@ -1,3 +1,4 @@
+use aleph_bft_crypto::NodeIndex;
 use futures::{
     channel::oneshot::{channel, Receiver, Sender},
     future::FusedFuture,
@@ -170,7 +171,7 @@ pub async fn handle_task_termination<T>(
     task_handle: T,
     target: &'static str,
     name: &'static str,
-    index: aleph_bft_types::NodeIndex,
+    index: NodeIndex,
 ) where
     T: FusedFuture<Output = Result<(), ()>>,
 {

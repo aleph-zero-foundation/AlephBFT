@@ -3,9 +3,10 @@ use crate::{
     runway::{NotificationIn, NotificationOut},
     testing::{complete_oneshot, gen_config, gen_delay_config, init_log},
     units::{ControlHash, PreUnit, Unit, UnitCoord},
-    Hasher, NodeIndex, SpawnHandle, Terminator,
+    Hasher, NodeIndex, SpawnHandle,
 };
 use aleph_bft_mock::{Hasher64, Spawner};
+use aleph_bft_types::Terminator;
 use codec::Encode;
 use futures::{
     channel::{

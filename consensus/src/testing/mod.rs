@@ -10,12 +10,13 @@ mod unreliable;
 
 use crate::{
     create_config, run_session, Config, DelayConfig, LocalIO, Network as NetworkT, NodeCount,
-    NodeIndex, SpawnHandle, TaskHandle, Terminator,
+    NodeIndex, SpawnHandle, TaskHandle,
 };
 use aleph_bft_mock::{
     Data, DataProvider, FinalizationHandler, Hasher64, Keychain, Loader, Network as MockNetwork,
     PartialMultisignature, ReconnectSender as ReconnectSenderGeneric, Saver, Signature, Spawner,
 };
+use aleph_bft_types::Terminator;
 use futures::channel::{mpsc::UnboundedReceiver, oneshot};
 use parking_lot::Mutex;
 use std::{sync::Arc, time::Duration};

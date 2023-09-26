@@ -1,6 +1,6 @@
 [package]
 name = "aleph-bft"
-version = "0.28.2"
+version = "0.29.0"
 edition = "2021"
 authors = ["Cardinal Cryptography"]
 categories = ["algorithms", "data-structures", "cryptography", "database"]
@@ -14,7 +14,7 @@ description = "AlephBFT is an asynchronous and Byzantine fault tolerant consensu
 
 [dependencies]
 aleph-bft-rmc = { path = "../rmc", version = "0.10" }
-aleph-bft-types = { path = "../types", version = "0.8" }
+aleph-bft-types = { path = "../types", version = "0.9" }
 anyhow = "1.0"
 async-trait = "0.1"
 codec = { package = "parity-scale-codec", version = "3.0", default-features = false, features = ["derive"] }

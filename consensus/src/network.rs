@@ -1,7 +1,8 @@
 use crate::{
     alerts::AlertMessage, member::UnitMessage, Data, Hasher, Network, PartialMultisignature,
-    Receiver, Recipient, Sender, Signature, Terminator,
+    Receiver, Recipient, Sender, Signature,
 };
+use aleph_bft_types::Terminator;
 use codec::{Decode, Encode};
 use futures::{FutureExt, StreamExt};
 use log::{debug, error, warn};

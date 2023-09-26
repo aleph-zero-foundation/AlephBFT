@@ -1,8 +1,9 @@
 mod dataio;
 mod network;
 
-use aleph_bft::{run_session, NodeIndex, Terminator};
+use aleph_bft::{run_session, NodeIndex};
 use aleph_bft_mock::{Keychain, Spawner};
+use aleph_bft_types::Terminator;
 use clap::Parser;
 use dataio::{Data, DataProvider, FinalizationHandler};
 use futures::{channel::oneshot, StreamExt};

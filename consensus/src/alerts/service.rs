@@ -3,9 +3,10 @@ use crate::{
         handler::{Handler, OnNetworkAlertResponse, OnOwnAlertResponse, RmcResponse},
         Alert, AlertData, AlertMessage, ForkingNotification, NetworkMessage,
     },
-    Data, Hasher, MultiKeychain, Multisigned, NodeIndex, Receiver, Recipient, Sender, Terminator,
+    Data, Hasher, MultiKeychain, Multisigned, NodeIndex, Receiver, Recipient, Sender,
 };
 use aleph_bft_rmc::{DoublingDelayScheduler, Message as RmcMessage, ReliableMulticast};
+use aleph_bft_types::Terminator;
 use futures::{channel::mpsc, FutureExt, StreamExt};
 use log::{debug, error, warn};
 use std::{collections::HashMap, time};

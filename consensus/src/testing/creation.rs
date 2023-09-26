@@ -3,9 +3,10 @@ use crate::{
     runway::NotificationOut as GenericNotificationOut,
     testing::{gen_config, gen_delay_config},
     units::{FullUnit as GenericFullUnit, PreUnit as GenericPreUnit, Unit as GenericUnit},
-    NodeCount, Receiver, Round, Sender, Terminator,
+    NodeCount, Receiver, Round, Sender,
 };
 use aleph_bft_mock::{Data, Hasher64};
+use aleph_bft_types::Terminator;
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,

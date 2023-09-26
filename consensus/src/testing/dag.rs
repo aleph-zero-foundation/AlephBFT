@@ -3,9 +3,10 @@ use crate::{
     runway::{NotificationIn, NotificationOut},
     testing::{complete_oneshot, gen_config, gen_delay_config},
     units::{ControlHash, PreUnit, Unit},
-    NodeCount, NodeIndex, NodeMap, NodeSubset, Receiver, Round, Sender, SpawnHandle, Terminator,
+    NodeCount, NodeIndex, NodeMap, NodeSubset, Receiver, Round, Sender, SpawnHandle,
 };
 use aleph_bft_mock::{Hash64, Hasher64, Spawner};
+use aleph_bft_types::Terminator;
 use futures::{
     channel::{mpsc, oneshot},
     stream::StreamExt,

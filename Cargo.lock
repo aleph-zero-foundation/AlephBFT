@@ -40,7 +40,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft"
-version = "0.28.2"
+version = "0.29.0"
 dependencies = [
  "aleph-bft-mock",
  "aleph-bft-rmc",
@@ -79,6 +79,7 @@ version = "0.0.3"
 dependencies = [
  "aleph-bft",
  "aleph-bft-mock",
+ "aleph-bft-types",
  "async-trait",
  "clap 4.4.4",
  "env_logger",
@@ -118,6 +119,7 @@ dependencies = [
  "afl",
  "aleph-bft",
  "aleph-bft-mock",
+ "aleph-bft-types",
  "async-trait",
  "env_logger",
  "futures",
@@ -161,12 +163,14 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft-types"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "aleph-bft-crypto",
  "async-trait",
  "futures",
+ "log",
  "parity-scale-codec",
+ "tokio",
 ]
 
 [[package]]
