@@ -1,5 +1,7 @@
 use async_trait::async_trait;
 
+use crate::NodeIndex;
+
 /// The source of data items that consensus should order.
 ///
 /// AlephBFT internally calls [`DataProvider::get_data`] whenever a new unit is created and data needs to be placed inside.
@@ -19,5 +21,5 @@ pub trait DataProvider<Data>: Sync + Send + 'static {
 pub trait FinalizationHandler<Data>: Sync + Send + 'static {
     /// Data, provided by [DataProvider::get_data], has been finalized.
     /// The calls to this function follow the order of finalization.
-    fn data_finalized(&mut self, data: Data);
+    fn data_finalized(&mut self, data: Data, creator: NodeIndex);
 }
