@@ -12,7 +12,7 @@ mod handler;
 mod service;
 
 pub use handler::Handler;
-pub use service::Service;
+pub use service::{Service, IO};
 
 pub type ForkProof<H, D, S> = (UncheckedSignedUnit<H, D, S>, UncheckedSignedUnit<H, D, S>);
 

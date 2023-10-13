@@ -214,27 +214,27 @@ impl TestCase {
         let (messages_for_alerter, messages_from_network) = mpsc::unbounded();
         let (notifications_for_units, mut notifications_from_alerter) = mpsc::unbounded();
         let (alerts_for_alerter, alerts_from_units) = mpsc::unbounded();
-        let (exit_alerter, exit) = oneshot::channel();
+        let (exit_alerter_tx, exit_alerter_rx) = oneshot::channel();
         // mock communication with backup - data sent to backup immediately returns to alerter
         let (data_for_backup, responses_from_backup) = mpsc::unbounded();
 
+        let alerter_handler = Handler::new(keychain, 0);
         let mut alerter_service = Service::new(
             keychain,
-            messages_for_network,
-            messages_from_network,
-            notifications_for_units,
-            alerts_from_units,
-            data_for_backup,
-            responses_from_backup,
+            crate::alerts::IO {
+                messages_for_network,
+                messages_from_network,
+                notifications_for_units,
+                alerts_from_units,
+                data_for_backup,
+                responses_from_backup,
+            },
+            alerter_handler,
         );
-        let alerter_handler = Handler::new(keychain, 0);
 
         tokio::spawn(async move {
             alerter_service
-                .run(
-                    alerter_handler,
-                    Terminator::create_root(exit, "AlephBFT-alerter"),
-                )
+                .run(Terminator::create_root(exit_alerter_rx, "AlephBFT-alerter"))
                 .await
         });
 
@@ -266,7 +266,7 @@ impl TestCase {
                 trace!("Remaining items in this segment: {:?}.", segment.expected);
             }
         }
-        exit_alerter
+        exit_alerter_tx
             .send(())
             .expect("exit channel shouldn't be closed");
     }

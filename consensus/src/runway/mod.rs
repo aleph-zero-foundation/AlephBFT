@@ -976,24 +976,27 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
     let alerter_keychain = keychain.clone();
     let alert_messages_for_network = network_io.alert_messages_for_network;
     let alert_messages_from_network = network_io.alert_messages_from_network;
+    let alerter_handler =
+        crate::alerts::Handler::new(alerter_keychain.clone(), config.session_id());
 
     let mut alerter_service = crate::alerts::Service::new(
-        alerter_keychain.clone(),
-        alert_messages_for_network,
-        alert_messages_from_network,
-        alert_notifications_for_units,
-        alerts_from_units,
-        alert_data_for_saver,
-        alert_data_from_saver,
+        alerter_keychain,
+        crate::alerts::IO {
+            messages_for_network: alert_messages_for_network,
+            messages_from_network: alert_messages_from_network,
+            notifications_for_units: alert_notifications_for_units,
+            alerts_from_units,
+            data_for_backup: alert_data_for_saver,
+            responses_from_backup: alert_data_from_saver,
+        },
+        alerter_handler,
     );
-    let alerter_handler = crate::alerts::Handler::new(alerter_keychain, config.session_id());
 
-    let alerter_handle = spawn_handle.spawn_essential("runway/alerter", async move {
-        alerter_service
-            .run(alerter_handler, alerter_terminator)
-            .await;
-    });
-    let mut alerter_handle = alerter_handle.fuse();
+    let mut alerter_handle = spawn_handle
+        .spawn_essential("runway/alerter", async move {
+            alerter_service.run(alerter_terminator).await;
+        })
+        .fuse();
 
     let index = keychain.index();
     let threshold = (keychain.node_count() * 2) / 3 + NodeCount(1);
@@ -1145,13 +1148,7 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
     handle_task_termination(alerter_handle, "AlephBFT-runway", "Alerter", index).await;
     handle_task_termination(runway_handle, "AlephBFT-runway", "Runway", index).await;
     handle_task_termination(packer_handle, "AlephBFT-runway", "Packer", index).await;
-    handle_task_termination(
-        backup_saver_handle,
-        "AlephBFT-backup-saver",
-        "BackupSaver",
-        index,
-    )
-    .await;
+    handle_task_termination(backup_saver_handle, "AlephBFT-runway", "BackupSaver", index).await;
 
     debug!(target: "AlephBFT-runway", "{:?} Runway ended.", index);
 }

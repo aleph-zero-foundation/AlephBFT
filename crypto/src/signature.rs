@@ -273,6 +273,10 @@ impl<T: Signable> Indexed<T> {
     fn strip_index(self) -> T {
         self.signable
     }
+
+    pub fn as_signable(&self) -> &T {
+        &self.signable
+    }
 }
 
 impl<T: Signable> Signable for Indexed<T> {

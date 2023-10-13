@@ -279,12 +279,13 @@ mod tests {
     use crate::{
         alerts::{
             handler::{Error, Handler, RmcResponse},
-            Alert, AlertMessage, ForkProof, ForkingNotification, RmcMessage,
+            Alert, AlertMessage, ForkProof, ForkingNotification,
         },
         units::{ControlHash, FullUnit, PreUnit},
         PartiallyMultisigned, Recipient, Round,
     };
     use aleph_bft_mock::{Data, Hasher64, Keychain, Signature};
+    use aleph_bft_rmc::Message;
     use aleph_bft_types::{NodeCount, NodeIndex, NodeMap, Signable, Signed};
 
     type TestForkProof = ForkProof<Hasher64, Data, Signature>;
@@ -375,8 +376,7 @@ mod tests {
         let alert_hash = Signable::hash(&alert);
         let signed_alert_hash =
             Signed::sign_with_index(alert_hash, &alerter_keychain).into_unchecked();
-        let response =
-            this.on_rmc_message(alerter_index, RmcMessage::SignedHash(signed_alert_hash));
+        let response = this.on_rmc_message(alerter_index, Message::SignedHash(signed_alert_hash));
         assert_eq!(
             response,
             RmcResponse::AlertRequest(alert_hash, Recipient::Node(alerter_index),),
@@ -460,7 +460,7 @@ mod tests {
                 empty_alert_hash,
             )),
         );
-        let message = RmcMessage::MultisignedHash(multisigned_empty_alert_hash.into_unchecked());
+        let message = Message::MultisignedHash(multisigned_empty_alert_hash.into_unchecked());
         assert_eq!(
             this.on_rmc_message(other_honest_node, message.clone()),
             RmcResponse::RmcMessage(message),
@@ -489,7 +489,7 @@ mod tests {
                 &keychains[double_committer.0],
             );
         }
-        let message = RmcMessage::MultisignedHash(multisigned_nonempty_alert_hash.into_unchecked());
+        let message = Message::MultisignedHash(multisigned_nonempty_alert_hash.into_unchecked());
         assert_eq!(
             this.on_network_alert(signed_nonempty_alert),
             Err(Error::RepeatedAlert(double_committer, forker_index)),
@@ -547,7 +547,7 @@ mod tests {
                 &keychains[double_committer.0],
             );
         }
-        let message = RmcMessage::MultisignedHash(multisigned_nonempty_alert_hash.into_unchecked());
+        let message = Message::MultisignedHash(multisigned_nonempty_alert_hash.into_unchecked());
         assert_eq!(
             this.on_network_alert(signed_nonempty_alert),
             Err(Error::RepeatedAlert(double_committer, forker_index)),

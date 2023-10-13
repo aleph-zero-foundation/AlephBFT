@@ -40,7 +40,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft"
-version = "0.30.0"
+version = "0.31.0"
 dependencies = [
  "aleph-bft-mock",
  "aleph-bft-rmc",
@@ -63,7 +63,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft-crypto"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "bit-vec",
@@ -148,10 +148,11 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft-rmc"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "aleph-bft-crypto",
  "aleph-bft-mock",
+ "aleph-bft-types",
  "async-trait",
  "futures",
  "futures-timer",
