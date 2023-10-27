@@ -3,7 +3,6 @@
 mod dataio;
 mod network;
 mod tasks;
-mod terminator;
 
 pub use aleph_bft_crypto::{
     IncompleteMultisignatureError, Index, Indexed, Keychain, MultiKeychain, Multisigned, NodeCount,
@@ -13,7 +12,6 @@ pub use aleph_bft_crypto::{
 pub use dataio::{DataProvider, FinalizationHandler};
 pub use network::{Network, Recipient};
 pub use tasks::{SpawnHandle, TaskHandle};
-pub use terminator::{handle_task_termination, Terminator};
 
 use codec::Codec;
 use std::{fmt::Debug, hash::Hash as StdHash};

@@ -2,9 +2,8 @@ use crate::{
     config::{Config as GeneralConfig, DelaySchedule},
     runway::NotificationOut,
     units::{PreUnit, Unit},
-    Hasher, NodeCount, NodeIndex, Receiver, Round, Sender,
+    Hasher, NodeCount, NodeIndex, Receiver, Round, Sender, Terminator,
 };
-use aleph_bft_types::Terminator;
 use futures::{
     channel::{
         mpsc::{SendError, TrySendError},

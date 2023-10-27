@@ -1,6 +1,5 @@
 use crate::{network::NetworkData, DataStore};
-use aleph_bft::NodeIndex;
-use aleph_bft_types::Terminator;
+use aleph_bft::{NodeIndex, Terminator};
 use codec::{Decode, Encode};
 use futures::{
     channel::mpsc::{UnboundedReceiver, UnboundedSender},

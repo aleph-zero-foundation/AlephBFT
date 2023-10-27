@@ -1,7 +1,6 @@
 use crate::{Block, Data};
-use aleph_bft::{NodeIndex, Recipient};
+use aleph_bft::{NodeIndex, Recipient, Terminator};
 use aleph_bft_mock::{Hasher64, PartialMultisignature, Signature};
-use aleph_bft_types::Terminator;
 use codec::{Decode, Encode};
 use futures::{
     channel::mpsc::{self, UnboundedReceiver, UnboundedSender},

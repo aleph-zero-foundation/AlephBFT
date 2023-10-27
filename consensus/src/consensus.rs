@@ -1,4 +1,3 @@
-use aleph_bft_types::{handle_task_termination, Terminator};
 use futures::{
     channel::{mpsc, oneshot},
     future::pending,
@@ -10,9 +9,10 @@ use crate::{
     config::Config,
     creation,
     extender::Extender,
+    handle_task_termination,
     runway::{NotificationIn, NotificationOut},
     terminal::Terminal,
-    Hasher, Receiver, Round, Sender, SpawnHandle,
+    Hasher, Receiver, Round, Sender, SpawnHandle, Terminator,
 };
 
 pub(crate) async fn run<H: Hasher + 'static>(

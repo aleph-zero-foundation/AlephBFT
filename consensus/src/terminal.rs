@@ -8,9 +8,8 @@ use crate::{
     extender::ExtenderUnit,
     runway::{NotificationIn, NotificationOut},
     units::{ControlHash, Unit, UnitCoord},
-    Hasher, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender,
+    Hasher, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Terminator,
 };
-use aleph_bft_types::Terminator;
 use codec::{Decode, Encode};
 use log::{debug, trace, warn};
 

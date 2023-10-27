@@ -1,11 +1,9 @@
 use std::io::Write;
 
-use aleph_bft_types::Terminator;
+use crate::{units::UncheckedSignedUnit, Data, Hasher, Receiver, Sender, Signature, Terminator};
 use codec::Encode;
 use futures::{FutureExt, StreamExt};
 use log::{debug, error};
-
-use crate::{units::UncheckedSignedUnit, Data, Hasher, Receiver, Sender, Signature};
 
 const LOG_TARGET: &str = "AlephBFT-backup-saver";
 
@@ -81,12 +79,11 @@ mod tests {
     };
 
     use aleph_bft_mock::{Data, Hasher64, Keychain, Saver, Signature};
-    use aleph_bft_types::Terminator;
 
     use crate::{
         backup::BackupSaver,
         units::{creator_set, preunit_to_unchecked_signed_unit, UncheckedSignedUnit},
-        NodeCount, NodeIndex,
+        NodeCount, NodeIndex, Terminator,
     };
 
     type TestBackupSaver = BackupSaver<Hasher64, Data, Signature, Saver>;

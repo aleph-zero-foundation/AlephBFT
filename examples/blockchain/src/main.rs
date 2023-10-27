@@ -10,9 +10,8 @@ use futures::{channel::oneshot, StreamExt};
 use log::{debug, error, info};
 use time::{macros::format_description, OffsetDateTime};
 
-use aleph_bft::{run_session, NodeIndex};
+use aleph_bft::{run_session, NodeIndex, Terminator};
 use aleph_bft_mock::{FinalizationHandler, Keychain, Loader, Saver, Spawner};
-use aleph_bft_types::Terminator;
 use chain::{run_blockchain, Block, BlockNum, ChainConfig};
 use data::{Data, DataProvider, DataStore};
 use network::{Address, NetworkData, NetworkManager};

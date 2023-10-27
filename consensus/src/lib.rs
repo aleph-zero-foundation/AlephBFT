@@ -11,6 +11,7 @@ mod member;
 mod network;
 mod runway;
 mod terminal;
+mod terminator;
 mod units;
 
 mod backup;
@@ -29,6 +30,7 @@ pub use config::{
 };
 pub use member::{run_session, LocalIO};
 pub use network::NetworkData;
+pub use terminator::{handle_task_termination, Terminator};
 
 type Receiver<T> = futures::channel::mpsc::UnboundedReceiver<T>;
 type Sender<T> = futures::channel::mpsc::UnboundedSender<T>;

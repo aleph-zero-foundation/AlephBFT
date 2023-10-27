@@ -1,4 +1,5 @@
 use crate::{
+    handle_task_termination,
     member::Task::{CoordRequest, ParentsRequest, RequestNewest, UnitBroadcast},
     network,
     runway::{
@@ -8,9 +9,9 @@ use crate::{
     task_queue::TaskQueue,
     units::{UncheckedSignedUnit, UnitCoord},
     Config, Data, DataProvider, FinalizationHandler, Hasher, MultiKeychain, Network, NodeIndex,
-    Receiver, Recipient, Round, Sender, Signature, SpawnHandle, UncheckedSigned,
+    Receiver, Recipient, Round, Sender, Signature, SpawnHandle, Terminator, UncheckedSigned,
 };
-use aleph_bft_types::{handle_task_termination, NodeMap, Terminator};
+use aleph_bft_types::NodeMap;
 use codec::{Decode, Encode};
 use futures::{channel::mpsc, pin_mut, FutureExt, StreamExt};
 use futures_timer::Delay;

@@ -1,6 +1,6 @@
 use crate::{
     alerts::{Alert, ForkProof, ForkingNotification, NetworkMessage},
-    consensus,
+    consensus, handle_task_termination,
     member::UnitMessage,
     units::{
         ControlHash, PreUnit, SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore,
@@ -8,9 +8,9 @@ use crate::{
     },
     Config, Data, DataProvider, FinalizationHandler, Hasher, Index, Keychain, MultiKeychain,
     NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Signature, Signed, SpawnHandle,
-    UncheckedSigned,
+    Terminator, UncheckedSigned,
 };
-use aleph_bft_types::{handle_task_termination, Recipient, Terminator};
+use aleph_bft_types::Recipient;
 use futures::{
     channel::{mpsc, oneshot},
     pin_mut, Future, FutureExt, StreamExt,

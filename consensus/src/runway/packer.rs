@@ -1,8 +1,8 @@
 use crate::{
     units::{FullUnit, PreUnit, SignedUnit},
     Data, DataProvider, Hasher, MultiKeychain, NodeIndex, Receiver, Sender, SessionId, Signed,
+    Terminator,
 };
-use aleph_bft_types::Terminator;
 use futures::{pin_mut, FutureExt, StreamExt};
 use log::{debug, error};
 use std::marker::PhantomData;
@@ -100,10 +100,10 @@ mod tests {
     use super::Packer;
     use crate::{
         units::{ControlHash, PreUnit, SignedUnit},
-        NodeCount, NodeIndex, Receiver, Sender, SessionId,
+        NodeCount, NodeIndex, Receiver, Sender, SessionId, Terminator,
     };
     use aleph_bft_mock::{Data, DataProvider, Hasher64, Keychain, StalledDataProvider};
-    use aleph_bft_types::{NodeMap, Terminator};
+    use aleph_bft_types::NodeMap;
     use futures::{
         channel::{mpsc, oneshot},
         pin_mut, FutureExt, StreamExt,

@@ -1,12 +1,11 @@
 use aleph_bft::{
     create_config, run_session, Config, DelayConfig, LocalIO, Network as NetworkT, NetworkData,
-    NodeCount, NodeIndex, Recipient, SpawnHandle, TaskHandle,
+    NodeCount, NodeIndex, Recipient, SpawnHandle, TaskHandle, Terminator,
 };
 use aleph_bft_mock::{
     Data, DataProvider, FinalizationHandler, Hasher64, Keychain, Loader, NetworkHook,
     PartialMultisignature, Router, Saver, Signature,
 };
-use aleph_bft_types::Terminator;
 use codec::{Decode, Encode, IoReader};
 use futures::{
     channel::{oneshot, oneshot::Receiver},
