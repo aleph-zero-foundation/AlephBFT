@@ -2,14 +2,11 @@ use std::{collections::HashSet, fmt, fmt::Debug, io::Read, marker::PhantomData};
 
 use codec::{Decode, Error as CodecError};
 use futures::channel::oneshot;
-use itertools::{Either, Itertools};
 use log::{error, info, warn};
 
 use crate::{
-    alerts::AlertData,
-    backup::BackupItem,
     units::{UncheckedSignedUnit, UnitCoord},
-    Data, Hasher, Keychain, MultiKeychain, NodeIndex, Round, SessionId,
+    Data, Hasher, NodeIndex, Round, SessionId, Signature,
 };
 
 const LOG_TARGET: &str = "AlephBFT-backup-loader";
@@ -66,20 +63,15 @@ impl From<CodecError> for LoaderError {
     }
 }
 
-pub type LoadedData<H, D, MK> = (
-    Vec<UncheckedSignedUnit<H, D, <MK as Keychain>::Signature>>,
-    Vec<AlertData<H, D, MK>>,
-);
-
-pub struct BackupLoader<H: Hasher, D: Data, MK: MultiKeychain, R: Read> {
+pub struct BackupLoader<H: Hasher, D: Data, S: Signature, R: Read> {
     backup: R,
     index: NodeIndex,
     session_id: SessionId,
-    _phantom: PhantomData<(H, D, MK)>,
+    _phantom: PhantomData<(H, D, S)>,
 }
 
-impl<H: Hasher, D: Data, MK: MultiKeychain, R: Read> BackupLoader<H, D, MK, R> {
-    pub fn new(backup: R, index: NodeIndex, session_id: SessionId) -> BackupLoader<H, D, MK, R> {
+impl<H: Hasher, D: Data, S: Signature, R: Read> BackupLoader<H, D, S, R> {
+    pub fn new(backup: R, index: NodeIndex, session_id: SessionId) -> BackupLoader<H, D, S, R> {
         BackupLoader {
             backup,
             index,
@@ -88,21 +80,18 @@ impl<H: Hasher, D: Data, MK: MultiKeychain, R: Read> BackupLoader<H, D, MK, R> {
         }
     }
 
-    fn load(&mut self) -> Result<Vec<BackupItem<H, D, MK>>, LoaderError> {
+    fn load(&mut self) -> Result<Vec<UncheckedSignedUnit<H, D, S>>, LoaderError> {
         let mut buf = Vec::new();
         self.backup.read_to_end(&mut buf)?;
         let input = &mut &buf[..];
         let mut result = Vec::new();
         while !input.is_empty() {
-            result.push(<BackupItem<H, D, MK>>::decode(input)?);
+            result.push(<UncheckedSignedUnit<H, D, S>>::decode(input)?);
         }
         Ok(result)
     }
 
-    fn verify_units(
-        &self,
-        units: &Vec<UncheckedSignedUnit<H, D, MK::Signature>>,
-    ) -> Result<(), LoaderError> {
+    fn verify_units(&self, units: &Vec<UncheckedSignedUnit<H, D, S>>) -> Result<(), LoaderError> {
         let mut already_loaded_coords = HashSet::new();
 
         for unit in units {
@@ -139,29 +128,6 @@ impl<H: Hasher, D: Data, MK: MultiKeychain, R: Read> BackupLoader<H, D, MK, R> {
         }
     }
 
-    fn load_and_verify(&mut self) -> Option<LoadedData<H, D, MK>> {
-        let items = match self.load() {
-            Ok(items) => items,
-            Err(e) => {
-                error!(target: LOG_TARGET, "unable to load backup data: {}", e);
-                return None;
-            }
-        };
-
-        let (units, alert_data): (Vec<_>, Vec<_>) =
-            items.into_iter().partition_map(|item| match item {
-                BackupItem::Unit(unit) => Either::Left(unit),
-                BackupItem::AlertData(data) => Either::Right(data),
-            });
-
-        if let Err(e) = self.verify_units(&units) {
-            error!(target: LOG_TARGET, "incorrect backup data: {}", e);
-            return None;
-        }
-
-        Some((units, alert_data))
-    }
-
     fn verify_backup_and_collection_rounds(
         &self,
         next_round_backup: Round,
@@ -193,17 +159,23 @@ impl<H: Hasher, D: Data, MK: MultiKeychain, R: Read> BackupLoader<H, D, MK, R> {
 
     pub async fn run(
         &mut self,
-        loaded_data: oneshot::Sender<LoadedData<H, D, MK>>,
+        loaded_data: oneshot::Sender<Vec<UncheckedSignedUnit<H, D, S>>>,
         starting_round: oneshot::Sender<Option<Round>>,
         next_round_collection: oneshot::Receiver<Round>,
     ) {
-        let (units, alert_data) = match self.load_and_verify() {
-            Some((units, alert_data)) => (units, alert_data),
-            None => {
+        let units = match self.load() {
+            Ok(items) => items,
+            Err(e) => {
+                error!(target: LOG_TARGET, "unable to load backup data: {}", e);
                 self.on_shutdown(starting_round);
                 return;
             }
         };
+        if let Err(e) = self.verify_units(&units) {
+            error!(target: LOG_TARGET, "incorrect backup data: {}", e);
+            self.on_shutdown(starting_round);
+            return;
+        }
 
         let next_round_backup: Round = units
             .iter()
@@ -220,7 +192,7 @@ impl<H: Hasher, D: Data, MK: MultiKeychain, R: Read> BackupLoader<H, D, MK, R> {
             next_round_backup
         );
 
-        if loaded_data.send((units, alert_data)).is_err() {
+        if loaded_data.send(units).is_err() {
             error!(target: LOG_TARGET, "Could not send loaded items");
             self.on_shutdown(starting_round);
             return;
@@ -267,7 +239,7 @@ mod tests {
     use aleph_bft_mock::{Data, Hasher64, Keychain, Loader, Signature};
 
     use crate::{
-        backup::{loader::LoadedData, BackupItem, BackupLoader},
+        backup::BackupLoader,
         units::{
             create_units, creator_set, preunit_to_unchecked_signed_unit, preunit_to_unit,
             UncheckedSignedUnit as GenericUncheckedSignedUnit,
@@ -276,10 +248,9 @@ mod tests {
     };
 
     type UncheckedSignedUnit = GenericUncheckedSignedUnit<Hasher64, Data, Signature>;
-    type TestBackupItem = BackupItem<Hasher64, Data, Keychain>;
     struct PrepareTestResponse<F: futures::Future> {
         task: F,
-        loaded_data_rx: oneshot::Receiver<LoadedData<Hasher64, Data, Keychain>>,
+        loaded_data_rx: oneshot::Receiver<Vec<UncheckedSignedUnit>>,
         highest_response_tx: oneshot::Sender<Round>,
         starting_round_rx: oneshot::Receiver<Option<Round>>,
     }
@@ -331,7 +302,7 @@ mod tests {
             .collect()
     }
 
-    fn encode_all(items: Vec<TestBackupItem>) -> Vec<Vec<u8>> {
+    fn encode_all(items: Vec<UncheckedSignedUnit>) -> Vec<Vec<u8>> {
         items.iter().map(|u| u.encode()).collect()
     }
 
@@ -376,13 +347,12 @@ mod tests {
         handle.await.unwrap();
 
         assert_eq!(starting_round_rx.await, Ok(Some(0)));
-        assert_eq!(loaded_data_rx.await, Ok((Vec::new(), Vec::new())));
+        assert_eq!(loaded_data_rx.await, Ok(Vec::new()));
     }
 
     #[tokio::test]
     async fn something_loaded_nothing_collected_succeeds() {
-        let units: Vec<_> = produce_units(5, SESSION_ID).into_iter().flatten().collect();
-        let items: Vec<_> = units.clone().into_iter().map(BackupItem::Unit).collect();
+        let items: Vec<_> = produce_units(5, SESSION_ID).into_iter().flatten().collect();
         let encoded_items = encode_all(items.clone()).into_iter().flatten().collect();
 
         let PrepareTestResponse {
@@ -400,13 +370,12 @@ mod tests {
         handle.await.unwrap();
 
         assert_eq!(starting_round_rx.await, Ok(Some(5)));
-        assert_eq!(loaded_data_rx.await, Ok((units, Vec::new())));
+        assert_eq!(loaded_data_rx.await, Ok(items));
     }
 
     #[tokio::test]
     async fn something_loaded_something_collected_succeeds() {
-        let units: Vec<_> = produce_units(5, SESSION_ID).into_iter().flatten().collect();
-        let items: Vec<_> = units.clone().into_iter().map(BackupItem::Unit).collect();
+        let items: Vec<_> = produce_units(5, SESSION_ID).into_iter().flatten().collect();
         let encoded_items = encode_all(items.clone()).into_iter().flatten().collect();
 
         let PrepareTestResponse {
@@ -424,7 +393,7 @@ mod tests {
         handle.await.unwrap();
 
         assert_eq!(starting_round_rx.await, Ok(Some(5)));
-        assert_eq!(loaded_data_rx.await, Ok((units, Vec::new())));
+        assert_eq!(loaded_data_rx.await, Ok(items));
     }
 
     #[tokio::test]
@@ -444,13 +413,12 @@ mod tests {
         handle.await.unwrap();
 
         assert_eq!(starting_round_rx.await, Ok(None));
-        assert_eq!(loaded_data_rx.await, Ok((Vec::new(), Vec::new())));
+        assert_eq!(loaded_data_rx.await, Ok(Vec::new()));
     }
 
     #[tokio::test]
     async fn loaded_smaller_then_collected_fails() {
-        let units: Vec<_> = produce_units(3, SESSION_ID).into_iter().flatten().collect();
-        let items: Vec<_> = units.clone().into_iter().map(BackupItem::Unit).collect();
+        let items: Vec<_> = produce_units(3, SESSION_ID).into_iter().flatten().collect();
         let encoded_items = encode_all(items.clone()).into_iter().flatten().collect();
 
         let PrepareTestResponse {
@@ -468,13 +436,12 @@ mod tests {
         handle.await.unwrap();
 
         assert_eq!(starting_round_rx.await, Ok(None));
-        assert_eq!(loaded_data_rx.await, Ok((units, Vec::new())));
+        assert_eq!(loaded_data_rx.await, Ok(items));
     }
 
     #[tokio::test]
     async fn dropped_collection_fails() {
-        let units: Vec<_> = produce_units(3, SESSION_ID).into_iter().flatten().collect();
-        let items: Vec<_> = units.clone().into_iter().map(BackupItem::Unit).collect();
+        let items: Vec<_> = produce_units(3, SESSION_ID).into_iter().flatten().collect();
         let encoded_items = encode_all(items.clone()).into_iter().flatten().collect();
 
         let PrepareTestResponse {
@@ -492,13 +459,12 @@ mod tests {
         handle.await.unwrap();
 
         assert_eq!(starting_round_rx.await, Ok(None));
-        assert_eq!(loaded_data_rx.await, Ok((units, Vec::new())));
+        assert_eq!(loaded_data_rx.await, Ok(items));
     }
 
     #[tokio::test]
     async fn backup_with_corrupted_encoding_fails() {
-        let units: Vec<_> = produce_units(5, SESSION_ID).into_iter().flatten().collect();
-        let items: Vec<_> = units.into_iter().map(BackupItem::Unit).collect();
+        let items: Vec<_> = produce_units(5, SESSION_ID).into_iter().flatten().collect();
         let mut item_encodings = encode_all(items);
         let unit2_encoding_len = item_encodings[2].len();
         item_encodings[2].resize(unit2_encoding_len - 1, 0); // remove the last byte
@@ -523,8 +489,7 @@ mod tests {
 
     #[tokio::test]
     async fn backup_with_missing_parent_fails() {
-        let units: Vec<_> = produce_units(5, SESSION_ID).into_iter().flatten().collect();
-        let mut items: Vec<_> = units.into_iter().map(BackupItem::Unit).collect();
+        let mut items: Vec<_> = produce_units(5, SESSION_ID).into_iter().flatten().collect();
         items.remove(2); // it is a parent of all units of round 3
         let encoded_items = encode_all(items).into_iter().flatten().collect();
 
@@ -547,18 +512,17 @@ mod tests {
 
     #[tokio::test]
     async fn backup_with_duplicate_unit_succeeds() {
-        let mut units: Vec<_> = produce_units(5, SESSION_ID).into_iter().flatten().collect();
-        let unit2_duplicate = units[2].clone();
-        units.insert(3, unit2_duplicate);
-        let items: Vec<_> = units.clone().into_iter().map(BackupItem::Unit).collect();
-        let encoded_units = encode_all(items.clone()).into_iter().flatten().collect();
+        let mut items: Vec<_> = produce_units(5, SESSION_ID).into_iter().flatten().collect();
+        let unit2_duplicate = items[2].clone();
+        items.insert(3, unit2_duplicate);
+        let encoded_items = encode_all(items.clone()).into_iter().flatten().collect();
 
         let PrepareTestResponse {
             task,
             loaded_data_rx,
             highest_response_tx,
             starting_round_rx,
-        } = prepare_test(encoded_units);
+        } = prepare_test(encoded_items);
 
         let handle = tokio::spawn(async {
             task.await;
@@ -568,13 +532,12 @@ mod tests {
         handle.await.unwrap();
 
         assert_eq!(starting_round_rx.await, Ok(Some(5)));
-        assert_eq!(loaded_data_rx.await, Ok((units, Vec::new())));
+        assert_eq!(loaded_data_rx.await, Ok(items));
     }
 
     #[tokio::test]
     async fn backup_with_units_of_one_creator_fails() {
-        let units = units_of_creator(produce_units(5, SESSION_ID), NodeIndex(NODE_ID.0 + 1));
-        let items: Vec<_> = units.into_iter().map(BackupItem::Unit).collect();
+        let items = units_of_creator(produce_units(5, SESSION_ID), NodeIndex(NODE_ID.0 + 1));
         let encoded_items = encode_all(items).into_iter().flatten().collect();
 
         let PrepareTestResponse {
@@ -597,11 +560,10 @@ mod tests {
 
     #[tokio::test]
     async fn backup_with_wrong_session_fails() {
-        let units: Vec<_> = produce_units(5, SESSION_ID + 1)
+        let items: Vec<_> = produce_units(5, SESSION_ID + 1)
             .into_iter()
             .flatten()
             .collect();
-        let items: Vec<_> = units.into_iter().map(BackupItem::Unit).collect();
         let encoded_items = encode_all(items).into_iter().flatten().collect();
 
         let PrepareTestResponse {

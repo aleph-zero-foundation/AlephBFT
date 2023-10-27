@@ -30,7 +30,7 @@ use std::{
 mod collection;
 mod packer;
 
-use crate::backup::{BackupLoader, BackupSaver, LoadedData};
+use crate::backup::{BackupLoader, BackupSaver};
 #[cfg(feature = "initial_unit_collection")]
 use collection::{Collection, IO as CollectionIO};
 pub use collection::{NewestUnitResponse, Salt};
@@ -724,7 +724,7 @@ where
 
     async fn run(
         mut self,
-        data_from_backup: oneshot::Receiver<LoadedData<H, D, MK>>,
+        data_from_backup: oneshot::Receiver<Vec<UncheckedSignedUnit<H, D, MK::Signature>>>,
         mut terminator: Terminator,
     ) {
         let index = self.index();
@@ -735,7 +735,7 @@ where
         let mut status_ticker = Delay::new(status_ticker_delay).fuse();
 
         match data_from_backup.await {
-            Ok((units, _alert_data)) => {
+            Ok(units) => {
                 for unit in units {
                     self.on_unit_received(unit, false);
                 }
@@ -951,16 +951,12 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
 
     let (backup_units_for_saver, backup_units_from_runway) = mpsc::unbounded();
     let (backup_units_for_runway, backup_units_from_saver) = mpsc::unbounded();
-    let (alert_data_for_saver, alert_data_from_alerter) = mpsc::unbounded();
-    let (alert_data_for_alerter, alert_data_from_saver) = mpsc::unbounded();
 
     let backup_saver_terminator = terminator.add_offspring_connection("AlephBFT-backup-saver");
     let backup_saver_handle = spawn_handle.spawn_essential("runway/backup_saver", {
-        let mut backup_saver: BackupSaver<_, _, MK, _> = BackupSaver::new(
+        let mut backup_saver = BackupSaver::new(
             backup_units_from_runway,
-            alert_data_from_alerter,
             backup_units_for_runway,
-            alert_data_for_alerter,
             runway_io.backup_write,
         );
         async move {
@@ -986,8 +982,6 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
             messages_from_network: alert_messages_from_network,
             notifications_for_units: alert_notifications_for_units,
             alerts_from_units,
-            data_for_backup: alert_data_for_saver,
-            responses_from_backup: alert_data_from_saver,
         },
         alerter_handler,
     );
