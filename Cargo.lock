@@ -132,7 +132,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft-mock"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "aleph-bft-types",
  "async-trait",
