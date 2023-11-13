@@ -18,11 +18,11 @@ futures = "0.3"
 futures-timer = "3.0"
 log = "0.4"
 parking_lot = "0.12"
-structopt = "0.3.21"
+structopt = "0.3"
 tokio = { version = "1", features = ["rt"] }
 
-libfuzzer-sys = { version = "0.4.2", optional = true }
-afl = { version = "0.14.3", optional = true }
+libfuzzer-sys = { version = "0.4", optional = true }
+afl = { version = "0.14", optional = true }
 
 [features]
 default = []
