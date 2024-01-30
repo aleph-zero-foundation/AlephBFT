@@ -13,9 +13,6 @@ members = [
     "examples/ordering",
     "examples/blockchain",
 
-    # Fuzzing
-    "fuzz"
-
 ]
 
 [profile.test]
