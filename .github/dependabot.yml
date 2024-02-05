@@ -1,11 +1,38 @@
+---
 version: 2
 updates:
   - package-ecosystem: cargo
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
+      # UTC time
+      time: "06:00"
+    rebase-strategy: disabled
+    commit-message:
+      prefix: "A0-3951: "
+    groups:
+      all-rust-deps:
+        patterns:
+          - "*"
+    pull-request-branch-name:
+      separator: "-"
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+      day: sunday
+      # UTC time
+      time: "06:15"
+    rebase-strategy: disabled
+    commit-message:
+      prefix: "A0-3952: "
+    groups:
+      all-github-actions:
+        patterns:
+          - "*"
+    pull-request-branch-name:
+      separator: "-"
+    reviewers:
+      - "Marcin-Radecki"
+
