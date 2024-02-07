@@ -6,7 +6,7 @@ mod alerts;
 mod config;
 mod consensus;
 mod creation;
-mod extender;
+mod extension;
 mod member;
 mod network;
 mod runway;

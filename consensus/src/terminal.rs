@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    extender::ExtenderUnit,
+    extension::ExtenderUnit,
     runway::{NotificationIn, NotificationOut},
     units::{ControlHash, Unit, UnitCoord},
     Hasher, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Terminator,

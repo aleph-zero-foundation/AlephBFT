@@ -2,14 +2,14 @@
 
 To explain the inner workings of AlephBFT it is instructive to follow the path of a unit: from the very start when it is created to the moment when its round is decided and it's data is placed in one of the output batches. Here we give a brief overview and subsequently go more into details of specific components in dedicated subsections.
 
-1. The unit is created by one of the node's `Creator` component -- implemented in `src/creator.rs`. Creator sends a notification to an outer component.
+1. The unit is created by one of the node's `Creator` component -- implemented in `src/creation/`. Creator sends a notification to an outer component.
 2. The newly created unit is filled with data, session information and a signature. This is done in `src/runway.rs` which then sends it to `src/member.rs` Subsequently a recurring task of broadcasting this unit is put in the task queue. The unit will be broadcast to all other nodes a few times (with some delays in between).
 3. The unit is received by another node -- happens in `src/member.rs` and immediately send to `src/runway.rs` where it passes some validation (signature checks etc.). If all these checks pass and the unit is not detected to be a fork, then it is placed in the `UnitStore` -- the `store` field of the `Runway` struct.
 4. The idea is that this store keeps only **legit units** in the sense defined in [the section on alerts](how_alephbft_does_it.md#25-alerts----dealing-with-fork-spam). Thus no fork is ever be put there unless coming from an alert.
 5. At a suitable moment the units from the store are further moved to a component called `Terminal` -- implemented in `src/terminal.rs`.
 6. Roughly speaking, terminal is expected to "unpack" the unit, so that their parents become explicit (instead of being control hashes only).
 7. Each unit whose parents are successfully decoded, is added to the "Dag". Each unit in the Dag is legit + has all its parents in the Dag.
-8. Dag units are passed to a component called the `Extender` -- see `src/extender.rs`. The role of the extender is to efficiently run the `OrderData` algorithm, described in the [section on AlephBFT](how_alephbft_does_it.md).
+8. Dag units are passed to a component called the `Extender` -- see the files in `src/extension/`. The role of the extender is to efficiently run the `OrderData` algorithm, described in the [section on AlephBFT](how_alephbft_does_it.md).
 9. Once a unit's data is placed in one of batches by the `Extender` then its path is over and can be safely discarded.
 
 ### 5.1 Creator
@@ -36,4 +36,4 @@ There is often a situation where the terminal receives a unit `U` and for some r
 
 ### 5.4 Extender
 
-The `Extender`'s role is to receive Dag units (from `Terminal`) and extend the output stream. Towards this end it maintains the `round` for which the next `Head` must be chosen and the current unit `U` that is being decided for being `Head` or not. There is some caching made in the implementation so as to not recompute all the votes from scratch whenever a fresh unit arrives.
+The `Extender`'s role is to receive Dag units (from `Terminal`) and extend the output stream. Towards this end it elects the `Head` for each `round`. Such an election works by going through candidate units from this round either eliminating them or eventually electing one. Votes are computed and cached for each candidate until a decision on it is made, after which the election moves on to the next round (if elected as `Head`) or to the next unit (otherwise). After electing every `Head` the `Extender` deterministically orders all its unordered ancestors and the `Head` itself and returns the resulting batch.

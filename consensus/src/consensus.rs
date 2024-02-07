@@ -8,7 +8,7 @@ use log::{debug, error, warn};
 use crate::{
     config::Config,
     creation,
-    extender::Extender,
+    extension::Service as Extender,
     handle_task_termination,
     runway::{NotificationIn, NotificationOut},
     terminal::Terminal,
@@ -26,15 +26,14 @@ pub(crate) async fn run<H: Hasher + 'static>(
 ) {
     debug!(target: "AlephBFT", "{:?} Starting all services...", conf.node_ix());
 
-    let n_members = conf.n_members();
     let index = conf.node_ix();
 
     let (electors_tx, electors_rx) = mpsc::unbounded();
-    let mut extender = Extender::<H>::new(index, n_members, electors_rx, ordered_batch_tx);
+    let extender = Extender::<H>::new(index, electors_rx, ordered_batch_tx);
     let extender_terminator = terminator.add_offspring_connection("AlephBFT-extender");
     let mut extender_handle = spawn_handle
         .spawn_essential("consensus/extender", async move {
-            extender.extend(extender_terminator).await
+            extender.run(extender_terminator).await
         })
         .fuse();
 
