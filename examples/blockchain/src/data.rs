@@ -61,7 +61,7 @@ impl DataStore {
         for block_num in requirements.iter() {
             self.dependent_messages
                 .entry(*block_num)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(message_id);
         }
         self.message_requirements
@@ -85,12 +85,7 @@ impl DataStore {
     }
 
     fn push_messages(&mut self, num: BlockNum) {
-        for message_id in self
-            .dependent_messages
-            .entry(num)
-            .or_insert_with(Vec::new)
-            .iter()
-        {
+        for message_id in self.dependent_messages.entry(num).or_default().iter() {
             *self
                 .message_requirements
                 .get_mut(message_id)
