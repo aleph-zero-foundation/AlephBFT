@@ -183,7 +183,7 @@
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>pub trait FinalizationHandler&lt;Data&gt; {
-    fn data_finalized(&amp;mut self, data: Data);
+    fn data_finalized(&amp;mut self, data: Data, creator: NodeIndex);
 }
 <span class="boring">}
 </span></code></pre></pre>
@@ -220,7 +220,7 @@
 </span><span class="boring">fn main() {
 </span>pub trait Keychain: Index + Clone + Send + Sync + 'static {
     type Signature: Signature;
-    async fn sign(&amp;self, msg: &amp;[u8]) -&gt; Self::Signature;
+    fn sign(&amp;self, msg: &amp;[u8]) -&gt; Self::Signature;
     fn verify(&amp;self, msg: &amp;[u8], sgn: &amp;Self::Signature, index: NodeIndex) -&gt; bool;
 }
 <span class="boring">}

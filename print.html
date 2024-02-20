@@ -371,7 +371,7 @@ That being said, there are <strong>practical</strong> issues when it comes to de
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>pub trait FinalizationHandler&lt;Data&gt; {
-    fn data_finalized(&amp;mut self, data: Data);
+    fn data_finalized(&amp;mut self, data: Data, creator: NodeIndex);
 }
 <span class="boring">}
 </span></code></pre></pre>
@@ -408,7 +408,7 @@ That being said, there are <strong>practical</strong> issues when it comes to de
 </span><span class="boring">fn main() {
 </span>pub trait Keychain: Index + Clone + Send + Sync + 'static {
     type Signature: Signature;
-    async fn sign(&amp;self, msg: &amp;[u8]) -&gt; Self::Signature;
+    fn sign(&amp;self, msg: &amp;[u8]) -&gt; Self::Signature;
     fn verify(&amp;self, msg: &amp;[u8], sgn: &amp;Self::Signature, index: NodeIndex) -&gt; bool;
 }
 <span class="boring">}
@@ -526,14 +526,14 @@ That being said, there are <strong>practical</strong> issues when it comes to de
 <div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h2 id="5-alephbft-internals"><a class="header" href="#5-alephbft-internals">5 AlephBFT Internals</a></h2>
 <p>To explain the inner workings of AlephBFT it is instructive to follow the path of a unit: from the very start when it is created to the moment when its round is decided and it's data is placed in one of the output batches. Here we give a brief overview and subsequently go more into details of specific components in dedicated subsections.</p>
 <ol>
-<li>The unit is created by one of the node's <code>Creator</code> component -- implemented in <code>src/creator.rs</code>. Creator sends a notification to an outer component.</li>
+<li>The unit is created by one of the node's <code>Creator</code> component -- implemented in <code>src/creation/</code>. Creator sends a notification to an outer component.</li>
 <li>The newly created unit is filled with data, session information and a signature. This is done in <code>src/runway.rs</code> which then sends it to <code>src/member.rs</code> Subsequently a recurring task of broadcasting this unit is put in the task queue. The unit will be broadcast to all other nodes a few times (with some delays in between).</li>
 <li>The unit is received by another node -- happens in <code>src/member.rs</code> and immediately send to <code>src/runway.rs</code> where it passes some validation (signature checks etc.). If all these checks pass and the unit is not detected to be a fork, then it is placed in the <code>UnitStore</code> -- the <code>store</code> field of the <code>Runway</code> struct.</li>
 <li>The idea is that this store keeps only <strong>legit units</strong> in the sense defined in <a href="how_alephbft_does_it.html#25-alerts----dealing-with-fork-spam">the section on alerts</a>. Thus no fork is ever be put there unless coming from an alert.</li>
 <li>At a suitable moment the units from the store are further moved to a component called <code>Terminal</code> -- implemented in <code>src/terminal.rs</code>.</li>
 <li>Roughly speaking, terminal is expected to &quot;unpack&quot; the unit, so that their parents become explicit (instead of being control hashes only).</li>
 <li>Each unit whose parents are successfully decoded, is added to the &quot;Dag&quot;. Each unit in the Dag is legit + has all its parents in the Dag.</li>
-<li>Dag units are passed to a component called the <code>Extender</code> -- see <code>src/extender.rs</code>. The role of the extender is to efficiently run the <code>OrderData</code> algorithm, described in the <a href="how_alephbft_does_it.html">section on AlephBFT</a>.</li>
+<li>Dag units are passed to a component called the <code>Extender</code> -- see the files in <code>src/extension/</code>. The role of the extender is to efficiently run the <code>OrderData</code> algorithm, described in the <a href="how_alephbft_does_it.html">section on AlephBFT</a>.</li>
 <li>Once a unit's data is placed in one of batches by the <code>Extender</code> then its path is over and can be safely discarded.</li>
 </ol>
 <h3 id="51-creator"><a class="header" href="#51-creator">5.1 Creator</a></h3>
@@ -552,7 +552,7 @@ In any case the terminal triggers a request to <code>Member</code> to download t
 </ol>
 <p>There is often a situation where the terminal receives a unit <code>U</code> and for some reason there is no unit yet for a particular slot in <code>U</code>'s parents, i.e., <code>U</code>'s parent map says that one of the parents was created by node <code>i</code> but terminal has no unit with &quot;coordinates&quot; <code>(U.round - 1, i)</code> (<code>UnitCoord</code> type in the implementation -- means a pair consising of <code>(V.round, V.creator)</code> for some unit <code>V</code>). In such a case terminal makes a request to the <code>Member</code> to get such a unit, which is then followed by <code>Member</code> sending a series of requests to random nodes in order to fetch such a unit.</p>
 <h3 id="54-extender"><a class="header" href="#54-extender">5.4 Extender</a></h3>
-<p>The <code>Extender</code>'s role is to receive Dag units (from <code>Terminal</code>) and extend the output stream. Towards this end it maintains the <code>round</code> for which the next <code>Head</code> must be chosen and the current unit <code>U</code> that is being decided for being <code>Head</code> or not. There is some caching made in the implementation so as to not recompute all the votes from scratch whenever a fresh unit arrives.</p>
+<p>The <code>Extender</code>'s role is to receive Dag units (from <code>Terminal</code>) and extend the output stream. Towards this end it elects the <code>Head</code> for each <code>round</code>. Such an election works by going through candidate units from this round either eliminating them or eventually electing one. Votes are computed and cached for each candidate until a decision on it is made, after which the election moves on to the next round (if elected as <code>Head</code>) or to the next unit (otherwise). After electing every <code>Head</code> the <code>Extender</code> deterministically orders all its unordered ancestors and the <code>Head</code> itself and returns the resulting batch.</p>
 <div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h2 id="6-reliable-broadcast"><a class="header" href="#6-reliable-broadcast">6 Reliable Broadcast</a></h2>
 <p>Recall that Reliable Broadcast is the primitive we use to broadcast <code>fork alerts</code> among nodes -- see <a href="how_alephbft_does_it.html#25-alerts----dealing-with-fork-spam">the section on alerts</a>. There are two requirements for a protocol realizing reliable broadcast:</p>
 <ol>
