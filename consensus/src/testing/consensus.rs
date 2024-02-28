@@ -3,7 +3,7 @@ use crate::{
     runway::{NotificationIn, NotificationOut},
     testing::{complete_oneshot, gen_config, gen_delay_config, init_log},
     units::{ControlHash, PreUnit, Unit, UnitCoord},
-    Hasher, NodeIndex, SpawnHandle, Terminator,
+    Hasher, NodeCount, NodeIndex, NodeMap, SpawnHandle, Terminator,
 };
 use aleph_bft_mock::{Hasher64, Spawner};
 use codec::Encode;
@@ -221,8 +221,20 @@ async fn catches_wrong_control_hash() {
             Terminator::create_root(exit_rx, "AlephBFT-consensus"),
         ),
     );
-    let control_hash = ControlHash::new(&(vec![None; n_nodes]).into());
-    let bad_pu = PreUnit::<Hasher64>::new(1.into(), 0, control_hash);
+    let empty_control_hash = ControlHash::new(&(vec![None; n_nodes]).into());
+    let other_initial_units: Vec<_> = (1..n_nodes)
+        .map(NodeIndex)
+        .map(|creator| PreUnit::<Hasher64>::new(creator, 0, empty_control_hash.clone()))
+        .map(|pu| Unit::new(pu, rand::random()))
+        .collect();
+    let _ = tx_in
+        .send(NotificationIn::NewUnits(other_initial_units.clone()))
+        .await;
+    let mut parent_hashes = NodeMap::with_size(NodeCount(n_nodes));
+    for (id, unit) in other_initial_units.into_iter().enumerate() {
+        parent_hashes.insert(NodeIndex(id + 1), unit.hash());
+    }
+    let bad_pu = PreUnit::<Hasher64>::new(1.into(), 1, ControlHash::new(&parent_hashes));
     let bad_control_hash: <Hasher64 as Hasher>::Hash = [0, 1, 0, 1, 0, 1, 0, 1];
     assert!(
         bad_control_hash != bad_pu.control_hash().combined_hash,
@@ -231,14 +243,14 @@ async fn catches_wrong_control_hash() {
     let mut control_hash = bad_pu.control_hash().clone();
     control_hash.combined_hash = bad_control_hash;
     let bad_pu = PreUnit::new(bad_pu.creator(), bad_pu.round(), control_hash);
-    let bad_hash: <Hasher64 as Hasher>::Hash = [0, 1, 0, 1, 0, 1, 0, 1];
-    let bad_unit = Unit::new(bad_pu, bad_hash);
+    let some_hash: <Hasher64 as Hasher>::Hash = [0, 1, 0, 1, 0, 1, 0, 1];
+    let bad_unit = Unit::new(bad_pu, some_hash);
     let _ = tx_in.send(NotificationIn::NewUnits(vec![bad_unit])).await;
     loop {
         let notification = rx_out.next().await.unwrap();
         trace!(target: "consensus-test", "notification {:?}", notification);
         if let NotificationOut::WrongControlHash(h) = notification {
-            assert_eq!(h, bad_hash, "Expected notification for our bad unit.");
+            assert_eq!(h, some_hash, "Expected notification for our bad unit.");
             break;
         }
     }

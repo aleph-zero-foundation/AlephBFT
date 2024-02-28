@@ -1,6 +1,6 @@
 use crate::{
-    units::{FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit},
-    Data, Hasher, Keychain, NodeCount, Round, SessionId, Signature, SignatureError,
+    units::{ControlHash, FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit},
+    Data, Hasher, Keychain, NodeCount, NodeMap, Round, SessionId, Signature, SignatureError,
 };
 use std::{
     fmt::{Display, Formatter, Result as FmtResult},
@@ -15,6 +15,7 @@ pub enum ValidationError<H: Hasher, D: Data, S: Signature> {
     RoundTooHigh(FullUnit<H, D>),
     WrongNumberOfMembers(PreUnit<H>),
     RoundZeroWithParents(PreUnit<H>),
+    RoundZeroBadControlHash(PreUnit<H>),
     NotEnoughParents(PreUnit<H>),
     NotDescendantOfPreviousUnit(PreUnit<H>),
 }
@@ -33,6 +34,9 @@ impl<H: Hasher, D: Data, S: Signature> Display for ValidationError<H, D, S> {
                 pu
             ),
             RoundZeroWithParents(pu) => write!(f, "zero round unit with parents: {:?}", pu),
+            RoundZeroBadControlHash(pu) => {
+                write!(f, "zero round unit with wrong control hash: {:?}", pu)
+            }
             NotEnoughParents(pu) => write!(
                 f,
                 "nonzero round unit with only {:?} parents: {:?}",
@@ -98,26 +102,38 @@ impl<K: Keychain> Validator<K> {
         &self,
         su: SignedUnit<H, D, K>,
     ) -> Result<H, D, K> {
-        // NOTE: at this point we cannot validate correctness of the control hash, in principle it could be
-        // just a random hash, but we still would not be able to deduce that by looking at the unit only.
         let pre_unit = su.as_signable().as_pre_unit();
-        if pre_unit.n_members() != self.keychain.node_count() {
+        let n_members = pre_unit.n_members();
+        if n_members != self.keychain.node_count() {
             return Err(ValidationError::WrongNumberOfMembers(pre_unit.clone()));
         }
         let round = pre_unit.round();
         let n_parents = pre_unit.n_parents();
-        if round == 0 && n_parents > NodeCount(0) {
-            return Err(ValidationError::RoundZeroWithParents(pre_unit.clone()));
-        }
-        let threshold = self.threshold;
-        if round > 0 && n_parents < threshold {
-            return Err(ValidationError::NotEnoughParents(pre_unit.clone()));
-        }
-        let control_hash = &pre_unit.control_hash();
-        if round > 0 && !control_hash.parents_mask[pre_unit.creator()] {
-            return Err(ValidationError::NotDescendantOfPreviousUnit(
-                pre_unit.clone(),
-            ));
+        match round {
+            0 => {
+                if n_parents > NodeCount(0) {
+                    return Err(ValidationError::RoundZeroWithParents(pre_unit.clone()));
+                }
+                if pre_unit.control_hash().combined_hash
+                    != ControlHash::<H>::combine_hashes(&NodeMap::with_size(n_members))
+                {
+                    return Err(ValidationError::RoundZeroBadControlHash(pre_unit.clone()));
+                }
+            }
+            // NOTE: at this point we cannot validate correctness of the control hash, in principle it could be
+            // just a random hash, but we still would not be able to deduce that by looking at the unit only.
+            _ => {
+                let threshold = self.threshold;
+                if n_parents < threshold {
+                    return Err(ValidationError::NotEnoughParents(pre_unit.clone()));
+                }
+                let control_hash = &pre_unit.control_hash();
+                if !control_hash.parents_mask[pre_unit.creator()] {
+                    return Err(ValidationError::NotDescendantOfPreviousUnit(
+                        pre_unit.clone(),
+                    ));
+                }
+            }
         }
         Ok(su)
     }
@@ -128,7 +144,9 @@ mod tests {
     use super::{ValidationError::*, Validator as GenericValidator};
     use crate::{
         creation::Creator as GenericCreator,
-        units::{create_units, creator_set, preunit_to_unchecked_signed_unit, preunit_to_unit},
+        units::{
+            create_units, creator_set, preunit_to_unchecked_signed_unit, preunit_to_unit, PreUnit,
+        },
         NodeCount, NodeIndex,
     };
     use aleph_bft_mock::{Hasher64, Keychain};
@@ -155,6 +173,33 @@ mod tests {
             .validate_unit(unchecked_unit.clone())
             .expect("Unit should validate.");
         assert_eq!(unchecked_unit, checked_unit.into());
+    }
+
+    #[test]
+    fn detects_wrong_initial_control_hash() {
+        let n_members = NodeCount(7);
+        let threshold = NodeCount(5);
+        let creator_id = NodeIndex(0);
+        let session_id = 0;
+        let round = 0;
+        let max_round = 2;
+        let creator = Creator::new(creator_id, n_members);
+        let keychain = Keychain::new(n_members, creator_id);
+        let validator = Validator::new(session_id, keychain, max_round, threshold);
+        let (preunit, _) = creator
+            .create_unit(round)
+            .expect("Creation should succeed.");
+        let mut control_hash = preunit.control_hash().clone();
+        control_hash.combined_hash = [0, 1, 0, 1, 0, 1, 0, 1];
+        let preunit = PreUnit::new(preunit.creator(), preunit.round(), control_hash);
+        let unchecked_unit =
+            preunit_to_unchecked_signed_unit(preunit.clone(), session_id, &keychain);
+        let other_preunit = match validator.validate_unit(unchecked_unit.clone()) {
+            Ok(_) => panic!("Validated bad unit."),
+            Err(RoundZeroBadControlHash(unit)) => unit,
+            Err(e) => panic!("Unexpected error from validator: {:?}", e),
+        };
+        assert_eq!(other_preunit, preunit);
     }
 
     #[test]
