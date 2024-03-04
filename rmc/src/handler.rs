@@ -1,7 +1,7 @@
 //! Reliable MultiCast - a primitive for Reliable Broadcast protocol.
 pub use aleph_bft_crypto::{
-    Indexed, MultiKeychain, Multisigned, NodeCount, PartialMultisignature, PartiallyMultisigned,
-    Signable, Signature, Signed, UncheckedSigned,
+    Indexed, MultiKeychain, Multisigned, PartialMultisignature, PartiallyMultisigned, Signable,
+    Signed, UncheckedSigned,
 };
 use core::fmt::Debug;
 use std::{

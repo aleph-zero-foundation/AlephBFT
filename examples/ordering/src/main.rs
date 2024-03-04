@@ -1,3 +1,4 @@
+use std::io::Write;
 mod dataio;
 mod network;
 
@@ -5,11 +6,13 @@ use aleph_bft::{run_session, NodeIndex, Terminator};
 use aleph_bft_mock::{Keychain, Spawner};
 use clap::Parser;
 use dataio::{Data, DataProvider, FinalizationHandler};
-use futures::{channel::oneshot, StreamExt};
+use futures::{channel::oneshot, io, StreamExt};
 use log::{debug, error, info};
 use network::Network;
-use std::{collections::HashMap, fs, fs::File, io, io::Write, path::Path, time::Duration};
+use std::{collections::HashMap, path::Path, time::Duration};
 use time::{macros::format_description, OffsetDateTime};
+use tokio::fs::{self, File};
+use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 /// Example node producing linear order.
 #[derive(Parser, Debug)]
@@ -40,20 +43,23 @@ struct Args {
     crash: bool,
 }
 
-fn create_backup(node_id: NodeIndex) -> Result<(File, io::Cursor<Vec<u8>>), io::Error> {
+async fn create_backup(
+    node_id: NodeIndex,
+) -> Result<(Compat<File>, io::Cursor<Vec<u8>>), io::Error> {
     let stash_path = Path::new("./aleph-bft-examples-ordering-backup");
-    fs::create_dir_all(stash_path)?;
+    fs::create_dir_all(stash_path).await?;
     let file_path = stash_path.join(format!("{}.units", node_id.0));
     let loader = if file_path.exists() {
-        io::Cursor::new(fs::read(&file_path)?)
+        io::Cursor::new(fs::read(&file_path).await?)
     } else {
         io::Cursor::new(Vec::new())
     };
     let saver = fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(file_path)?;
-    Ok((saver, loader))
+        .open(file_path)
+        .await?;
+    Ok((saver.compat_write(), loader))
 }
 
 fn finalized_counts(cf: &HashMap<NodeIndex, u32>) -> Vec<u32> {
@@ -104,7 +110,9 @@ async fn main() {
     let n_members = ports.len().into();
     let data_provider = DataProvider::new(id, n_starting, n_data - n_starting, stalled);
     let (finalization_handler, mut finalized_rx) = FinalizationHandler::new();
-    let (backup_saver, backup_loader) = create_backup(id).expect("Error setting up unit saving");
+    let (backup_saver, backup_loader) = create_backup(id)
+        .await
+        .expect("Error setting up unit saving");
     let local_io = aleph_bft::LocalIO::new(
         data_provider,
         finalization_handler,

@@ -13,7 +13,7 @@ use crate::{
 };
 use aleph_bft_types::NodeMap;
 use codec::{Decode, Encode};
-use futures::{channel::mpsc, pin_mut, FutureExt, StreamExt};
+use futures::{channel::mpsc, pin_mut, AsyncRead, AsyncWrite, FutureExt, StreamExt};
 use futures_timer::Delay;
 use itertools::Itertools;
 use log::{debug, error, info, trace, warn};
@@ -23,7 +23,6 @@ use std::{
     collections::HashSet,
     convert::TryInto,
     fmt::{self, Debug},
-    io::{Read, Write},
     marker::PhantomData,
     time::Duration,
 };
@@ -108,7 +107,13 @@ enum TaskDetails<H: Hasher, D: Data, S: Signature> {
 }
 
 #[derive(Clone)]
-pub struct LocalIO<D: Data, DP: DataProvider<D>, FH: FinalizationHandler<D>, US: Write, UL: Read> {
+pub struct LocalIO<
+    D: Data,
+    DP: DataProvider<D>,
+    FH: FinalizationHandler<D>,
+    US: AsyncWrite,
+    UL: AsyncRead,
+> {
     data_provider: DP,
     finalization_handler: FH,
     unit_saver: US,
@@ -116,7 +121,7 @@ pub struct LocalIO<D: Data, DP: DataProvider<D>, FH: FinalizationHandler<D>, US:
     _phantom: PhantomData<D>,
 }
 
-impl<D: Data, DP: DataProvider<D>, FH: FinalizationHandler<D>, US: Write, UL: Read>
+impl<D: Data, DP: DataProvider<D>, FH: FinalizationHandler<D>, US: AsyncWrite, UL: AsyncRead>
     LocalIO<D, DP, FH, US, UL>
 {
     pub fn new(
@@ -573,8 +578,8 @@ pub async fn run_session<
     D: Data,
     DP: DataProvider<D>,
     FH: FinalizationHandler<D>,
-    US: Write + Send + Sync + 'static,
-    UL: Read + Send + Sync + 'static,
+    US: AsyncWrite + Send + Sync + 'static,
+    UL: AsyncRead + Send + Sync + 'static,
     N: Network<NetworkData<H, D, MK::Signature, MK::PartialMultisignature>> + 'static,
     SH: SpawnHandle,
     MK: MultiKeychain,

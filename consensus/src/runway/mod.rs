@@ -11,21 +11,15 @@ use crate::{
     Terminator, UncheckedSigned,
 };
 use aleph_bft_types::Recipient;
+use futures::AsyncWrite;
 use futures::{
     channel::{mpsc, oneshot},
-    pin_mut, Future, FutureExt, StreamExt,
+    pin_mut, AsyncRead, Future, FutureExt, StreamExt,
 };
 use futures_timer::Delay;
 use itertools::Itertools;
 use log::{debug, error, info, trace, warn};
-use std::{
-    collections::HashSet,
-    convert::TryFrom,
-    fmt,
-    io::{Read, Write},
-    marker::PhantomData,
-    time::Duration,
-};
+use std::{collections::HashSet, convert::TryFrom, fmt, marker::PhantomData, time::Duration};
 
 mod collection;
 mod packer;
@@ -871,8 +865,8 @@ pub struct RunwayIO<
     H: Hasher,
     D: Data,
     MK: MultiKeychain,
-    W: Write + Send + Sync + 'static,
-    R: Read + Send + Sync + 'static,
+    W: AsyncWrite + Send + Sync + 'static,
+    R: AsyncRead + Send + Sync + 'static,
     DP: DataProvider<D>,
     FH: FinalizationHandler<D>,
 > {
@@ -887,8 +881,8 @@ impl<
         H: Hasher,
         D: Data,
         MK: MultiKeychain,
-        W: Write + Send + Sync + 'static,
-        R: Read + Send + Sync + 'static,
+        W: AsyncWrite + Send + Sync + 'static,
+        R: AsyncRead + Send + Sync + 'static,
         DP: DataProvider<D>,
         FH: FinalizationHandler<D>,
     > RunwayIO<H, D, MK, W, R, DP, FH>
@@ -919,8 +913,8 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
 ) where
     H: Hasher,
     D: Data,
-    US: Write + Send + Sync + 'static,
-    UL: Read + Send + Sync + 'static,
+    US: AsyncWrite + Send + Sync + 'static,
+    UL: AsyncRead + Send + Sync + 'static,
     DP: DataProvider<D>,
     FH: FinalizationHandler<D>,
     MK: MultiKeychain,

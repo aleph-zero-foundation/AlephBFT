@@ -3,12 +3,14 @@ use aleph_bft_types::{
 };
 use async_trait::async_trait;
 use codec::{Decode, Encode};
-use futures::{channel::mpsc::unbounded, future::pending};
+use futures::{channel::mpsc::unbounded, future::pending, AsyncWrite};
 use log::error;
 use parking_lot::Mutex;
 use std::{
-    io::{Cursor, Write},
+    io::{self},
+    pin::Pin,
     sync::Arc,
+    task::{self, Poll},
 };
 
 type Receiver<T> = futures::channel::mpsc::UnboundedReceiver<T>;
@@ -101,20 +103,29 @@ impl Saver {
     }
 }
 
+impl AsyncWrite for Saver {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _: &mut task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        self.data.lock().extend_from_slice(buf);
+        Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut task::Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(self: Pin<&mut Self>, _: &mut task::Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
 impl From<Arc<Mutex<Vec<u8>>>> for Saver {
     fn from(data: Arc<Mutex<Vec<u8>>>) -> Self {
         Self { data }
     }
 }
 
-impl Write for Saver {
-    fn write(&mut self, buf: &[u8]) -> Result<usize, std::io::Error> {
-        self.data.lock().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> Result<(), std::io::Error> {
-        Ok(())
-    }
-}
-
-pub type Loader = Cursor<Vec<u8>>;
+pub type Loader = futures::io::Cursor<Vec<u8>>;

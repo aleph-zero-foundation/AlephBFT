@@ -1,7 +1,12 @@
-use std::{collections::HashSet, fmt, fmt::Debug, io::Read, marker::PhantomData};
+use std::{
+    collections::HashSet,
+    fmt::{self, Debug},
+    marker::PhantomData,
+    pin::Pin,
+};
 
 use codec::{Decode, Error as CodecError};
-use futures::channel::oneshot;
+use futures::{channel::oneshot, AsyncRead, AsyncReadExt};
 use log::{error, info, warn};
 
 use crate::{
@@ -63,26 +68,26 @@ impl From<CodecError> for LoaderError {
     }
 }
 
-pub struct BackupLoader<H: Hasher, D: Data, S: Signature, R: Read> {
-    backup: R,
+pub struct BackupLoader<H: Hasher, D: Data, S: Signature, R: AsyncRead> {
+    backup: Pin<Box<R>>,
     index: NodeIndex,
     session_id: SessionId,
     _phantom: PhantomData<(H, D, S)>,
 }
 
-impl<H: Hasher, D: Data, S: Signature, R: Read> BackupLoader<H, D, S, R> {
+impl<H: Hasher, D: Data, S: Signature, R: AsyncRead> BackupLoader<H, D, S, R> {
     pub fn new(backup: R, index: NodeIndex, session_id: SessionId) -> BackupLoader<H, D, S, R> {
         BackupLoader {
-            backup,
+            backup: Box::pin(backup),
             index,
             session_id,
             _phantom: PhantomData,
         }
     }
 
-    fn load(&mut self) -> Result<Vec<UncheckedSignedUnit<H, D, S>>, LoaderError> {
+    async fn load(&mut self) -> Result<Vec<UncheckedSignedUnit<H, D, S>>, LoaderError> {
         let mut buf = Vec::new();
-        self.backup.read_to_end(&mut buf)?;
+        self.backup.read_to_end(&mut buf).await?;
         let input = &mut &buf[..];
         let mut result = Vec::new();
         while !input.is_empty() {
@@ -163,7 +168,7 @@ impl<H: Hasher, D: Data, S: Signature, R: Read> BackupLoader<H, D, S, R> {
         starting_round: oneshot::Sender<Option<Round>>,
         next_round_collection: oneshot::Receiver<Round>,
     ) {
-        let units = match self.load() {
+        let units = match self.load().await {
             Ok(items) => items,
             Err(e) => {
                 error!(target: LOG_TARGET, "unable to load backup data: {}", e);
