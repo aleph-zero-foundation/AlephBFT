@@ -221,29 +221,70 @@ impl<H: Hasher> Unit<H> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::{
-        units::{ControlHash, FullUnit as GenericFullUnit, PreUnit as GenericPreUnit},
-        Hasher, NodeIndex,
+        units::{ControlHash, FullUnit, PreUnit},
+        Hasher, NodeCount, NodeIndex, NodeMap, Round,
     };
     use aleph_bft_mock::{Data, Hasher64};
     use codec::{Decode, Encode};
 
-    type PreUnit = GenericPreUnit<Hasher64>;
-    type FullUnit = GenericFullUnit<Hasher64, Data>;
+    pub type TestPreUnit = PreUnit<Hasher64>;
+    pub type TestFullUnit = FullUnit<Hasher64, Data>;
+
+    fn random_initial_units(n_members: NodeCount) -> Vec<TestFullUnit> {
+        n_members
+            .into_iterator()
+            .map(|node_id| {
+                let control_hash = ControlHash::<Hasher64>::new(&vec![None; n_members.0].into());
+                let pre_unit = TestPreUnit::new(node_id, 0, control_hash);
+                FullUnit::new(pre_unit, rand::random(), 43)
+            })
+            .collect()
+    }
+
+    fn random_unit_with_parents(creator: NodeIndex, parents: &Vec<TestFullUnit>) -> TestFullUnit {
+        let representative_parent = parents.last().expect("there are parents");
+        let n_members = representative_parent.as_pre_unit().n_members();
+        let round = representative_parent.round() + 1;
+        let mut parent_map = NodeMap::with_size(n_members);
+        for parent in parents {
+            parent_map.insert(parent.creator(), parent.hash());
+        }
+        let control_hash = ControlHash::<Hasher64>::new(&parent_map);
+        let pre_unit = TestPreUnit::new(creator, round, control_hash);
+        TestFullUnit::new(pre_unit, rand::random(), 43)
+    }
+
+    pub fn random_full_parent_units_up_to(
+        round: Round,
+        n_members: NodeCount,
+    ) -> Vec<Vec<TestFullUnit>> {
+        let mut result = vec![random_initial_units(n_members)];
+        for _ in 0..round {
+            let units = n_members
+                .into_iterator()
+                .map(|node_id| {
+                    random_unit_with_parents(
+                        node_id,
+                        result.last().expect("previous round present"),
+                    )
+                })
+                .collect();
+            result.push(units);
+        }
+        result
+    }
 
     #[test]
     fn test_full_unit_hash_is_correct() {
-        let ch = ControlHash::<Hasher64>::new(&vec![].into());
-        let pre_unit = PreUnit::new(NodeIndex(5), 6, ch);
-        let full_unit = FullUnit::new(pre_unit, Some(7), 8);
-        let hash = full_unit.using_encoded(Hasher64::hash);
-        assert_eq!(full_unit.hash(), hash);
-        let ch = ControlHash::<Hasher64>::new(&vec![].into());
-        let pre_unit = PreUnit::new(NodeIndex(5), 6, ch);
-        let full_unit = FullUnit::new(pre_unit, None, 8);
-        let hash = full_unit.using_encoded(Hasher64::hash);
-        assert_eq!(full_unit.hash(), hash);
+        for full_unit in random_full_parent_units_up_to(3, NodeCount(4))
+            .into_iter()
+            .flatten()
+        {
+            let hash = full_unit.using_encoded(Hasher64::hash);
+            assert_eq!(full_unit.hash(), hash);
+        }
     }
 
     #[test]
@@ -257,19 +298,14 @@ mod tests {
 
     #[test]
     fn test_full_unit_codec() {
-        let ch = ControlHash::<Hasher64>::new(&vec![].into());
-        let pre_unit = PreUnit::new(NodeIndex(5), 6, ch);
-        let full_unit = FullUnit::new(pre_unit, Some(7), 8);
-        full_unit.hash();
-        let encoded = full_unit.encode();
-        let decoded = FullUnit::decode(&mut encoded.as_slice()).expect("should decode correctly");
-        assert_eq!(decoded, full_unit);
-        let ch = ControlHash::<Hasher64>::new(&vec![].into());
-        let pre_unit = PreUnit::new(NodeIndex(5), 6, ch);
-        let full_unit = FullUnit::new(pre_unit, None, 8);
-        full_unit.hash();
-        let encoded = full_unit.encode();
-        let decoded = FullUnit::decode(&mut encoded.as_slice()).expect("should decode correctly");
-        assert_eq!(decoded, full_unit);
+        for full_unit in random_full_parent_units_up_to(3, NodeCount(4))
+            .into_iter()
+            .flatten()
+        {
+            let encoded = full_unit.encode();
+            let decoded =
+                TestFullUnit::decode(&mut encoded.as_slice()).expect("should decode correctly");
+            assert_eq!(decoded, full_unit);
+        }
     }
 }

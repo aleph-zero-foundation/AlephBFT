@@ -85,7 +85,7 @@ impl ConsensusDagFeeder {
     fn on_consensus_notification(&self, notification: NotificationOut<Hasher64>) {
         match notification {
             NotificationOut::WrongControlHash(h) => {
-                // We need to answer these requests as otherwise terminal cannot make progress
+                // We need to answer these requests as otherwise reconstruction cannot make progress
                 let parent_hashes = self.units_map.get(&h).unwrap().parent_hashes_vec();
                 let notification = NotificationIn::UnitParents(h, parent_hashes);
                 self.tx_in.unbounded_send(notification).unwrap();

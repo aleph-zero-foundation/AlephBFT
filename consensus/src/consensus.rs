@@ -3,15 +3,15 @@ use futures::{
     future::pending,
     FutureExt,
 };
-use log::{debug, error, warn};
+use log::{debug, error};
 
 use crate::{
     config::Config,
     creation,
     extension::Service as Extender,
     handle_task_termination,
+    reconstruction::Service as ReconstructionService,
     runway::{NotificationIn, NotificationOut},
-    terminal::Terminal,
     Hasher, Receiver, Round, Sender, SpawnHandle, Terminator,
 };
 
@@ -37,12 +37,12 @@ pub(crate) async fn run<H: Hasher + 'static>(
         })
         .fuse();
 
-    let (parents_for_creator, parents_from_terminal) = mpsc::unbounded();
+    let (parents_for_creator, parents_from_dag) = mpsc::unbounded();
 
     let creator_terminator = terminator.add_offspring_connection("creator");
     let io = creation::IO {
         outgoing_units: outgoing_notifications.clone(),
-        incoming_parents: parents_from_terminal,
+        incoming_parents: parents_from_dag,
     };
     let creator_handle = spawn_handle
         .spawn_essential(
@@ -58,37 +58,25 @@ pub(crate) async fn run<H: Hasher + 'static>(
         pending().await
     };
 
-    let mut terminal = Terminal::new(index, incoming_notifications, outgoing_notifications);
+    let reconstruction = ReconstructionService::new(
+        incoming_notifications,
+        outgoing_notifications,
+        parents_for_creator,
+        electors_tx,
+    );
 
-    // send a new parent candidate to the creator
-    let mut parents_for_creator = Some(parents_for_creator);
-    terminal.register_post_insert_hook(Box::new(move |u| {
-        if let Some(parents_for_creator_tx) = &parents_for_creator {
-            if parents_for_creator_tx.unbounded_send(u.into()).is_err() {
-                warn!(target: "AlephBFT", "Channel to creator was closed.");
-                parents_for_creator = None;
-            }
-        }
-    }));
-    // try to extend the partial order after adding a unit to the dag
-    terminal.register_post_insert_hook(Box::new(move |u| {
-        electors_tx
-            .unbounded_send(u.into())
-            .expect("Channel to extender should be open.")
-    }));
-
-    let terminal_terminator = terminator.add_offspring_connection("terminal");
-    let mut terminal_handle = spawn_handle
-        .spawn_essential("consensus/terminal", async move {
-            terminal.run(terminal_terminator).await
+    let reconstruction_terminator = terminator.add_offspring_connection("reconstruction");
+    let mut reconstruction_handle = spawn_handle
+        .spawn_essential("consensus/reconstruction", async move {
+            reconstruction.run(reconstruction_terminator).await
         })
         .fuse();
     debug!(target: "AlephBFT", "{:?} All services started.", index);
 
     futures::select! {
         _ = terminator.get_exit().fuse() => {},
-        _ = terminal_handle => {
-            debug!(target: "AlephBFT-consensus", "{:?} terminal task terminated early.", index);
+        _ = reconstruction_handle => {
+            debug!(target: "AlephBFT-consensus", "{:?} unit reconstruction task terminated early.", index);
         },
         _ = creator_panic_handle.fuse() => {
             error!(target: "AlephBFT-consensus", "{:?} creator task terminated early with its task being dropped.", index);
@@ -102,7 +90,13 @@ pub(crate) async fn run<H: Hasher + 'static>(
     // we stop no matter if received Ok or Err
     terminator.terminate_sync().await;
 
-    handle_task_termination(terminal_handle, "AlephBFT-consensus", "Terminal", index).await;
+    handle_task_termination(
+        reconstruction_handle,
+        "AlephBFT-consensus",
+        "Reconstruction",
+        index,
+    )
+    .await;
     handle_task_termination(creator_handle, "AlephBFT-consensus", "Creator", index).await;
     handle_task_termination(extender_handle, "AlephBFT-consensus", "Extender", index).await;
 
