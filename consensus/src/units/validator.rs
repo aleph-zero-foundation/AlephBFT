@@ -65,19 +65,17 @@ pub struct Validator<K: Keychain> {
     session_id: SessionId,
     keychain: K,
     max_round: Round,
-    threshold: NodeCount,
 }
 
 type Result<H, D, K> =
     StdResult<SignedUnit<H, D, K>, ValidationError<H, D, <K as Keychain>::Signature>>;
 
 impl<K: Keychain> Validator<K> {
-    pub fn new(session_id: SessionId, keychain: K, max_round: Round, threshold: NodeCount) -> Self {
+    pub fn new(session_id: SessionId, keychain: K, max_round: Round) -> Self {
         Validator {
             session_id,
             keychain,
             max_round,
-            threshold,
         }
     }
 
@@ -96,6 +94,10 @@ impl<K: Keychain> Validator<K> {
             return Err(ValidationError::RoundTooHigh(full_unit.clone()));
         }
         self.validate_unit_parents(su)
+    }
+
+    fn threshold(&self) -> NodeCount {
+        self.keychain.node_count().consensus_threshold()
     }
 
     fn validate_unit_parents<H: Hasher, D: Data>(
@@ -123,8 +125,7 @@ impl<K: Keychain> Validator<K> {
             // NOTE: at this point we cannot validate correctness of the control hash, in principle it could be
             // just a random hash, but we still would not be able to deduce that by looking at the unit only.
             _ => {
-                let threshold = self.threshold;
-                if n_parents < threshold {
+                if n_parents < self.threshold() {
                     return Err(ValidationError::NotEnoughParents(pre_unit.clone()));
                 }
                 let control_hash = &pre_unit.control_hash();
@@ -143,32 +144,26 @@ impl<K: Keychain> Validator<K> {
 mod tests {
     use super::{ValidationError::*, Validator as GenericValidator};
     use crate::{
-        creation::Creator as GenericCreator,
         units::{
-            create_units, creator_set, preunit_to_unchecked_signed_unit, preunit_to_unit, PreUnit,
+            full_unit_to_unchecked_signed_unit, preunit_to_unchecked_signed_unit,
+            random_full_parent_units_up_to, random_unit_with_parents, PreUnit,
         },
         NodeCount, NodeIndex,
     };
-    use aleph_bft_mock::{Hasher64, Keychain};
+    use aleph_bft_mock::Keychain;
 
     type Validator = GenericValidator<Keychain>;
-    type Creator = GenericCreator<Hasher64>;
 
     #[test]
     fn validates_initial_unit() {
         let n_members = NodeCount(7);
-        let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
         let session_id = 0;
-        let round = 0;
         let max_round = 2;
-        let creator = Creator::new(creator_id, n_members);
         let keychain = Keychain::new(n_members, creator_id);
-        let validator = Validator::new(session_id, keychain, max_round, threshold);
-        let (preunit, _) = creator
-            .create_unit(round)
-            .expect("Creation should succeed.");
-        let unchecked_unit = preunit_to_unchecked_signed_unit(preunit, session_id, &keychain);
+        let validator = Validator::new(session_id, keychain, max_round);
+        let full_unit = random_full_parent_units_up_to(0, n_members, session_id)[0][0].clone();
+        let unchecked_unit = full_unit_to_unchecked_signed_unit(full_unit, &keychain);
         let checked_unit = validator
             .validate_unit(unchecked_unit.clone())
             .expect("Unit should validate.");
@@ -178,17 +173,14 @@ mod tests {
     #[test]
     fn detects_wrong_initial_control_hash() {
         let n_members = NodeCount(7);
-        let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
         let session_id = 0;
-        let round = 0;
         let max_round = 2;
-        let creator = Creator::new(creator_id, n_members);
         let keychain = Keychain::new(n_members, creator_id);
-        let validator = Validator::new(session_id, keychain, max_round, threshold);
-        let (preunit, _) = creator
-            .create_unit(round)
-            .expect("Creation should succeed.");
+        let validator = Validator::new(session_id, keychain, max_round);
+        let preunit = random_full_parent_units_up_to(0, n_members, session_id)[0][0]
+            .as_pre_unit()
+            .clone();
         let mut control_hash = preunit.control_hash().clone();
         control_hash.combined_hash = [0, 1, 0, 1, 0, 1, 0, 1];
         let preunit = PreUnit::new(preunit.creator(), preunit.round(), control_hash);
@@ -205,19 +197,15 @@ mod tests {
     #[test]
     fn detects_wrong_session_id() {
         let n_members = NodeCount(7);
-        let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
         let session_id = 0;
         let wrong_session_id = 43;
-        let round = 0;
         let max_round = 2;
-        let creator = Creator::new(creator_id, n_members);
         let keychain = Keychain::new(n_members, creator_id);
-        let validator = Validator::new(session_id, keychain, max_round, threshold);
-        let (preunit, _) = creator
-            .create_unit(round)
-            .expect("Creation should succeed.");
-        let unchecked_unit = preunit_to_unchecked_signed_unit(preunit, wrong_session_id, &keychain);
+        let validator = Validator::new(session_id, keychain, max_round);
+        let full_unit =
+            random_full_parent_units_up_to(0, n_members, wrong_session_id)[0][0].clone();
+        let unchecked_unit = full_unit_to_unchecked_signed_unit(full_unit, &keychain);
         let full_unit = match validator.validate_unit(unchecked_unit.clone()) {
             Ok(_) => panic!("Validated bad unit."),
             Err(WrongSession(full_unit)) => full_unit,
@@ -230,19 +218,14 @@ mod tests {
     fn detects_wrong_number_of_members() {
         let n_members = NodeCount(7);
         let n_plus_one_members = NodeCount(8);
-        let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
         let session_id = 0;
-        let round = 0;
         let max_round = 2;
-        let creator = Creator::new(creator_id, n_members);
         let keychain = Keychain::new(n_plus_one_members, creator_id);
-        let validator = Validator::new(session_id, keychain, max_round, threshold);
-        let (preunit, _) = creator
-            .create_unit(round)
-            .expect("Creation should succeed.");
-        let unchecked_unit =
-            preunit_to_unchecked_signed_unit(preunit.clone(), session_id, &keychain);
+        let validator = Validator::new(session_id, keychain, max_round);
+        let full_unit = random_full_parent_units_up_to(0, n_members, session_id)[0][0].clone();
+        let preunit = full_unit.as_pre_unit().clone();
+        let unchecked_unit = full_unit_to_unchecked_signed_unit(full_unit, &keychain);
         let other_preunit = match validator.validate_unit(unchecked_unit) {
             Ok(_) => panic!("Validated bad unit."),
             Err(WrongNumberOfMembers(other_preunit)) => other_preunit,
@@ -254,28 +237,19 @@ mod tests {
     #[test]
     fn detects_below_threshold() {
         let n_members = NodeCount(7);
-        // This is the easiest way of testing this I can think off, but it also suggests we are
-        // doing something wrong by having multiple sources for what is "threshold".
-        let threshold = NodeCount(6);
         let creator_id = NodeIndex(0);
         let session_id = 0;
-        let round = 1;
         let max_round = 2;
-        let mut creators = creator_set(n_members);
-        let round_0_units: Vec<_> = create_units(creators.iter(), 0)
-            .into_iter()
-            .map(|(preunit, _)| preunit_to_unit(preunit, session_id))
-            .take(5)
+        let parents = random_full_parent_units_up_to(0, n_members, session_id)[0]
+            .iter()
+            .take(4)
+            .cloned()
             .collect();
-        let creator = &mut creators[0];
-        creator.add_units(&round_0_units);
+        let unit = random_unit_with_parents(creator_id, &parents);
+        let preunit = unit.as_pre_unit().clone();
         let keychain = Keychain::new(n_members, creator_id);
-        let validator = Validator::new(session_id, keychain, max_round, threshold);
-        let (preunit, _) = creator
-            .create_unit(round)
-            .expect("Creation should succeed.");
-        let unchecked_unit =
-            preunit_to_unchecked_signed_unit(preunit.clone(), session_id, &keychain);
+        let unchecked_unit = full_unit_to_unchecked_signed_unit(unit, &keychain);
+        let validator = Validator::new(session_id, keychain, max_round);
         let other_preunit = match validator.validate_unit(unchecked_unit) {
             Ok(_) => panic!("Validated bad unit."),
             Err(NotEnoughParents(other_preunit)) => other_preunit,
@@ -287,28 +261,13 @@ mod tests {
     #[test]
     fn detects_too_high_round() {
         let n_members = NodeCount(7);
-        let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
         let session_id = 0;
-        let round = 3;
         let max_round = 2;
-        let mut creators = creator_set(n_members);
-        for round in 0..round {
-            let units: Vec<_> = create_units(creators.iter(), round)
-                .into_iter()
-                .map(|(preunit, _)| preunit_to_unit(preunit, session_id))
-                .collect();
-            for creator in creators.iter_mut() {
-                creator.add_units(&units);
-            }
-        }
-        let creator = &creators[0];
         let keychain = Keychain::new(n_members, creator_id);
-        let validator = Validator::new(session_id, keychain, max_round, threshold);
-        let (preunit, _) = creator
-            .create_unit(round)
-            .expect("Creation should succeed.");
-        let unchecked_unit = preunit_to_unchecked_signed_unit(preunit, session_id, &keychain);
+        let validator = Validator::new(session_id, keychain, max_round);
+        let full_unit = random_full_parent_units_up_to(3, n_members, session_id)[3][0].clone();
+        let unchecked_unit = full_unit_to_unchecked_signed_unit(full_unit, &keychain);
         let full_unit = match validator.validate_unit(unchecked_unit.clone()) {
             Ok(_) => panic!("Validated bad unit."),
             Err(RoundTooHigh(full_unit)) => full_unit,

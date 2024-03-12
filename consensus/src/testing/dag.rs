@@ -165,7 +165,7 @@ fn generate_random_dag(n_members: NodeCount, height: Round, seed: u64) -> Vec<Un
     assert!(height < 100);
 
     let mut rng = StdRng::seed_from_u64(seed);
-    let max_forkers = NodeCount((n_members.0 - 1) / 3);
+    let max_forkers = n_members - n_members.consensus_threshold();
     let n_forkers = NodeCount(rng.gen_range(0..=max_forkers.0));
     let mut forker_bitmap = NodeSubset::with_size(n_members);
     // below we select n_forkers forkers at random
@@ -181,7 +181,7 @@ fn generate_random_dag(n_members: NodeCount, height: Round, seed: u64) -> Vec<Un
     // Maximum number of forks per round per forker.
     let max_variants = rng.gen_range(1..=4);
 
-    let threshold = NodeCount((2 * n_members.0) / 3 + 1);
+    let threshold = n_members.consensus_threshold();
 
     let mut dag: Vec<Vec<Vec<UnitWithParents>>> =
         vec![vec![vec![]; n_members.into()]; height.into()];

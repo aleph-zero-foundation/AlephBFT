@@ -246,7 +246,7 @@ mod tests {
     use crate::{
         backup::BackupLoader,
         units::{
-            create_units, creator_set, preunit_to_unchecked_signed_unit, preunit_to_unit,
+            create_preunits, creator_set, preunit_to_unchecked_signed_unit, preunit_to_unit,
             UncheckedSignedUnit as GenericUncheckedSignedUnit,
         },
         NodeCount, NodeIndex, Round, SessionId,
@@ -273,7 +273,7 @@ mod tests {
         let mut units_per_round = Vec::with_capacity(rounds);
 
         for round in 0..rounds {
-            let pre_units = create_units(creators.iter(), round as Round);
+            let pre_units = create_preunits(creators.iter(), round as Round);
 
             let units: Vec<_> = pre_units
                 .iter()

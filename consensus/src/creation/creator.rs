@@ -41,9 +41,7 @@ impl<H: Hasher> UnitsCollector<H> {
         &self,
         node_id: NodeIndex,
     ) -> Result<&NodeMap<H::Hash>, ConstraintError> {
-        let threshold = (self.candidates.size() * 2) / 3 + NodeCount(1);
-
-        if self.n_candidates < threshold {
+        if self.n_candidates < self.candidates.size().consensus_threshold() {
             return Err(ConstraintError::NotEnoughParents);
         }
         if self.candidates.get(node_id).is_none() {
@@ -95,7 +93,7 @@ impl<H: Hasher> Creator<H> {
         &mut self.round_collectors[round_ix]
     }
 
-    /// To create a new unit, we need to have at least floor(2*N/3) + 1 parents available in previous round.
+    /// To create a new unit, we need to have at least the consensus threshold of parents available in previous round.
     /// Additionally, our unit from previous round must be available.
     pub fn create_unit(&self, round: Round) -> Result<(PreUnit<H>, Vec<H::Hash>)> {
         if round == 0 {
@@ -124,7 +122,7 @@ mod tests {
     use super::{Creator as GenericCreator, UnitsCollector};
     use crate::{
         creation::creator::ConstraintError,
-        units::{create_units, creator_set, preunit_to_unit},
+        units::{create_preunits, creator_set, preunit_to_unit},
         NodeCount, NodeIndex,
     };
     use aleph_bft_mock::Hasher64;
@@ -149,7 +147,7 @@ mod tests {
     fn creates_unit_with_all_parents() {
         let n_members = NodeCount(7);
         let mut creators = creator_set(n_members);
-        let new_units = create_units(creators.iter(), 0);
+        let new_units = create_preunits(creators.iter(), 0);
         let new_units: Vec<_> = new_units
             .into_iter()
             .map(|(pu, _)| preunit_to_unit(pu, 0))
@@ -167,9 +165,9 @@ mod tests {
     }
 
     fn create_unit_with_minimal_parents(n_members: NodeCount) {
-        let n_parents = (n_members.0 * 2) / 3 + 1;
+        let n_parents = n_members.consensus_threshold().0;
         let mut creators = creator_set(n_members);
-        let new_units = create_units(creators.iter().take(n_parents), 0);
+        let new_units = create_preunits(creators.iter().take(n_parents), 0);
         let new_units: Vec<_> = new_units
             .into_iter()
             .map(|(pu, _)| preunit_to_unit(pu, 0))
@@ -207,9 +205,9 @@ mod tests {
     }
 
     fn dont_create_unit_below_parents_threshold(n_members: NodeCount) {
-        let n_parents = (n_members.0 * 2) / 3;
+        let n_parents = n_members.consensus_threshold() - NodeCount(1);
         let mut creators = creator_set(n_members);
-        let new_units = create_units(creators.iter().take(n_parents), 0);
+        let new_units = create_preunits(creators.iter().take(n_parents.0), 0);
         let new_units: Vec<_> = new_units
             .into_iter()
             .map(|(pu, _)| preunit_to_unit(pu, 0))
@@ -247,7 +245,7 @@ mod tests {
         let mut creators = creator_set(n_members);
         let mut expected_hashes_per_round = Vec::new();
         for round in 0..2 {
-            let new_units = create_units(creators.iter().skip(1), round);
+            let new_units = create_preunits(creators.iter().skip(1), round);
             let new_units: Vec<_> = new_units
                 .into_iter()
                 .map(|(pu, _)| preunit_to_unit(pu, 0))
@@ -284,7 +282,7 @@ mod tests {
     fn cannot_create_unit_without_predecessor() {
         let n_members = NodeCount(7);
         let mut creators = creator_set(n_members);
-        let new_units = create_units(creators.iter().skip(1), 0);
+        let new_units = create_preunits(creators.iter().skip(1), 0);
         let new_units: Vec<_> = new_units
             .into_iter()
             .map(|(pu, _)| preunit_to_unit(pu, 0))
@@ -299,7 +297,7 @@ mod tests {
     fn units_collector_successfully_computes_parents() {
         let n_members = NodeCount(4);
         let creators = creator_set(n_members);
-        let new_units = create_units(creators.iter(), 0);
+        let new_units = create_preunits(creators.iter(), 0);
         let new_units: Vec<_> = new_units
             .into_iter()
             .map(|(pu, _)| preunit_to_unit(pu, 0))
@@ -324,7 +322,7 @@ mod tests {
     fn units_collector_returns_err_when_not_enough_parents() {
         let n_members = NodeCount(4);
         let creators = creator_set(n_members);
-        let new_units = create_units(creators.iter().take(2), 0);
+        let new_units = create_preunits(creators.iter().take(2), 0);
         let new_units: Vec<_> = new_units
             .into_iter()
             .map(|(pu, _)| preunit_to_unit(pu, 0))
@@ -346,7 +344,7 @@ mod tests {
     fn units_collector_returns_err_when_missing_own_parent() {
         let n_members = NodeCount(4);
         let creators = creator_set(n_members);
-        let new_units = create_units(creators.iter().take(3), 0);
+        let new_units = create_preunits(creators.iter().take(3), 0);
         let new_units: Vec<_> = new_units
             .into_iter()
             .map(|(pu, _)| preunit_to_unit(pu, 0))

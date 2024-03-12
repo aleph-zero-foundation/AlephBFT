@@ -13,7 +13,11 @@ mod testing;
 mod validator;
 pub(crate) use store::*;
 #[cfg(test)]
-pub use testing::{create_units, creator_set, preunit_to_unchecked_signed_unit, preunit_to_unit};
+pub use testing::{
+    create_preunits, creator_set, full_unit_to_unchecked_signed_unit,
+    preunit_to_unchecked_signed_unit, preunit_to_unit, random_full_parent_units_up_to,
+    random_unit_with_parents,
+};
 pub use validator::{ValidationError, Validator};
 
 /// The coordinates of a unit, i.e. creator and round. In the absence of forks this uniquely
@@ -223,62 +227,17 @@ impl<H: Hasher> Unit<H> {
 #[cfg(test)]
 pub mod tests {
     use crate::{
-        units::{ControlHash, FullUnit, PreUnit},
-        Hasher, NodeCount, NodeIndex, NodeMap, Round,
+        units::{random_full_parent_units_up_to, ControlHash, FullUnit},
+        Hasher, NodeCount,
     };
     use aleph_bft_mock::{Data, Hasher64};
     use codec::{Decode, Encode};
 
-    pub type TestPreUnit = PreUnit<Hasher64>;
     pub type TestFullUnit = FullUnit<Hasher64, Data>;
-
-    fn random_initial_units(n_members: NodeCount) -> Vec<TestFullUnit> {
-        n_members
-            .into_iterator()
-            .map(|node_id| {
-                let control_hash = ControlHash::<Hasher64>::new(&vec![None; n_members.0].into());
-                let pre_unit = TestPreUnit::new(node_id, 0, control_hash);
-                FullUnit::new(pre_unit, rand::random(), 43)
-            })
-            .collect()
-    }
-
-    fn random_unit_with_parents(creator: NodeIndex, parents: &Vec<TestFullUnit>) -> TestFullUnit {
-        let representative_parent = parents.last().expect("there are parents");
-        let n_members = representative_parent.as_pre_unit().n_members();
-        let round = representative_parent.round() + 1;
-        let mut parent_map = NodeMap::with_size(n_members);
-        for parent in parents {
-            parent_map.insert(parent.creator(), parent.hash());
-        }
-        let control_hash = ControlHash::<Hasher64>::new(&parent_map);
-        let pre_unit = TestPreUnit::new(creator, round, control_hash);
-        TestFullUnit::new(pre_unit, rand::random(), 43)
-    }
-
-    pub fn random_full_parent_units_up_to(
-        round: Round,
-        n_members: NodeCount,
-    ) -> Vec<Vec<TestFullUnit>> {
-        let mut result = vec![random_initial_units(n_members)];
-        for _ in 0..round {
-            let units = n_members
-                .into_iterator()
-                .map(|node_id| {
-                    random_unit_with_parents(
-                        node_id,
-                        result.last().expect("previous round present"),
-                    )
-                })
-                .collect();
-            result.push(units);
-        }
-        result
-    }
 
     #[test]
     fn test_full_unit_hash_is_correct() {
-        for full_unit in random_full_parent_units_up_to(3, NodeCount(4))
+        for full_unit in random_full_parent_units_up_to(3, NodeCount(4), 43)
             .into_iter()
             .flatten()
         {
@@ -298,7 +257,7 @@ pub mod tests {
 
     #[test]
     fn test_full_unit_codec() {
-        for full_unit in random_full_parent_units_up_to(3, NodeCount(4))
+        for full_unit in random_full_parent_units_up_to(3, NodeCount(4), 43)
             .into_iter()
             .flatten()
         {

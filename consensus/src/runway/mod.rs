@@ -827,13 +827,12 @@ pub(crate) struct NetworkIO<H: Hasher, D: Data, MK: MultiKeychain> {
 fn initial_unit_collection<'a, H: Hasher, D: Data, MK: MultiKeychain>(
     keychain: &'a MK,
     validator: &'a Validator<MK>,
-    threshold: NodeCount,
     unit_messages_for_network: &Sender<RunwayNotificationOut<H, D, MK::Signature>>,
     unit_collection_sender: oneshot::Sender<Round>,
     responses_from_runway: Receiver<CollectionResponse<H, D, MK>>,
     resolved_requests: Sender<Request<H>>,
 ) -> Result<impl Future<Output = ()> + 'a, ()> {
-    let (collection, salt) = Collection::new(keychain, validator, threshold);
+    let (collection, salt) = Collection::new(keychain, validator);
     let notification = RunwayNotificationOut::Request(Request::NewestUnit(salt));
 
     if let Err(e) = unit_messages_for_network.unbounded_send(notification) {
@@ -987,13 +986,7 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
         .fuse();
 
     let index = keychain.index();
-    let threshold = (keychain.node_count() * 2) / 3 + NodeCount(1);
-    let validator = Validator::new(
-        config.session_id(),
-        keychain.clone(),
-        config.max_round(),
-        threshold,
-    );
+    let validator = Validator::new(config.session_id(), keychain.clone(), config.max_round());
     let (responses_for_collection, responses_from_runway) = mpsc::unbounded();
     let (unit_collections_sender, unit_collection_result) = oneshot::channel();
     let (loaded_data_tx, loaded_data_rx) = oneshot::channel();
@@ -1019,7 +1012,6 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
     let starting_round_handle = match initial_unit_collection(
         keychain,
         &validator,
-        threshold,
         &network_io.unit_messages_for_network,
         unit_collections_sender,
         responses_from_runway,

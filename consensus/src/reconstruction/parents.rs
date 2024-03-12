@@ -291,17 +291,14 @@ mod test {
             parents::{Reconstruction, Request},
             ReconstructedUnit,
         },
-        units::{
-            tests::{random_full_parent_units_up_to, TestFullUnit},
-            UnitCoord,
-        },
+        units::{random_full_parent_units_up_to, UnitCoord},
         NodeCount, NodeIndex,
     };
 
     #[test]
     fn reconstructs_initial_units() {
         let mut reconstruction = Reconstruction::new();
-        for unit in &random_full_parent_units_up_to(0, NodeCount(4))[0] {
+        for unit in &random_full_parent_units_up_to(0, NodeCount(4), 43)[0] {
             let unit = unit.unit();
             let (mut reconstructed_units, requests) = reconstruction.add_unit(unit.clone()).into();
             assert!(requests.is_empty());
@@ -315,7 +312,7 @@ mod test {
     #[test]
     fn reconstructs_units_coming_in_order() {
         let mut reconstruction = Reconstruction::new();
-        let dag = random_full_parent_units_up_to(7, NodeCount(4));
+        let dag = random_full_parent_units_up_to(7, NodeCount(4), 43);
         for units in &dag {
             for unit in units {
                 let unit = unit.unit();
@@ -332,7 +329,7 @@ mod test {
                     }
                     round => {
                         assert_eq!(reconstructed_unit.parents().item_count(), 4);
-                        let parents: &Vec<TestFullUnit> = dag
+                        let parents = dag
                             .get((round - 1) as usize)
                             .expect("the parents are there");
                         for (parent, reconstructed_parent) in
@@ -349,7 +346,7 @@ mod test {
     #[test]
     fn requests_all_parents() {
         let mut reconstruction = Reconstruction::new();
-        let dag = random_full_parent_units_up_to(1, NodeCount(4));
+        let dag = random_full_parent_units_up_to(1, NodeCount(4), 43);
         let unit = dag
             .get(1)
             .expect("just created")
@@ -364,7 +361,7 @@ mod test {
     #[test]
     fn requests_single_parent() {
         let mut reconstruction = Reconstruction::new();
-        let dag = random_full_parent_units_up_to(1, NodeCount(4));
+        let dag = random_full_parent_units_up_to(1, NodeCount(4), 43);
         for unit in dag.get(0).expect("just created").iter().skip(1) {
             let unit = unit.unit();
             reconstruction.add_unit(unit.clone());
@@ -387,7 +384,7 @@ mod test {
     #[test]
     fn reconstructs_units_coming_in_reverse_order() {
         let mut reconstruction = Reconstruction::new();
-        let mut dag = random_full_parent_units_up_to(7, NodeCount(4));
+        let mut dag = random_full_parent_units_up_to(7, NodeCount(4), 43);
         dag.reverse();
         for unit in dag.get(0).expect("we have the top units") {
             let unit = unit.unit();
@@ -414,12 +411,12 @@ mod test {
     #[test]
     fn handles_bad_hash() {
         let mut reconstruction = Reconstruction::new();
-        let dag = random_full_parent_units_up_to(0, NodeCount(4));
+        let dag = random_full_parent_units_up_to(0, NodeCount(4), 43);
         for unit in dag.get(0).expect("just created") {
             let unit = unit.unit();
             reconstruction.add_unit(unit.clone());
         }
-        let other_dag = random_full_parent_units_up_to(1, NodeCount(4));
+        let other_dag = random_full_parent_units_up_to(1, NodeCount(4), 43);
         let unit = other_dag
             .get(1)
             .expect("just created")

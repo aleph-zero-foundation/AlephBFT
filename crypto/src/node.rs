@@ -82,6 +82,11 @@ impl NodeCount {
     pub fn into_iterator(self) -> impl Iterator<Item = NodeIndex> {
         (0..self.0).map(NodeIndex)
     }
+
+    /// If this is the total node count, what number of nodes is required for secure consensus.
+    pub fn consensus_threshold(&self) -> NodeCount {
+        (*self * 2) / 3 + NodeCount(1)
+    }
 }
 
 /// A container keeping items indexed by NodeIndex.
@@ -151,6 +156,10 @@ impl<T> NodeMap<T> {
 
     pub fn get(&self, node_id: NodeIndex) -> Option<&T> {
         self.0[node_id.0].as_ref()
+    }
+
+    pub fn get_mut(&mut self, node_id: NodeIndex) -> Option<&mut T> {
+        self.0[node_id.0].as_mut()
     }
 
     pub fn insert(&mut self, node_id: NodeIndex, value: T) {

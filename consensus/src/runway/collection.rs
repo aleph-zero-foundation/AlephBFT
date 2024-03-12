@@ -133,18 +133,13 @@ pub struct Collection<'a, MK: Keychain> {
     keychain: &'a MK,
     validator: &'a Validator<MK>,
     collected_starting_rounds: NodeMap<Round>,
-    threshold: NodeCount,
     salt: Salt,
 }
 
 impl<'a, MK: Keychain> Collection<'a, MK> {
     /// Create a new collection instance ready to collect responses.
     /// The returned salt should be used to initiate newest unit requests.
-    pub fn new(
-        keychain: &'a MK,
-        validator: &'a Validator<MK>,
-        threshold: NodeCount,
-    ) -> (Self, Salt) {
+    pub fn new(keychain: &'a MK, validator: &'a Validator<MK>) -> (Self, Salt) {
         let salt = generate_salt();
         let mut collected_starting_rounds = NodeMap::with_size(keychain.node_count());
         collected_starting_rounds.insert(keychain.index(), 0);
@@ -153,7 +148,6 @@ impl<'a, MK: Keychain> Collection<'a, MK> {
                 keychain,
                 validator,
                 collected_starting_rounds,
-                threshold,
                 salt,
             },
             salt,
@@ -197,6 +191,10 @@ impl<'a, MK: Keychain> Collection<'a, MK> {
         self.salt
     }
 
+    fn threshold(&self) -> NodeCount {
+        self.collected_starting_rounds.size().consensus_threshold()
+    }
+
     /// The current status of the collection.
     pub fn status(&self) -> Status {
         use Status::*;
@@ -205,7 +203,7 @@ impl<'a, MK: Keychain> Collection<'a, MK> {
         if responders == self.keychain.node_count() {
             return Finished(starting_round);
         }
-        if responders >= self.threshold {
+        if responders >= self.threshold() {
             return Ready(starting_round);
         }
         Pending
@@ -371,27 +369,25 @@ mod tests {
     #[test]
     fn pending_with_no_messages() {
         let n_members = NodeCount(7);
-        let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
         let session_id = 0;
         let max_round = 2;
         let keychain = Keychain::new(n_members, creator_id);
-        let validator = Validator::new(session_id, keychain, max_round, threshold);
-        let (collection, _) = Collection::new(&keychain, &validator, threshold);
+        let validator = Validator::new(session_id, keychain, max_round);
+        let (collection, _) = Collection::new(&keychain, &validator);
         assert_eq!(collection.status(), Pending);
     }
 
     #[test]
     fn pending_with_too_few_messages() {
         let n_members = NodeCount(7);
-        let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
         let session_id = 0;
         let max_round = 2;
         let keychains = keychain_set(n_members);
         let keychain = &keychains[0];
-        let validator = Validator::new(session_id, *keychain, max_round, threshold);
-        let (mut collection, salt) = Collection::new(keychain, &validator, threshold);
+        let validator = Validator::new(session_id, *keychain, max_round);
+        let (mut collection, salt) = Collection::new(keychain, &validator);
         let responses = create_responses(
             keychains.iter().skip(1).take(3).zip(repeat(None)),
             salt,
@@ -406,14 +402,13 @@ mod tests {
     #[test]
     fn pending_with_repeated_messages() {
         let n_members = NodeCount(7);
-        let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
         let session_id = 0;
         let max_round = 2;
         let keychains = keychain_set(n_members);
         let keychain = &keychains[0];
-        let validator = Validator::new(session_id, *keychain, max_round, threshold);
-        let (mut collection, salt) = Collection::new(keychain, &validator, threshold);
+        let validator = Validator::new(session_id, *keychain, max_round);
+        let (mut collection, salt) = Collection::new(keychain, &validator);
         let responses = create_responses(
             repeat(&keychains[1]).take(43).zip(repeat(None)),
             salt,
@@ -428,14 +423,13 @@ mod tests {
     #[test]
     fn ready_with_just_enough_messages() {
         let n_members = NodeCount(7);
-        let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
         let session_id = 0;
         let max_round = 2;
         let keychains = keychain_set(n_members);
         let keychain = &keychains[0];
-        let validator = Validator::new(session_id, *keychain, max_round, threshold);
-        let (mut collection, salt) = Collection::new(keychain, &validator, threshold);
+        let validator = Validator::new(session_id, *keychain, max_round);
+        let (mut collection, salt) = Collection::new(keychain, &validator);
         let responses = create_responses(
             keychains.iter().skip(1).take(4).zip(repeat(None)),
             salt,
@@ -454,15 +448,14 @@ mod tests {
     #[test]
     fn finished_and_higher_starting_round_with_last_message() {
         let n_members = NodeCount(7);
-        let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
         let session_id = 0;
         let max_round = 2;
         let keychains = keychain_set(n_members);
         let keychain = &keychains[0];
         let creator = Creator::new(creator_id, n_members);
-        let validator = Validator::new(session_id, *keychain, max_round, threshold);
-        let (mut collection, salt) = Collection::new(keychain, &validator, threshold);
+        let validator = Validator::new(session_id, *keychain, max_round);
+        let (mut collection, salt) = Collection::new(keychain, &validator);
         let (preunit, _) = creator.create_unit(0).expect("Creation should succeed.");
         let unit = preunit_to_unchecked_signed_unit(preunit, session_id, keychain);
         let responses = create_responses(
@@ -492,14 +485,13 @@ mod tests {
     #[test]
     fn detects_salt_mismatch() {
         let n_members = NodeCount(7);
-        let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
         let session_id = 0;
         let max_round = 2;
         let keychains = keychain_set(n_members);
         let keychain = &keychains[0];
-        let validator = Validator::new(session_id, *keychain, max_round, threshold);
-        let (mut collection, salt) = Collection::new(keychain, &validator, threshold);
+        let validator = Validator::new(session_id, *keychain, max_round);
+        let (mut collection, salt) = Collection::new(keychain, &validator);
         let other_salt = salt + 1;
         let responses = create_responses(
             keychains.iter().skip(1).zip(repeat(None)),
@@ -518,7 +510,6 @@ mod tests {
     #[test]
     fn detects_invalid_unit() {
         let n_members = NodeCount(7);
-        let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
         let session_id = 0;
         let wrong_session_id = 43;
@@ -526,8 +517,8 @@ mod tests {
         let keychains = keychain_set(n_members);
         let keychain = &keychains[0];
         let creator = Creator::new(creator_id, n_members);
-        let validator = Validator::new(session_id, *keychain, max_round, threshold);
-        let (mut collection, salt) = Collection::new(keychain, &validator, threshold);
+        let validator = Validator::new(session_id, *keychain, max_round);
+        let (mut collection, salt) = Collection::new(keychain, &validator);
         let (preunit, _) = creator.create_unit(0).expect("Creation should succeed.");
         let unit = preunit_to_unchecked_signed_unit(preunit, wrong_session_id, keychain);
         let responses = create_responses(
@@ -547,7 +538,6 @@ mod tests {
     #[test]
     fn detects_foreign_unit() {
         let n_members = NodeCount(7);
-        let threshold = NodeCount(5);
         let creator_id = NodeIndex(0);
         let other_creator_id = NodeIndex(1);
         let session_id = 0;
@@ -555,8 +545,8 @@ mod tests {
         let keychains = keychain_set(n_members);
         let keychain = &keychains[0];
         let creator = Creator::new(other_creator_id, n_members);
-        let validator = Validator::new(session_id, *keychain, max_round, threshold);
-        let (mut collection, salt) = Collection::new(keychain, &validator, threshold);
+        let validator = Validator::new(session_id, *keychain, max_round);
+        let (mut collection, salt) = Collection::new(keychain, &validator);
         let (preunit, _) = creator.create_unit(0).expect("Creation should succeed.");
         let unit = preunit_to_unchecked_signed_unit(preunit, session_id, &keychains[1]);
         let responses = create_responses(

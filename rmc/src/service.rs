@@ -298,9 +298,9 @@ mod tests {
             !matches!((node_ix.0, message), (0, TestMessage::SignedHash(_)))
         });
 
-        let threshold = (2 * node_count.0 + 1) / 3;
+        let threshold = node_count.consensus_threshold();
         let hash: Signable = "56".into();
-        for i in 0..threshold {
+        for i in 0..threshold.0 {
             environment.start_rmc(hash.clone(), NodeIndex(i));
         }
 

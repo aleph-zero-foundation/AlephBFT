@@ -16,7 +16,6 @@ use std::{collections::HashMap, sync::Arc};
 struct MaliciousMember<'a> {
     node_ix: NodeIndex,
     n_members: NodeCount,
-    threshold: NodeCount,
     session_id: SessionId,
     forking_round: Round,
     keychain: &'a Keychain,
@@ -33,11 +32,9 @@ impl<'a> MaliciousMember<'a> {
         session_id: SessionId,
         forking_round: Round,
     ) -> Self {
-        let threshold = (n_members * 2) / 3 + NodeCount(1);
         MaliciousMember {
             node_ix,
             n_members,
-            threshold,
             session_id,
             forking_round,
             keychain,
@@ -48,6 +45,10 @@ impl<'a> MaliciousMember<'a> {
 
     fn unit_to_data(su: SignedUnit<Hasher64, Data, Keychain>) -> NetworkData {
         NetworkDataT(Units(NewUnit(su.into())))
+    }
+
+    fn threshold(&self) -> NodeCount {
+        self.n_members.consensus_threshold()
     }
 
     fn pick_parents(&self, round: Round) -> Option<NodeMap<Hash64>> {
@@ -70,7 +71,7 @@ impl<'a> MaliciousMember<'a> {
                 count += 1;
             }
         }
-        if NodeCount(count) >= self.threshold {
+        if NodeCount(count) >= self.threshold() {
             Some(parents)
         } else {
             None

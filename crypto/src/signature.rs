@@ -449,10 +449,6 @@ mod tests {
         fn new(keychain: K) -> Self {
             DefaultMultiKeychain { keychain }
         }
-
-        fn quorum(&self) -> usize {
-            2 * self.node_count().0 / 3 + 1
-        }
     }
 
     impl<K: Keychain> Index for DefaultMultiKeychain<K> {
@@ -494,7 +490,7 @@ mod tests {
 
         fn is_complete(&self, msg: &[u8], partial: &Self::PartialMultisignature) -> bool {
             let signature_count = partial.iter().count();
-            if signature_count < self.quorum() {
+            if signature_count < self.node_count().consensus_threshold().0 {
                 return false;
             }
             partial

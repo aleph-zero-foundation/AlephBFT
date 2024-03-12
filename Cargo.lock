@@ -28,7 +28,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft"
-version = "0.34.1"
+version = "0.35.0"
 dependencies = [
  "aleph-bft-mock",
  "aleph-bft-rmc",
@@ -51,7 +51,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft-crypto"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "bit-vec",
@@ -102,7 +102,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft-mock"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aleph-bft-types",
  "async-trait",
@@ -116,7 +116,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft-rmc"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "aleph-bft-crypto",
  "aleph-bft-mock",
@@ -132,7 +132,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft-types"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "aleph-bft-crypto",
  "async-trait",

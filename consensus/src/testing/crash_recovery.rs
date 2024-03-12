@@ -165,7 +165,7 @@ fn verify_backup(buf: &mut &[u8]) -> HashSet<UnitCoord> {
 async fn crashed_nodes_recover(n_members: NodeCount, n_batches: usize) {
     init_log();
 
-    let n_kill = n_members / 3 + 1.into();
+    let n_kill = (n_members - n_members.consensus_threshold()) + 1.into();
     let spawner = Spawner::new();
     let (net_hub, networks) = Router::new(n_members, 1.0);
     spawner.spawn("network-hub", net_hub);

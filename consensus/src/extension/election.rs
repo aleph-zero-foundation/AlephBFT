@@ -66,7 +66,7 @@ impl<H: Hasher> CandidateElection<H> {
         relative_round: Round,
     ) -> Result<bool, CandidateOutcome<H>> {
         use CandidateOutcome::*;
-        let threshold = (parents.size() * 2) / 3 + NodeCount(1);
+        let threshold = parents.size().consensus_threshold();
         // Gather parents' votes.
         let (votes_for, votes_against) = self.parent_votes(parents)?;
         assert!(votes_for + votes_against >= threshold);
