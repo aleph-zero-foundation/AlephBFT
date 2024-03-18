@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 
 use crate::NodeIndex;
+use crate::Round;
 
 /// The source of data items that consensus should order.
 ///
@@ -21,5 +22,15 @@ pub trait DataProvider<Data>: Sync + Send + 'static {
 pub trait FinalizationHandler<Data>: Sync + Send + 'static {
     /// Data, provided by [DataProvider::get_data], has been finalized.
     /// The calls to this function follow the order of finalization.
-    fn data_finalized(&mut self, data: Data, creator: NodeIndex);
+    fn data_finalized(&mut self, data: Data);
+    /// A unit has been finalized. You can overwrite the default implementation for advanced finalization handling
+    /// in which case the method [`FinalizationHandler::data_finalized`] will not be called anymore if a unit is finalized.
+    /// Please note that this interface is less stable as it exposes intrinsics which migh be subject to change.
+    /// Do not implement this method and only implement [`FinalizationHandler::data_finalized`] unless you
+    /// absolutely know what you are doing.
+    fn unit_finalized(&mut self, _creator: NodeIndex, _round: Round, data: Option<Data>) {
+        if let Some(d) = data {
+            self.data_finalized(d);
+        }
+    }
 }

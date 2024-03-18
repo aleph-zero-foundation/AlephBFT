@@ -14,7 +14,7 @@ description = "Reliable MultiCast - a primitive for Reliable Broadcast protocol.
 
 [dependencies]
 aleph-bft-crypto = { path = "../crypto", version = "0.9" }
-aleph-bft-types = { path = "../types", version = "0.12" }
+aleph-bft-types = { path = "../types", version = "0.13" }
 async-trait = "0.1"
 codec = { package = "parity-scale-codec", version = "3.0", default-features = false, features = ["derive"] }
 futures = "0.3"

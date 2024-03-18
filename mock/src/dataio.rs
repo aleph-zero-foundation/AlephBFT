@@ -1,6 +1,4 @@
-use aleph_bft_types::{
-    DataProvider as DataProviderT, FinalizationHandler as FinalizationHandlerT, NodeIndex,
-};
+use aleph_bft_types::{DataProvider as DataProviderT, FinalizationHandler as FinalizationHandlerT};
 use async_trait::async_trait;
 use codec::{Decode, Encode};
 use futures::{channel::mpsc::unbounded, future::pending, AsyncWrite};
@@ -75,7 +73,7 @@ pub struct FinalizationHandler {
 }
 
 impl FinalizationHandlerT<Data> for FinalizationHandler {
-    fn data_finalized(&mut self, d: Data, _creator: NodeIndex) {
+    fn data_finalized(&mut self, d: Data) {
         if let Err(e) = self.tx.unbounded_send(d) {
             error!(target: "finalization-handler", "Error when sending data from FinalizationHandler {:?}.", e);
         }

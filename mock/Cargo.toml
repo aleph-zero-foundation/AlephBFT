@@ -1,6 +1,6 @@
 [package]
 name = "aleph-bft-mock"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2021"
 authors = ["Cardinal Cryptography"]
 documentation = "https://docs.rs/?"
@@ -11,7 +11,7 @@ readme = "./README.md"
 description = "Mock implementations of traits required by the aleph-bft package. Do NOT use outside of testing!"
 
 [dependencies]
-aleph-bft-types = { path = "../types", version = "0.12" }
+aleph-bft-types = { path = "../types", version = "0.13" }
 async-trait = "0.1"
 codec = { package = "parity-scale-codec", version = "3.0", default-features = false, features = ["derive"] }
 futures = "0.3"
