@@ -644,7 +644,7 @@ pub async fn run_session<
             runway::run(
                 config_copy,
                 runway_io,
-                &keychain,
+                keychain.clone(),
                 spawn_copy,
                 network_io,
                 runway_terminator,

@@ -1,10 +1,12 @@
 use crate::{
     alerts::{Alert, ForkProof, ForkingNotification, NetworkMessage},
-    consensus, handle_task_termination,
+    consensus,
+    creation::SignedUnitWithParents,
+    handle_task_termination,
     member::UnitMessage,
     units::{
-        ControlHash, PreUnit, SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore,
-        UnitStoreStatus, Validator,
+        ControlHash, SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore, UnitStoreStatus,
+        Validator,
     },
     Config, Data, DataProvider, FinalizationHandler, Hasher, Index, Keychain, MultiKeychain,
     NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Signature, Signed, SpawnHandle,
@@ -22,13 +24,11 @@ use log::{debug, error, info, trace, warn};
 use std::{collections::HashSet, convert::TryFrom, fmt, marker::PhantomData, time::Duration};
 
 mod collection;
-mod packer;
 
 use crate::backup::{BackupLoader, BackupSaver};
 #[cfg(feature = "initial_unit_collection")]
 use collection::{Collection, IO as CollectionIO};
 pub use collection::{NewestUnitResponse, Salt};
-use packer::Packer;
 
 /// Type for incoming notifications: Runway to Consensus.
 #[derive(Clone, Eq, PartialEq)]
@@ -43,9 +43,6 @@ pub(crate) enum NotificationIn<H: Hasher> {
 /// Type for outgoing notifications: Consensus to Runway.
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum NotificationOut<H: Hasher> {
-    /// Notification about a preunit created by this Consensus Node. Member is meant to
-    /// disseminate this preunit among other nodes.
-    CreatedPreUnit(PreUnit<H>, Vec<H::Hash>),
     /// Notification that some units are needed but missing. The role of the Member
     /// is to fetch these unit (somehow).
     MissingUnits(Vec<UnitCoord>),
@@ -141,8 +138,7 @@ where
     finalization_handler: FH,
     backup_units_for_saver: Sender<UncheckedSignedUnit<H, D, MK::Signature>>,
     backup_units_from_saver: Receiver<UncheckedSignedUnit<H, D, MK::Signature>>,
-    preunits_for_packer: Sender<PreUnit<H>>,
-    signed_units_from_packer: Receiver<SignedUnit<H, D, MK>>,
+    signed_units_from_creation: Receiver<SignedUnitWithParents<H, D, MK>>,
     exiting: bool,
 }
 
@@ -253,8 +249,7 @@ struct RunwayConfig<H: Hasher, D: Data, FH: FinalizationHandler<D>, MK: MultiKey
     responses_for_collection: Sender<CollectionResponse<H, D, MK>>,
     ordered_batch_rx: Receiver<Vec<H::Hash>>,
     resolved_requests: Sender<Request<H>>,
-    preunits_for_packer: Sender<PreUnit<H>>,
-    signed_units_from_packer: Receiver<SignedUnit<H, D, MK>>,
+    signed_units_from_creation: Receiver<SignedUnitWithParents<H, D, MK>>,
 }
 
 impl<H, D, FH, MK> Runway<H, D, FH, MK>
@@ -280,8 +275,7 @@ where
             responses_for_collection,
             ordered_batch_rx,
             resolved_requests,
-            preunits_for_packer,
-            signed_units_from_packer,
+            signed_units_from_creation,
         } = config;
         let store = UnitStore::new(n_members, max_round);
 
@@ -303,8 +297,7 @@ where
             backup_units_for_saver,
             backup_units_from_saver,
             responses_for_collection,
-            preunits_for_packer,
-            signed_units_from_packer,
+            signed_units_from_creation,
             exiting: false,
         }
     }
@@ -558,7 +551,7 @@ where
         }
     }
 
-    fn on_packed(&mut self, signed_unit: SignedUnit<H, D, MK>) {
+    fn on_created(&mut self, signed_unit: SignedUnit<H, D, MK>) {
         debug!(target: "AlephBFT-runway", "{:?} On create notification.", self.index());
         self.store.add_unit(signed_unit, false);
     }
@@ -583,12 +576,6 @@ where
 
     fn on_consensus_notification(&mut self, notification: NotificationOut<H>) {
         match notification {
-            NotificationOut::CreatedPreUnit(pu, _) => {
-                if self.preunits_for_packer.unbounded_send(pu).is_err() {
-                    warn!(target: "AlephBFT-runway", "{:?} preunits_for_packer channel should be open", self.index());
-                    self.exiting = true;
-                }
-            }
             NotificationOut::MissingUnits(coords) => {
                 self.on_missing_coords(coords);
             }
@@ -746,10 +733,10 @@ where
                     }
                 },
 
-                signed_unit = self.signed_units_from_packer.next() => match signed_unit {
-                    Some(signed_unit) => self.on_packed(signed_unit),
+                signed_unit = self.signed_units_from_creation.next() => match signed_unit {
+                    Some((signed_unit, _)) => self.on_created(signed_unit),
                     None => {
-                        error!(target: "AlephBFT-runway", "{:?} Packer stream closed.", index);
+                        error!(target: "AlephBFT-runway", "{:?} Creation stream closed.", index);
                         break;
                     }
                 },
@@ -900,7 +887,7 @@ impl<
 pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
     config: Config,
     runway_io: RunwayIO<H, D, MK, US, UL, DP, FH>,
-    keychain: &MK,
+    keychain: MK,
     spawn_handle: SH,
     network_io: NetworkIO<H, D, MK>,
     mut terminator: Terminator,
@@ -914,23 +901,38 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
     MK: MultiKeychain,
     SH: SpawnHandle,
 {
+    let RunwayIO {
+        data_provider,
+        finalization_handler,
+        backup_write,
+        backup_read,
+        _phantom: _,
+    } = runway_io;
+
     let (tx_consensus, consensus_stream) = mpsc::unbounded();
     let (consensus_sink, rx_consensus) = mpsc::unbounded();
     let (ordered_batch_tx, ordered_batch_rx) = mpsc::unbounded();
+    let (signed_units_for_runway, signed_units_from_creation) = mpsc::unbounded();
 
     let consensus_terminator = terminator.add_offspring_connection("AlephBFT-consensus");
     let consensus_config = config.clone();
     let consensus_spawner = spawn_handle.clone();
     let (starting_round_sender, starting_round) = oneshot::channel();
 
+    let consensus_keychain = keychain.clone();
     let consensus_handle = spawn_handle.spawn_essential("runway/consensus", async move {
         consensus::run(
             consensus_config,
-            consensus_stream,
-            consensus_sink,
-            ordered_batch_tx,
+            consensus::IO {
+                incoming_notifications: consensus_stream,
+                outgoing_notifications: consensus_sink,
+                units_for_runway: signed_units_for_runway,
+                data_provider,
+                ordered_batch_tx,
+                starting_round,
+            },
+            consensus_keychain,
             consensus_spawner,
-            starting_round,
             consensus_terminator,
         )
         .await
@@ -945,7 +947,7 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
         let mut backup_saver = BackupSaver::new(
             backup_units_from_runway,
             backup_units_for_runway,
-            runway_io.backup_write,
+            backup_write,
         );
         async move {
             backup_saver.run(backup_saver_terminator).await;
@@ -989,7 +991,7 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
 
     let backup_loading_handle = spawn_handle
         .spawn_essential("runway/loading", {
-            let mut backup_loader = BackupLoader::new(runway_io.backup_read, index, session_id);
+            let mut backup_loader = BackupLoader::new(backup_read, index, session_id);
             async move {
                 backup_loader
                     .run(
@@ -1005,7 +1007,7 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
 
     #[cfg(feature = "initial_unit_collection")]
     let starting_round_handle = match initial_unit_collection(
-        keychain,
+        &keychain,
         &validator,
         &network_io.unit_messages_for_network,
         unit_collections_sender,
@@ -1021,14 +1023,6 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
         Err(_) => return,
     };
     pin_mut!(starting_round_handle);
-
-    let RunwayIO {
-        data_provider,
-        finalization_handler,
-        ..
-    } = runway_io;
-    let (preunits_for_packer, preunits_from_runway) = mpsc::unbounded();
-    let (signed_units_for_runway, signed_units_from_packer) = mpsc::unbounded();
 
     let runway_handle = spawn_handle
         .spawn_essential("runway", {
@@ -1046,8 +1040,7 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
                 responses_for_collection,
                 resolved_requests: network_io.resolved_requests,
                 max_round: config.max_round(),
-                preunits_for_packer,
-                signed_units_from_packer,
+                signed_units_from_creation,
             };
             let runway_terminator = terminator.add_offspring_connection("AlephBFT-runway");
             let validator = validator.clone();
@@ -1058,29 +1051,6 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
         })
         .fuse();
     pin_mut!(runway_handle);
-
-    let packer_handle = spawn_handle
-        .spawn_essential("runway/packer", {
-            let packer_terminator = terminator.add_offspring_connection("AlephBFT-packer");
-            let mut packer = Packer::new(
-                data_provider,
-                preunits_from_runway,
-                signed_units_for_runway,
-                keychain.clone(),
-                config.session_id(),
-            );
-
-            async move {
-                match packer.run(packer_terminator).await {
-                    Ok(()) => (),
-                    Err(()) => {
-                        debug!(target: "AlephBFT-runway", "{:?} Packer task terminated abnormally", index)
-                    }
-                }
-            }
-        })
-        .fuse();
-    pin_mut!(packer_handle);
 
     loop {
         futures::select! {
@@ -1094,10 +1064,6 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
             },
             _ = consensus_handle => {
                 debug!(target: "AlephBFT-runway", "{:?} Consensus task terminated early.", index);
-                break;
-            },
-            _ = packer_handle => {
-                debug!(target: "AlephBFT-runway", "{:?} Packer task terminated early.", index);
                 break;
             },
             _ = backup_saver_handle => {
@@ -1122,7 +1088,6 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
     handle_task_termination(consensus_handle, "AlephBFT-runway", "Consensus", index).await;
     handle_task_termination(alerter_handle, "AlephBFT-runway", "Alerter", index).await;
     handle_task_termination(runway_handle, "AlephBFT-runway", "Runway", index).await;
-    handle_task_termination(packer_handle, "AlephBFT-runway", "Packer", index).await;
     handle_task_termination(backup_saver_handle, "AlephBFT-runway", "BackupSaver", index).await;
 
     debug!(target: "AlephBFT-runway", "{:?} Runway ended.", index);

@@ -7,24 +7,39 @@ use log::{debug, error};
 
 use crate::{
     config::Config,
-    creation,
+    creation::{self, SignedUnitWithParents},
     extension::Service as Extender,
     handle_task_termination,
     reconstruction::Service as ReconstructionService,
     runway::{NotificationIn, NotificationOut},
-    Hasher, Receiver, Round, Sender, SpawnHandle, Terminator,
+    Data, DataProvider, Hasher, MultiKeychain, Receiver, Round, Sender, SpawnHandle, Terminator,
 };
 
-pub(crate) async fn run<H: Hasher + 'static>(
+pub struct IO<H: Hasher, D: Data, MK: MultiKeychain, DP: DataProvider<D>> {
+    pub incoming_notifications: Receiver<NotificationIn<H>>,
+    pub outgoing_notifications: Sender<NotificationOut<H>>,
+    pub units_for_runway: Sender<SignedUnitWithParents<H, D, MK>>,
+    pub data_provider: DP,
+    pub ordered_batch_tx: Sender<Vec<H::Hash>>,
+    pub starting_round: oneshot::Receiver<Option<Round>>,
+}
+
+pub async fn run<H: Hasher, D: Data, MK: MultiKeychain, DP: DataProvider<D>>(
     conf: Config,
-    incoming_notifications: Receiver<NotificationIn<H>>,
-    outgoing_notifications: Sender<NotificationOut<H>>,
-    ordered_batch_tx: Sender<Vec<H::Hash>>,
+    io: IO<H, D, MK, DP>,
+    keychain: MK,
     spawn_handle: impl SpawnHandle,
-    starting_round: oneshot::Receiver<Option<Round>>,
     mut terminator: Terminator,
 ) {
     debug!(target: "AlephBFT", "{:?} Starting all services...", conf.node_ix());
+    let IO {
+        incoming_notifications,
+        outgoing_notifications,
+        units_for_runway,
+        data_provider,
+        ordered_batch_tx,
+        starting_round,
+    } = io;
 
     let index = conf.node_ix();
 
@@ -41,13 +56,14 @@ pub(crate) async fn run<H: Hasher + 'static>(
 
     let creator_terminator = terminator.add_offspring_connection("creator");
     let io = creation::IO {
-        outgoing_units: outgoing_notifications.clone(),
+        outgoing_units: units_for_runway,
         incoming_parents: parents_from_dag,
+        data_provider,
     };
     let creator_handle = spawn_handle
         .spawn_essential(
             "consensus/creation",
-            creation::run(conf.into(), io, starting_round, creator_terminator),
+            creation::run(conf, io, keychain, starting_round, creator_terminator),
         )
         .shared();
     let creator_handle_for_panic = creator_handle.clone();

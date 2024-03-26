@@ -1,12 +1,12 @@
 use crate::{
     consensus,
+    creation::SignedUnitWithParents as GenericSignedUnitWithParents,
     runway::{NotificationIn, NotificationOut},
     testing::{complete_oneshot, gen_config, gen_delay_config, init_log},
     units::{ControlHash, PreUnit, Unit, UnitCoord},
     Hasher, NodeCount, NodeIndex, NodeMap, SpawnHandle, Terminator,
 };
-use aleph_bft_mock::{Hasher64, Spawner};
-use codec::Encode;
+use aleph_bft_mock::{Data, DataProvider, Hasher64, Keychain, Spawner};
 use futures::{
     channel::{
         mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
@@ -23,6 +23,8 @@ use std::{
     task::{Context, Poll},
 };
 
+type SignedUnitWithParents = GenericSignedUnitWithParents<Hasher64, Data, Keychain>;
+
 // This struct allows to create a Hub to interconnect several instances of the Consensus engine, without
 // requiring the Member wrapper. The Hub notifies all connected instances about newly created units and
 // is able to answer unit requests as well. WrongControlHashes are not supported, which means that this
@@ -30,18 +32,20 @@ use std::{
 // Usage: 1) create an instance using new(n_members), 2) connect all n_members instances, 0, 1, 2, ..., n_members - 1.
 // 3) run the HonestHub instance as a Future.
 pub(crate) struct HonestHub {
-    n_members: usize,
+    n_members: NodeCount,
     ntfct_out_rxs: HashMap<NodeIndex, UnboundedReceiver<NotificationOut<Hasher64>>>,
     ntfct_in_txs: HashMap<NodeIndex, UnboundedSender<NotificationIn<Hasher64>>>,
+    units_from_consensus: HashMap<NodeIndex, UnboundedReceiver<SignedUnitWithParents>>,
     units_by_coord: HashMap<UnitCoord, Unit<Hasher64>>,
 }
 
 impl HonestHub {
-    pub(crate) fn new(n_members: usize) -> Self {
+    pub(crate) fn new(n_members: NodeCount) -> Self {
         HonestHub {
             n_members,
             ntfct_out_rxs: HashMap::new(),
             ntfct_in_txs: HashMap::new(),
+            units_from_consensus: HashMap::new(),
             units_by_coord: HashMap::new(),
         }
     }
@@ -52,17 +56,21 @@ impl HonestHub {
     ) -> (
         UnboundedSender<NotificationOut<Hasher64>>,
         UnboundedReceiver<NotificationIn<Hasher64>>,
+        UnboundedSender<SignedUnitWithParents>,
     ) {
         let (tx_in, rx_in) = unbounded();
         let (tx_out, rx_out) = unbounded();
+        let (units_for_hub, units_from_consensus) = unbounded();
         self.ntfct_in_txs.insert(node_ix, tx_in);
         self.ntfct_out_rxs.insert(node_ix, rx_out);
-        (tx_out, rx_in)
+        self.units_from_consensus
+            .insert(node_ix, units_from_consensus);
+        (tx_out, rx_in, units_for_hub)
     }
 
     fn send_to_all(&mut self, ntfct: NotificationIn<Hasher64>) {
         assert!(
-            self.ntfct_in_txs.len() == self.n_members,
+            self.ntfct_in_txs.len() == self.n_members.0,
             "Must connect to all nodes before running the hub."
         );
         for (_ix, tx) in self.ntfct_in_txs.iter() {
@@ -80,13 +88,6 @@ impl HonestHub {
 
     fn on_notification(&mut self, node_ix: NodeIndex, ntfct: NotificationOut<Hasher64>) {
         match ntfct {
-            NotificationOut::CreatedPreUnit(pu, _parent_hashes) => {
-                let hash = pu.using_encoded(Hasher64::hash);
-                let u = Unit::new(pu, hash);
-                let coord = UnitCoord::new(u.round(), u.creator());
-                self.units_by_coord.insert(coord, u.clone());
-                self.send_to_all(NotificationIn::NewUnits(vec![u]));
-            }
             NotificationOut::MissingUnits(coords) => {
                 let mut response_units = Vec::new();
                 for coord in coords {
@@ -111,13 +112,22 @@ impl HonestHub {
             }
         }
     }
+
+    fn on_unit(&mut self, (unit, _): SignedUnitWithParents) {
+        let u = unit.into_unchecked().as_signable().unit();
+        let coord = UnitCoord::new(u.round(), u.creator());
+        self.units_by_coord.insert(coord, u.clone());
+        self.send_to_all(NotificationIn::NewUnits(vec![u]));
+    }
 }
 
 impl Future for HonestHub {
     type Output = ();
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut ready_ixs: Vec<NodeIndex> = Vec::new();
+        let mut ready_unit_ixs: Vec<NodeIndex> = Vec::new();
         let mut buffer = Vec::new();
+        let mut unit_buffer = Vec::new();
         for (ix, rx) in self.ntfct_out_rxs.iter_mut() {
             loop {
                 match rx.poll_next_unpin(cx) {
@@ -133,6 +143,25 @@ impl Future for HonestHub {
                     }
                 }
             }
+        }
+        for (ix, units_from_consensus) in self.units_from_consensus.iter_mut() {
+            loop {
+                match units_from_consensus.poll_next_unpin(cx) {
+                    Poll::Ready(Some(unit)) => {
+                        unit_buffer.push(unit);
+                    }
+                    Poll::Ready(None) => {
+                        ready_unit_ixs.push(*ix);
+                        break;
+                    }
+                    Poll::Pending => {
+                        break;
+                    }
+                }
+            }
+        }
+        for unit in unit_buffer {
+            self.on_unit(unit);
         }
         for (ix, ntfct) in buffer {
             self.on_notification(ix, ntfct);
@@ -150,7 +179,7 @@ impl Future for HonestHub {
 #[tokio::test]
 async fn agree_on_first_batch() {
     init_log();
-    let n_members: usize = 16;
+    let n_members = NodeCount(16);
     let mut hub = HonestHub::new(n_members);
 
     let mut exits = vec![];
@@ -159,23 +188,30 @@ async fn agree_on_first_batch() {
 
     let mut handles = vec![];
 
-    for node_ix in 0..n_members {
-        let (tx, rx) = hub.connect(NodeIndex(node_ix));
-        let conf = gen_config(NodeIndex(node_ix), n_members.into(), gen_delay_config());
+    for node_ix in n_members.into_iterator() {
+        let (tx, rx, units_for_hub) = hub.connect(node_ix);
+        let conf = gen_config(node_ix, n_members, gen_delay_config());
         let (exit_tx, exit_rx) = oneshot::channel();
         exits.push(exit_tx);
         let (batch_tx, batch_rx) = unbounded();
         batch_rxs.push(batch_rx);
         let starting_round = complete_oneshot(Some(0));
+        let keychain = Keychain::new(n_members, node_ix);
+        let data_provider = DataProvider::new();
         handles.push(spawner.spawn_essential(
             "consensus",
             consensus::run(
                 conf,
-                rx,
-                tx,
-                batch_tx,
+                consensus::IO {
+                    incoming_notifications: rx,
+                    outgoing_notifications: tx,
+                    units_for_runway: units_for_hub,
+                    data_provider,
+                    ordered_batch_tx: batch_tx,
+                    starting_round,
+                },
+                keychain,
                 spawner,
-                starting_round,
                 Terminator::create_root(exit_rx, "AlephBFT-consensus"),
             ),
         ));
@@ -190,7 +226,7 @@ async fn agree_on_first_batch() {
         batches.push(batch);
     }
 
-    for node_ix in 1..n_members {
+    for node_ix in 1..n_members.0 {
         assert_eq!(batches[0], batches[node_ix]);
     }
 }
@@ -198,41 +234,50 @@ async fn agree_on_first_batch() {
 #[tokio::test]
 async fn catches_wrong_control_hash() {
     init_log();
-    let n_nodes = 4;
+    let n_nodes = NodeCount(4);
     let spawner = Spawner::new();
-    let node_ix = 0;
+    let node_ix = NodeIndex(0);
     let (mut tx_in, rx_in) = unbounded();
     let (tx_out, mut rx_out) = unbounded();
+    let (units_for_us, _units_from_consensus) = unbounded();
 
-    let conf = gen_config(NodeIndex(node_ix), n_nodes.into(), gen_delay_config());
+    let conf = gen_config(node_ix, n_nodes, gen_delay_config());
     let (exit_tx, exit_rx) = oneshot::channel();
     let (batch_tx, _batch_rx) = unbounded();
     let starting_round = complete_oneshot(Some(0));
+    let keychain = Keychain::new(n_nodes, node_ix);
+    let data_provider = DataProvider::new();
 
     let consensus_handle = spawner.spawn_essential(
         "consensus",
         consensus::run(
             conf,
-            rx_in,
-            tx_out,
-            batch_tx,
+            consensus::IO {
+                incoming_notifications: rx_in,
+                outgoing_notifications: tx_out,
+                units_for_runway: units_for_us,
+                data_provider,
+                ordered_batch_tx: batch_tx,
+                starting_round,
+            },
+            keychain,
             spawner,
-            starting_round,
             Terminator::create_root(exit_rx, "AlephBFT-consensus"),
         ),
     );
-    let empty_control_hash = ControlHash::new(&(vec![None; n_nodes]).into());
-    let other_initial_units: Vec<_> = (1..n_nodes)
-        .map(NodeIndex)
+    let empty_control_hash = ControlHash::new(&(vec![None; n_nodes.0]).into());
+    let other_initial_units: Vec<_> = n_nodes
+        .into_iterator()
+        .skip(1)
         .map(|creator| PreUnit::<Hasher64>::new(creator, 0, empty_control_hash.clone()))
         .map(|pu| Unit::new(pu, rand::random()))
         .collect();
     let _ = tx_in
         .send(NotificationIn::NewUnits(other_initial_units.clone()))
         .await;
-    let mut parent_hashes = NodeMap::with_size(NodeCount(n_nodes));
-    for (id, unit) in other_initial_units.into_iter().enumerate() {
-        parent_hashes.insert(NodeIndex(id + 1), unit.hash());
+    let mut parent_hashes = NodeMap::with_size(n_nodes);
+    for unit in other_initial_units.into_iter() {
+        parent_hashes.insert(unit.creator(), unit.hash());
     }
     let bad_pu = PreUnit::<Hasher64>::new(1.into(), 1, ControlHash::new(&parent_hashes));
     let bad_control_hash: <Hasher64 as Hasher>::Hash = [0, 1, 0, 1, 0, 1, 0, 1];

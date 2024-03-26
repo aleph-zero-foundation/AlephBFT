@@ -1,35 +1,28 @@
 use crate::{
-    creation::{run, IO},
-    runway::NotificationOut as GenericNotificationOut,
+    creation::{run, SignedUnitWithParents as GenericSignedUnitWithParents, IO},
     testing::{gen_config, gen_delay_config},
-    units::{FullUnit as GenericFullUnit, PreUnit as GenericPreUnit, Unit as GenericUnit},
+    units::Unit as GenericUnit,
     NodeCount, Receiver, Round, Sender, Terminator,
 };
-use aleph_bft_mock::{Data, Hasher64};
+use aleph_bft_mock::{Data, DataProvider, Hasher64, Keychain};
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,
 };
 
-type PreUnit = GenericPreUnit<Hasher64>;
 type Unit = GenericUnit<Hasher64>;
-type FullUnit = GenericFullUnit<Hasher64, Data>;
-type NotificationOut = GenericNotificationOut<Hasher64>;
-
-fn preunit_to_unit(preunit: PreUnit) -> Unit {
-    FullUnit::new(preunit, Some(0), 0).unit()
-}
+type SignedUnitWithParents = GenericSignedUnitWithParents<Hasher64, Data, Keychain>;
 
 struct TestController {
     max_round_per_creator: Vec<Round>,
     parents_for_creators: Sender<Unit>,
-    units_from_creators: Receiver<NotificationOut>,
+    units_from_creators: Receiver<SignedUnitWithParents>,
 }
 
 impl TestController {
     fn new(
         parents_for_creators: Sender<Unit>,
-        units_from_creators: Receiver<NotificationOut>,
+        units_from_creators: Receiver<SignedUnitWithParents>,
         n_members: NodeCount,
     ) -> Self {
         TestController {
@@ -42,22 +35,18 @@ impl TestController {
     async fn control_until(&mut self, max_round: Round) {
         let mut round_reached = 0;
         while round_reached < max_round {
-            let notification = self
+            let (unit, _) = self
                 .units_from_creators
                 .next()
                 .await
                 .expect("Creator output channel isn't closed.");
-            let preunit = match notification {
-                NotificationOut::CreatedPreUnit(preunit, _) => preunit,
-                _ => panic!("Unexpected notification from creator."),
-            };
-            let unit = preunit_to_unit(preunit);
+            let unit = unit.into_unchecked().as_signable().unit();
             if unit.round() > round_reached {
                 round_reached = unit.round();
             }
             self.max_round_per_creator[unit.creator().0] += 1;
             self.parents_for_creators
-                .unbounded_send(unit.clone())
+                .unbounded_send(unit)
                 .expect("Creator input channel isn't closed.");
         }
     }
@@ -72,34 +61,37 @@ struct TestSetup {
 }
 
 fn setup_test(n_members: NodeCount) -> TestSetup {
-    let (notifications_for_controller, notifications_from_creators) = mpsc::unbounded();
+    let (units_for_controller, units_from_creators) = mpsc::unbounded();
     let (units_for_creators, units_from_controller) = mpsc::unbounded();
 
-    let test_controller =
-        TestController::new(units_for_creators, notifications_from_creators, n_members);
+    let test_controller = TestController::new(units_for_creators, units_from_creators, n_members);
 
     let mut handles = Vec::new();
     let mut killers = Vec::new();
     let mut units_for_creators = Vec::new();
 
-    for node_ix in 0..n_members.0 {
+    for node_ix in n_members.into_iterator() {
         let (parents_for_creator, parents_from_controller) = mpsc::unbounded();
 
         let io = IO {
             incoming_parents: parents_from_controller,
-            outgoing_units: notifications_for_controller.clone(),
+            outgoing_units: units_for_controller.clone(),
+            data_provider: DataProvider::new(),
         };
-        let config = gen_config(node_ix.into(), n_members, gen_delay_config());
+        let config = gen_config(node_ix, n_members, gen_delay_config());
         let (starting_round_for_consensus, starting_round) = oneshot::channel();
 
         units_for_creators.push(parents_for_creator);
+
+        let keychain = Keychain::new(n_members, node_ix);
 
         let (killer, exit) = oneshot::channel::<()>();
 
         let handle = tokio::spawn(async move {
             run(
-                config.into(),
+                config,
                 io,
+                keychain,
                 starting_round,
                 Terminator::create_root(exit, "AlephBFT-creator"),
             )

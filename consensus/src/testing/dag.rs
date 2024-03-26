@@ -1,11 +1,12 @@
 use crate::{
     consensus,
-    runway::{NotificationIn, NotificationOut},
+    creation::SignedUnitWithParents as GenericSignedUnitWithParents,
+    runway::{NotificationIn as GenericNotificationIn, NotificationOut as GenericNotificationOut},
     testing::{complete_oneshot, gen_config, gen_delay_config},
     units::{ControlHash, PreUnit, Unit},
     NodeCount, NodeIndex, NodeMap, NodeSubset, Receiver, Round, Sender, SpawnHandle, Terminator,
 };
-use aleph_bft_mock::{Hash64, Hasher64, Spawner};
+use aleph_bft_mock::{Data, DataProvider, Hash64, Hasher64, Keychain, Spawner};
 use futures::{
     channel::{mpsc, oneshot},
     stream::StreamExt,
@@ -15,6 +16,10 @@ use futures_timer::Delay;
 use log::{debug, error, trace};
 use rand::{distributions::Open01, prelude::*};
 use std::{cmp, collections::HashMap, time::Duration};
+
+type NotificationIn = GenericNotificationIn<Hasher64>;
+type NotificationOut = GenericNotificationOut<Hasher64>;
+type SignedUnitWithParents = GenericSignedUnitWithParents<Hasher64, Data, Keychain>;
 
 #[derive(Clone)]
 struct UnitWithParents {
@@ -56,8 +61,9 @@ impl UnitWithParents {
 }
 
 struct ConsensusDagFeeder {
-    tx_in: Sender<NotificationIn<Hasher64>>,
-    rx_out: Receiver<NotificationOut<Hasher64>>,
+    tx_in: Sender<NotificationIn>,
+    rx_out: Receiver<NotificationOut>,
+    units_from_creator: Receiver<SignedUnitWithParents>,
     units: Vec<UnitWithParents>,
     units_map: HashMap<Hash64, UnitWithParents>,
 }
@@ -67,22 +73,25 @@ impl ConsensusDagFeeder {
         units: Vec<UnitWithParents>,
     ) -> (
         Self,
-        Receiver<NotificationIn<Hasher64>>,
-        Sender<NotificationOut<Hasher64>>,
+        Receiver<NotificationIn>,
+        Sender<NotificationOut>,
+        Sender<SignedUnitWithParents>,
     ) {
         let units_map = units.iter().map(|u| (u.hash(), u.clone())).collect();
         let (tx_in, rx_in) = mpsc::unbounded();
         let (tx_out, rx_out) = mpsc::unbounded();
+        let (units_for_feeder, units_from_creator) = mpsc::unbounded();
         let cdf = ConsensusDagFeeder {
             tx_in,
             rx_out,
+            units_from_creator,
             units,
             units_map,
         };
-        (cdf, rx_in, tx_out)
+        (cdf, rx_in, tx_out, units_for_feeder)
     }
 
-    fn on_consensus_notification(&self, notification: NotificationOut<Hasher64>) {
+    fn on_consensus_notification(&self, notification: NotificationOut) {
         match notification {
             NotificationOut::WrongControlHash(h) => {
                 // We need to answer these requests as otherwise reconstruction cannot make progress
@@ -107,7 +116,14 @@ impl ConsensusDagFeeder {
         }
 
         loop {
-            let notification = self.rx_out.next().await;
+            let notification = loop {
+                futures::select! {
+                notification = self.rx_out.next() => {
+                    break notification;
+                },
+                _ = self.units_from_creator.next() => continue,
+                }
+            };
             match notification {
                 Some(notification) => self.on_consensus_notification(notification),
                 None => {
@@ -124,8 +140,10 @@ async fn run_consensus_on_dag(
     n_members: NodeCount,
     deadline_ms: u64,
 ) -> Vec<Vec<Hash64>> {
-    let (feeder, rx_in, tx_out) = ConsensusDagFeeder::new(units);
-    let conf = gen_config(NodeIndex(0), n_members, gen_delay_config());
+    let node_id = NodeIndex(0);
+    let (feeder, rx_in, tx_out, units_for_feeder) = ConsensusDagFeeder::new(units);
+    let conf = gen_config(node_id, n_members, gen_delay_config());
+    let keychain = Keychain::new(n_members, node_id);
     let (_exit_tx, exit_rx) = oneshot::channel();
     let (batch_tx, mut batch_rx) = mpsc::unbounded();
     let spawner = Spawner::new();
@@ -134,11 +152,16 @@ async fn run_consensus_on_dag(
         "consensus",
         consensus::run(
             conf,
-            rx_in,
-            tx_out,
-            batch_tx,
+            consensus::IO {
+                incoming_notifications: rx_in,
+                outgoing_notifications: tx_out,
+                units_for_runway: units_for_feeder,
+                data_provider: DataProvider::new(),
+                ordered_batch_tx: batch_tx,
+                starting_round,
+            },
+            keychain,
             spawner,
-            starting_round,
             Terminator::create_root(exit_rx, "AlephBFT-consensus"),
         ),
     );

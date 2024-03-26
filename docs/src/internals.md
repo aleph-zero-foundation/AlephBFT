@@ -2,20 +2,18 @@
 
 To explain the inner workings of AlephBFT it is instructive to follow the path of a unit: from the very start when it is created to the moment when its round is decided and it's data is placed in one of the output batches. Here we give a brief overview and subsequently go more into details of specific components in dedicated subsections.
 
-1. The unit is created by one of the node's `Creator` component -- implemented in `src/creation/`. Creator sends a notification to an outer component.
-2. The newly created unit is filled with data, session information and a signature. This is done in `src/runway.rs` which then sends it to `src/member.rs` Subsequently a recurring task of broadcasting this unit is put in the task queue. The unit will be broadcast to all other nodes a few times (with some delays in between).
-3. The unit is received by another node -- happens in `src/member.rs` and immediately send to `src/runway.rs` where it passes some validation (signature checks etc.). If all these checks pass and the unit is not detected to be a fork, then it is placed in the `UnitStore` -- the `store` field of the `Runway` struct.
+1. The unit is created by one of the node's `Creator` component -- implemented in `creation/`. Creator sends the produced unit to `runway/`, which then sends it to `member.rs`.
+2. A recurring task of broadcasting this unit is put in the task queue. The unit will be broadcast to all other nodes a few times (with some delays in between).
+3. The unit is received by another node -- happens in `member.rs` and immediately send to `runway/` where it passes some validation (signature checks etc.). If all these checks pass and the unit is not detected to be a fork, then it is placed in the `UnitStore` -- the `store` field of the `Runway` struct.
 4. The idea is that this store keeps only **legit units** in the sense defined in [the section on alerts](how_alephbft_does_it.md#25-alerts----dealing-with-fork-spam). Thus no fork is ever be put there unless coming from an alert.
-5. At a suitable moment the units from the store are further moved to a component responsible for reconstructing the explicit parents for these units -- implemented in `src/reconstruction/parents.rs`.
-6. Each unit whose parents are successfully decoded, is added to the "Dag". Each unit in the Dag is legit + has all its parents in the Dag. This is ensured by the implementation in `src/reconstruction/dag.rs`.
-7. Dag units are passed to a component called the `Extender` -- see the files in `src/extension/`. The role of the extender is to efficiently run the `OrderData` algorithm, described in the [section on AlephBFT](how_alephbft_does_it.md).
+5. At a suitable moment the units from the store are further moved to a component responsible for reconstructing the explicit parents for these units -- implemented in `reconstruction/parents.rs`.
+6. Each unit whose parents are successfully decoded, is added to the "Dag". Each unit in the Dag is legit + has all its parents in the Dag. This is ensured by the implementation in `reconstruction/dag.rs`.
+7. Dag units are passed to a component called the `Extender` -- see the files in `extension/`. The role of the extender is to efficiently run the `OrderData` algorithm, described in the [section on AlephBFT](how_alephbft_does_it.md).
 8. Once a unit's data is placed in one of batches by the `Extender` then its path is over and can be safely discarded.
 
 ### 5.1 Creator
 
 The creator produces units according to the AlephBFT protocol rules. It will wait until the prespecified delay has passed and attempt to create a unit using a maximal number of parents. If it is not possible yet, it will wait till the first moment enough parents are available. After creating the last unit, the creator stops producing new ones, although this is never expected to happen during correct execution.
-
-Since the creator does not have access to the `DataIO` object and to the `Keychain` it is not able to create the unit "fully", for this reason it only chooses parents, the rest is filled by the `Runway`.
 
 ### 5.2 Unit Store in Runway
 
