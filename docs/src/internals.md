@@ -4,20 +4,20 @@ To explain the inner workings of AlephBFT it is instructive to follow the path o
 
 1. The unit is created by one of the node's `Creator` component -- implemented in `creation/`. Creator sends the produced unit to `runway/`, which then sends it to `member.rs`.
 2. A recurring task of broadcasting this unit is put in the task queue. The unit will be broadcast to all other nodes a few times (with some delays in between).
-3. The unit is received by another node -- happens in `member.rs` and immediately send to `runway/` where it passes some validation (signature checks etc.). If all these checks pass and the unit is not detected to be a fork, then it is placed in the `UnitStore` -- the `store` field of the `Runway` struct.
-4. The idea is that this store keeps only **legit units** in the sense defined in [the section on alerts](how_alephbft_does_it.md#25-alerts----dealing-with-fork-spam). Thus no fork is ever be put there unless coming from an alert.
-5. At a suitable moment the units from the store are further moved to a component responsible for reconstructing the explicit parents for these units -- implemented in `reconstruction/parents.rs`.
-6. Each unit whose parents are successfully decoded, is added to the "Dag". Each unit in the Dag is legit + has all its parents in the Dag. This is ensured by the implementation in `reconstruction/dag.rs`.
-7. Dag units are passed to a component called the `Extender` -- see the files in `extension/`. The role of the extender is to efficiently run the `OrderData` algorithm, described in the [section on AlephBFT](how_alephbft_does_it.md).
-8. Once a unit's data is placed in one of batches by the `Extender` then its path is over and can be safely discarded.
+3. The unit is received by another node -- happens in `member.rs` and immediately send to `runway/` for further processing in `validation.rs`.
+4. Validation checks signatures and basic unit properties, plus catches forks. This means that only **legit units**, in the sense defined in [the section on alerts](how_alephbft_does_it.md#25-alerts----dealing-with-fork-spam), are sent further. Thus no fork is ever passed on unless coming from an alert.
+5. The units are further moved to a component responsible for reconstructing the explicit parents for these units -- implemented in `reconstruction/parents.rs`.
+6. Each unit whose parents are successfully decoded, is passed on to `reconstruction/dag.rs`, which ensures that units are passed on only when their parents already were. They are then put in a store in `runway/`. Each unit in the store is legit + has all its parents in the store.
+7. Such units are passed to a component called the `Extender` -- see the files in `extension/`. The role of the extender is to efficiently run the `OrderData` algorithm, described in the [section on AlephBFT](how_alephbft_does_it.md).
+8. Once a unit's data is placed in one of batches by the `Extender` then its path is over, although we keep it in the runway store to be able to send it to other nodes on request.
 
 ### 5.1 Creator
 
 The creator produces units according to the AlephBFT protocol rules. It will wait until the prespecified delay has passed and attempt to create a unit using a maximal number of parents. If it is not possible yet, it will wait till the first moment enough parents are available. After creating the last unit, the creator stops producing new ones, although this is never expected to happen during correct execution.
 
-### 5.2 Unit Store in Runway
+### 5.2 Validation
 
-As mentioned, the idea is that this stores only legit units and passes them to the reconstructing component. In case a fork is detected by a node `i`, all `i`'s units are attached to the appropriate alert.
+The validation process consists of checking basic properties of units (correct number of parents, correct session etc.), the signatures, and whether the unit is a fork based on the units that the node either already has or at least started processing. As mentioned, the idea is that only legit units are passed to the reconstructing component. In case a fork by a node `i` is detected, all of `i`'s units are attached to the appropriate alert, so that other nodes can accept them as legit.
 
 ### 5.3 Reconstruction
 
@@ -36,7 +36,7 @@ In any case the reconstruction triggers a request to `Member` to download the fu
 
 #### 5.3.2 Dag
 
-The units parents might, for many reasons, not be reconstructed in an order agreeing with the Dag order, i.e. some of their ancestors might not yet be reconstructed. The Dag component ensures that units are only added to the Dag after their parents were already added, and thus any units emitted by this component are in an order agreeing with the Dag order.
+The units parents might, for many reasons, not be reconstructed in an order agreeing with the Dag order, i.e. some of their ancestors might not yet be reconstructed. The Dag component ensures that units are only added to the store after their parents were already added, and thus any units emitted by this component are in an order agreeing with the Dag order.
 
 ### 5.4 Extender
 

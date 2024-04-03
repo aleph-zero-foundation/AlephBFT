@@ -2,7 +2,7 @@ use crate::{
     member::UnitMessage::NewUnit,
     network::NetworkDataInner::Units,
     testing::{init_log, spawn_honest_member, HonestMember, Network, NetworkData},
-    units::{ControlHash, FullUnit, PreUnit, SignedUnit, UnitCoord},
+    units::{ControlHash, FullUnit, PreUnit, SignedUnit, Unit, UnitCoord},
     Hasher, Network as NetworkT, NetworkData as NetworkDataT, NodeCount, NodeIndex, NodeMap,
     Recipient, Round, SessionId, Signed, SpawnHandle, TaskHandle,
 };

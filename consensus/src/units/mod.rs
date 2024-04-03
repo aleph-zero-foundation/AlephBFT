@@ -1,11 +1,12 @@
+use std::fmt::{Display, Formatter, Result as FmtResult};
+
 use crate::{
-    Data, Hasher, Index, Keychain, NodeCount, NodeIndex, NodeMap, NodeSubset, Round, SessionId,
-    Signable, Signed, UncheckedSigned,
+    Data, Hasher, Index, MultiKeychain, NodeCount, NodeIndex, NodeMap, NodeSubset, Round,
+    SessionId, Signable, Signed, UncheckedSigned,
 };
 use codec::{Decode, Encode};
 use derivative::Derivative;
 use parking_lot::RwLock;
-use std::collections::HashMap;
 
 mod store;
 #[cfg(test)]
@@ -14,9 +15,9 @@ mod validator;
 pub(crate) use store::*;
 #[cfg(test)]
 pub use testing::{
-    create_preunits, creator_set, full_unit_to_unchecked_signed_unit,
-    preunit_to_unchecked_signed_unit, preunit_to_unit, random_full_parent_units_up_to,
-    random_unit_with_parents,
+    create_preunits, creator_set, full_unit_to_unchecked_signed_unit, preunit_to_full_unit,
+    preunit_to_unchecked_signed_unit, random_full_parent_units_up_to, random_unit_with_parents,
+    FullUnit as TestingFullUnit, SignedUnit as TestingSignedUnit, WrappedSignedUnit,
 };
 pub use validator::{ValidationError, Validator};
 
@@ -39,6 +40,12 @@ impl UnitCoord {
 
     pub fn round(&self) -> Round {
         self.round
+    }
+}
+
+impl Display for UnitCoord {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "(#{} by {})", self.round, self.creator.0)
     }
 }
 
@@ -146,18 +153,6 @@ impl<H: Hasher, D: Data> FullUnit<H, D> {
     pub(crate) fn as_pre_unit(&self) -> &PreUnit<H> {
         &self.pre_unit
     }
-    pub(crate) fn creator(&self) -> NodeIndex {
-        self.pre_unit.creator()
-    }
-    pub(crate) fn round(&self) -> Round {
-        self.pre_unit.round()
-    }
-    pub(crate) fn control_hash(&self) -> &ControlHash<H> {
-        self.pre_unit.control_hash()
-    }
-    pub(crate) fn coord(&self) -> UnitCoord {
-        self.pre_unit.coord
-    }
     pub(crate) fn data(&self) -> &Option<D> {
         &self.data
     }
@@ -167,26 +162,12 @@ impl<H: Hasher, D: Data> FullUnit<H, D> {
     pub(crate) fn session_id(&self) -> SessionId {
         self.session_id
     }
-    pub(crate) fn hash(&self) -> H::Hash {
-        let hash = *self.hash.read();
-        match hash {
-            Some(hash) => hash,
-            None => {
-                let hash = self.using_encoded(H::hash);
-                *self.hash.write() = Some(hash);
-                hash
-            }
-        }
-    }
-    pub(crate) fn unit(&self) -> Unit<H> {
-        Unit::new(self.pre_unit.clone(), self.hash())
-    }
 }
 
 impl<H: Hasher, D: Data> Signable for FullUnit<H, D> {
     type Hash = H::Hash;
     fn hash(&self) -> H::Hash {
-        self.hash()
+        Unit::hash(self)
     }
 }
 
@@ -200,34 +181,77 @@ pub(crate) type UncheckedSignedUnit<H, D, S> = UncheckedSigned<FullUnit<H, D>, S
 
 pub(crate) type SignedUnit<H, D, K> = Signed<FullUnit<H, D>, K>;
 
-#[derive(Clone, Eq, PartialEq, Debug, Decode, Encode)]
-pub struct Unit<H: Hasher> {
-    pre_unit: PreUnit<H>,
-    hash: H::Hash,
+/// Abstract representation of a unit from the Dag point of view.
+pub trait Unit: 'static + Send + Clone {
+    type Hasher: Hasher;
+
+    fn hash(&self) -> <Self::Hasher as Hasher>::Hash;
+
+    fn coord(&self) -> UnitCoord;
+
+    fn control_hash(&self) -> &ControlHash<Self::Hasher>;
+
+    fn creator(&self) -> NodeIndex {
+        self.coord().creator()
+    }
+
+    fn round(&self) -> Round {
+        self.coord().round()
+    }
 }
 
-impl<H: Hasher> Unit<H> {
-    pub(crate) fn new(pre_unit: PreUnit<H>, hash: H::Hash) -> Self {
-        Unit { pre_unit, hash }
+pub trait WrappedUnit<H: Hasher>: Unit<Hasher = H> {
+    type Wrapped: Unit<Hasher = H>;
+
+    fn unpack(self) -> Self::Wrapped;
+}
+
+impl<H: Hasher, D: Data> Unit for FullUnit<H, D> {
+    type Hasher = H;
+
+    fn hash(&self) -> H::Hash {
+        let hash = *self.hash.read();
+        match hash {
+            Some(hash) => hash,
+            None => {
+                let hash = self.using_encoded(H::hash);
+                *self.hash.write() = Some(hash);
+                hash
+            }
+        }
     }
-    pub(crate) fn creator(&self) -> NodeIndex {
-        self.pre_unit.creator()
+
+    fn coord(&self) -> UnitCoord {
+        self.pre_unit.coord
     }
-    pub(crate) fn round(&self) -> Round {
-        self.pre_unit.round()
-    }
-    pub(crate) fn control_hash(&self) -> &ControlHash<H> {
+
+    fn control_hash(&self) -> &ControlHash<Self::Hasher> {
         self.pre_unit.control_hash()
     }
-    pub(crate) fn hash(&self) -> H::Hash {
-        self.hash
+}
+
+impl<H: Hasher, D: Data, MK: MultiKeychain> Unit for SignedUnit<H, D, MK> {
+    type Hasher = H;
+
+    fn hash(&self) -> H::Hash {
+        Unit::hash(self.as_signable())
+    }
+
+    fn coord(&self) -> UnitCoord {
+        self.as_signable().coord()
+    }
+
+    fn control_hash(&self) -> &ControlHash<Self::Hasher> {
+        self.as_signable().control_hash()
     }
 }
+
+pub type HashFor<U> = <<U as Unit>::Hasher as Hasher>::Hash;
 
 #[cfg(test)]
 pub mod tests {
     use crate::{
-        units::{random_full_parent_units_up_to, ControlHash, FullUnit},
+        units::{random_full_parent_units_up_to, ControlHash, FullUnit, Unit},
         Hasher, NodeCount,
     };
     use aleph_bft_mock::{Data, Hasher64};

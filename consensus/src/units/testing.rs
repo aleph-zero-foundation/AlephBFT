@@ -2,18 +2,46 @@ use crate::{
     creation::Creator as GenericCreator,
     units::{
         ControlHash as GenericControlHash, FullUnit as GenericFullUnit, PreUnit as GenericPreUnit,
-        UncheckedSignedUnit as GenericUncheckedSignedUnit, Unit as GenericUnit,
+        SignedUnit as GenericSignedUnit, UncheckedSignedUnit as GenericUncheckedSignedUnit, Unit,
+        UnitCoord, WrappedUnit,
     },
-    Hasher, NodeCount, NodeIndex, NodeMap, Round, SessionId, Signed,
+    NodeCount, NodeIndex, NodeMap, Round, SessionId, Signed,
 };
-use aleph_bft_mock::{Data, Hasher64, Keychain, Signature};
+use aleph_bft_mock::{Data, Hash64, Hasher64, Keychain, Signature};
 
 type ControlHash = GenericControlHash<Hasher64>;
 type Creator = GenericCreator<Hasher64>;
 type PreUnit = GenericPreUnit<Hasher64>;
-type Unit = GenericUnit<Hasher64>;
-type FullUnit = GenericFullUnit<Hasher64, Data>;
+pub type FullUnit = GenericFullUnit<Hasher64, Data>;
 type UncheckedSignedUnit = GenericUncheckedSignedUnit<Hasher64, Data, Signature>;
+pub type SignedUnit = GenericSignedUnit<Hasher64, Data, Keychain>;
+
+#[derive(Clone)]
+pub struct WrappedSignedUnit(pub SignedUnit);
+
+impl Unit for WrappedSignedUnit {
+    type Hasher = Hasher64;
+
+    fn hash(&self) -> Hash64 {
+        self.0.hash()
+    }
+
+    fn coord(&self) -> UnitCoord {
+        self.0.coord()
+    }
+
+    fn control_hash(&self) -> &ControlHash {
+        self.0.control_hash()
+    }
+}
+
+impl WrappedUnit<Hasher64> for WrappedSignedUnit {
+    type Wrapped = SignedUnit;
+
+    fn unpack(self) -> Self::Wrapped {
+        self.0
+    }
+}
 
 pub fn creator_set(n_members: NodeCount) -> Vec<Creator> {
     (0..n_members.0)
@@ -24,22 +52,18 @@ pub fn creator_set(n_members: NodeCount) -> Vec<Creator> {
 pub fn create_preunits<'a, C: Iterator<Item = &'a Creator>>(
     creators: C,
     round: Round,
-) -> Vec<(PreUnit, Vec<<Hasher64 as Hasher>::Hash>)> {
+) -> Vec<PreUnit> {
     creators
         .map(|c| c.create_unit(round).expect("Creation should succeed."))
         .collect()
 }
 
-fn preunit_to_full_unit(preunit: PreUnit, session_id: SessionId) -> FullUnit {
+pub fn preunit_to_full_unit(preunit: PreUnit, session_id: SessionId) -> FullUnit {
     FullUnit::new(preunit, rand::random(), session_id)
 }
 
-pub fn preunit_to_unit(preunit: PreUnit, session_id: SessionId) -> Unit {
-    preunit_to_full_unit(preunit, session_id).unit()
-}
-
 impl Creator {
-    pub fn add_units(&mut self, units: &[Unit]) {
+    pub fn add_units<U: Unit<Hasher = Hasher64>>(&mut self, units: &[U]) {
         for unit in units {
             self.add_unit(unit);
         }

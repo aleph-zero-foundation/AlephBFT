@@ -1,16 +1,18 @@
 use crate::{
-    alerts::{Alert, ForkProof, ForkingNotification, NetworkMessage},
+    alerts::{Alert, ForkingNotification, NetworkMessage},
     consensus,
-    creation::SignedUnitWithParents,
+    extension::{ExtenderUnit, Service as Extender},
     handle_task_termination,
     member::UnitMessage,
+    reconstruction::{ReconstructedUnit, Request as ReconstructionRequest},
     units::{
-        ControlHash, SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore, UnitStoreStatus,
-        Validator,
+        SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore, UnitStoreStatus,
+        Validator as UnitValidator, WrappedUnit,
     },
+    validation::{Error as ValidationError, Validator, ValidatorStatus},
     Config, Data, DataProvider, FinalizationHandler, Hasher, Index, Keychain, MultiKeychain,
-    NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Signature, Signed, SpawnHandle,
-    Terminator, UncheckedSigned,
+    NodeIndex, Receiver, Round, Sender, Signature, Signed, SpawnHandle, Terminator,
+    UncheckedSigned,
 };
 use aleph_bft_types::Recipient;
 use futures::AsyncWrite;
@@ -21,7 +23,14 @@ use futures::{
 use futures_timer::Delay;
 use itertools::Itertools;
 use log::{debug, error, info, trace, warn};
-use std::{collections::HashSet, convert::TryFrom, fmt, marker::PhantomData, time::Duration};
+use std::{
+    cmp::max,
+    collections::{HashMap, HashSet},
+    convert::TryFrom,
+    fmt::{Display, Formatter, Result as FmtResult},
+    marker::PhantomData,
+    time::Duration,
+};
 
 mod collection;
 
@@ -30,27 +39,7 @@ use crate::backup::{BackupLoader, BackupSaver};
 use collection::{Collection, IO as CollectionIO};
 pub use collection::{NewestUnitResponse, Salt};
 
-/// Type for incoming notifications: Runway to Consensus.
-#[derive(Clone, Eq, PartialEq)]
-pub(crate) enum NotificationIn<H: Hasher> {
-    /// A notification carrying units. This might come either from multicast or
-    /// from a response to a request. This is of no importance at this layer.
-    NewUnits(Vec<Unit<H>>),
-    /// Response to a request to decode parents when the control hash is wrong.
-    UnitParents(H::Hash, Vec<H::Hash>),
-}
-
-/// Type for outgoing notifications: Consensus to Runway.
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) enum NotificationOut<H: Hasher> {
-    /// Notification that some units are needed but missing. The role of the Member
-    /// is to fetch these unit (somehow).
-    MissingUnits(Vec<UnitCoord>),
-    /// Notification that Consensus has parents incompatible with the control hash.
-    WrongControlHash(H::Hash),
-    /// Notification that a new unit has been added to the DAG, list of decoded parents provided
-    AddedToDag(H::Hash, Vec<H::Hash>),
-}
+pub type ExplicitParents<H> = (<H as Hasher>::Hash, HashMap<UnitCoord, <H as Hasher>::Hash>);
 
 /// Possible requests for information from other nodes.
 pub enum Request<H: Hasher> {
@@ -123,45 +112,42 @@ where
 {
     missing_coords: HashSet<UnitCoord>,
     missing_parents: HashSet<H::Hash>,
-    store: UnitStore<H, D, MK>,
+    store: UnitStore<ReconstructedUnit<SignedUnit<H, D, MK>>>,
     keychain: MK,
-    validator: Validator<MK>,
+    validator: Validator<H, D, MK>,
     alerts_for_alerter: Sender<Alert<H, D, MK::Signature>>,
     notifications_from_alerter: Receiver<ForkingNotification<H, D, MK::Signature>>,
     unit_messages_from_network: Receiver<RunwayNotificationIn<H, D, MK::Signature>>,
     unit_messages_for_network: Sender<RunwayNotificationOut<H, D, MK::Signature>>,
     responses_for_collection: Sender<CollectionResponse<H, D, MK>>,
     resolved_requests: Sender<Request<H>>,
-    tx_consensus: Sender<NotificationIn<H>>,
-    rx_consensus: Receiver<NotificationOut<H>>,
+    units_for_reconstruction: Sender<SignedUnit<H, D, MK>>,
+    parents_for_reconstruction: Sender<ExplicitParents<H>>,
+    units_from_reconstruction: Receiver<ReconstructedUnit<SignedUnit<H, D, MK>>>,
+    requests_from_reconstruction: Receiver<ReconstructionRequest<H>>,
     ordered_batch_rx: Receiver<Vec<H::Hash>>,
     finalization_handler: FH,
     backup_units_for_saver: Sender<UncheckedSignedUnit<H, D, MK::Signature>>,
+    units_for_extender: Sender<ExtenderUnit<H>>,
     backup_units_from_saver: Receiver<UncheckedSignedUnit<H, D, MK::Signature>>,
-    signed_units_from_creation: Receiver<SignedUnitWithParents<H, D, MK>>,
+    new_units_from_creation: Receiver<SignedUnit<H, D, MK>>,
     exiting: bool,
 }
 
 struct RunwayStatus<'a, H: Hasher> {
-    status: UnitStoreStatus<'a>,
     missing_coords: &'a HashSet<UnitCoord>,
     missing_parents: &'a HashSet<H::Hash>,
+    validator_status: ValidatorStatus,
+    dag_status: UnitStoreStatus,
 }
 
 impl<'a, H: Hasher> RunwayStatus<'a, H> {
-    fn new(
-        status: UnitStoreStatus<'a>,
-        missing_coords: &'a HashSet<UnitCoord>,
-        missing_parents: &'a HashSet<H::Hash>,
-    ) -> Self {
-        Self {
-            status,
-            missing_coords,
-            missing_parents,
-        }
-    }
-
-    fn short_report(rounds_behind: Round, missing_coords: usize) -> String {
+    fn short_report(&self) -> String {
+        let rounds_behind = max(
+            self.validator_status.top_round(),
+            self.dag_status.top_round(),
+        ) - self.dag_status.top_round();
+        let missing_coords = self.missing_coords.len();
         match (rounds_behind, missing_coords) {
             (0..=2, 0) => "healthy".to_string(),
             (0..=2, 1..) => format!("syncing - missing {missing_coords} unit(s)"),
@@ -207,14 +193,9 @@ impl<'a, H: Hasher> RunwayStatus<'a, H> {
     }
 }
 
-impl<'a, H: Hasher> fmt::Display for RunwayStatus<'a, H> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Runway status report: {}",
-            Self::short_report(self.status.rounds_behind(), self.missing_coords.len())
-        )?;
-        write!(f, ". {}", self.status)?;
+impl<'a, H: Hasher> Display for RunwayStatus<'a, H> {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "Runway status report: {}", self.short_report())?;
         if !self.missing_coords.is_empty() {
             let v_coords: Vec<(usize, Round)> = self
                 .missing_coords
@@ -236,20 +217,22 @@ impl<'a, H: Hasher> fmt::Display for RunwayStatus<'a, H> {
 }
 
 struct RunwayConfig<H: Hasher, D: Data, FH: FinalizationHandler<D>, MK: MultiKeychain> {
-    max_round: Round,
     finalization_handler: FH,
     backup_units_for_saver: Sender<UncheckedSignedUnit<H, D, MK::Signature>>,
+    units_for_extender: Sender<ExtenderUnit<H>>,
     backup_units_from_saver: Receiver<UncheckedSignedUnit<H, D, MK::Signature>>,
     alerts_for_alerter: Sender<Alert<H, D, MK::Signature>>,
     notifications_from_alerter: Receiver<ForkingNotification<H, D, MK::Signature>>,
-    tx_consensus: Sender<NotificationIn<H>>,
-    rx_consensus: Receiver<NotificationOut<H>>,
+    units_for_reconstruction: Sender<SignedUnit<H, D, MK>>,
+    parents_for_reconstruction: Sender<ExplicitParents<H>>,
+    units_from_reconstruction: Receiver<ReconstructedUnit<SignedUnit<H, D, MK>>>,
+    requests_from_reconstruction: Receiver<ReconstructionRequest<H>>,
     unit_messages_from_network: Receiver<RunwayNotificationIn<H, D, MK::Signature>>,
     unit_messages_for_network: Sender<RunwayNotificationOut<H, D, MK::Signature>>,
     responses_for_collection: Sender<CollectionResponse<H, D, MK>>,
     ordered_batch_rx: Receiver<Vec<H::Hash>>,
     resolved_requests: Sender<Request<H>>,
-    signed_units_from_creation: Receiver<SignedUnitWithParents<H, D, MK>>,
+    new_units_from_creation: Receiver<SignedUnit<H, D, MK>>,
 }
 
 impl<H, D, FH, MK> Runway<H, D, FH, MK>
@@ -259,25 +242,28 @@ where
     FH: FinalizationHandler<D>,
     MK: MultiKeychain,
 {
-    fn new(config: RunwayConfig<H, D, FH, MK>, keychain: MK, validator: Validator<MK>) -> Self {
+    fn new(config: RunwayConfig<H, D, FH, MK>, keychain: MK, validator: UnitValidator<MK>) -> Self {
         let n_members = keychain.node_count();
         let RunwayConfig {
-            max_round,
             finalization_handler,
             backup_units_for_saver,
+            units_for_extender,
             backup_units_from_saver,
             alerts_for_alerter,
             notifications_from_alerter,
-            tx_consensus,
-            rx_consensus,
+            units_for_reconstruction,
+            parents_for_reconstruction,
+            units_from_reconstruction,
+            requests_from_reconstruction,
             unit_messages_from_network,
             unit_messages_for_network,
             responses_for_collection,
             ordered_batch_rx,
             resolved_requests,
-            signed_units_from_creation,
+            new_units_from_creation,
         } = config;
-        let store = UnitStore::new(n_members, max_round);
+        let store = UnitStore::new(n_members);
+        let validator = Validator::new(validator);
 
         Runway {
             store,
@@ -290,14 +276,17 @@ where
             notifications_from_alerter,
             unit_messages_from_network,
             unit_messages_for_network,
-            tx_consensus,
-            rx_consensus,
+            units_for_reconstruction,
+            parents_for_reconstruction,
+            units_from_reconstruction,
+            requests_from_reconstruction,
             ordered_batch_rx,
             finalization_handler,
             backup_units_for_saver,
+            units_for_extender,
             backup_units_from_saver,
             responses_for_collection,
-            signed_units_from_creation,
+            new_units_from_creation,
             exiting: false,
         }
     }
@@ -306,15 +295,18 @@ where
         self.keychain.index()
     }
 
-    fn node_count(&self) -> NodeCount {
-        self.keychain.node_count()
+    fn on_unit_received(&mut self, unit: UncheckedSignedUnit<H, D, MK::Signature>) {
+        match self.validator.validate(unit, &self.store) {
+            Ok(unit) => self.send_unit_for_reconstruction(unit),
+            Err(e) => self.handle_validation_error(e),
+        }
     }
 
     fn on_unit_message(&mut self, message: RunwayNotificationIn<H, D, MK::Signature>) {
         match message {
             RunwayNotificationIn::NewUnit(u) => {
                 trace!(target: "AlephBFT-runway", "{:?} New unit received {:?}.", self.index(), &u);
-                self.on_unit_received(u, false)
+                self.on_unit_received(u)
             }
 
             RunwayNotificationIn::Request(request, node_id) => match request {
@@ -335,7 +327,7 @@ where
             RunwayNotificationIn::Response(res) => match res {
                 Response::Coord(u) => {
                     trace!(target: "AlephBFT-runway", "{:?} Fetch response received {:?}.", self.index(), &u);
-                    self.on_unit_received(u, false)
+                    self.on_unit_received(u)
                 }
                 Response::Parents(u_hash, parents) => {
                     trace!(target: "AlephBFT-runway", "{:?} Response parents received {:?}.", self.index(), u_hash);
@@ -352,117 +344,63 @@ where
         }
     }
 
-    fn on_unit_received(&mut self, uu: UncheckedSignedUnit<H, D, MK::Signature>, alert: bool) {
-        match self.validator.validate_unit(uu) {
-            Ok(su) => {
-                self.resolve_missing_coord(&su.as_signable().coord());
-                if alert {
-                    // Units from alerts explicitly come from forkers, and we want them anyway.
-                    self.store.add_unit(su, true);
-                } else {
-                    self.add_unit_to_store_unless_fork(su);
-                }
-            }
-            Err(e) => warn!(target: "AlephBFT-member", "Received unit failing validation: {}", e),
-        }
-    }
-
     fn resolve_missing_coord(&mut self, coord: &UnitCoord) {
         if self.missing_coords.remove(coord) {
             self.send_resolved_request_notification(Request::Coord(*coord));
         }
     }
 
-    fn add_unit_to_store_unless_fork(&mut self, su: SignedUnit<H, D, MK>) {
-        let full_unit = su.as_signable();
-        trace!(target: "AlephBFT-member", "{:?} Adding member unit to store {:?}", self.index(), full_unit);
-        if self.store.is_forker(full_unit.creator()) {
-            trace!(target: "AlephBFT-member", "{:?} Ignoring forker's unit {:?}", self.index(), full_unit);
-            return;
-        }
-
-        if let Some(sv) = self.store.is_new_fork(full_unit) {
-            let creator = full_unit.creator();
-            if !self.store.is_forker(creator) {
-                // We need to mark the forker if it is not known yet.
-                let proof = (su.into(), sv.into());
-                self.on_new_forker_detected(creator, proof);
-            }
-            // We ignore this unit. If it is legit, it will arrive in some alert and we need to wait anyway.
-            // There is no point in keeping this unit in any kind of buffer.
-            return;
-        }
-
-        self.store.add_unit(su, false);
-    }
-
-    fn on_new_forker_detected(&mut self, forker: NodeIndex, proof: ForkProof<H, D, MK::Signature>) {
-        let alerted_units = self.store.mark_forker(forker);
-        let alert = self.form_alert(proof, alerted_units);
-        if self.alerts_for_alerter.unbounded_send(alert).is_err() {
-            warn!(target: "AlephBFT-runway", "{:?} Channel to alerter should be open", self.index());
-            self.exiting = true;
-        }
-    }
-
-    fn form_alert(
-        &self,
-        proof: ForkProof<H, D, MK::Signature>,
-        units: Vec<SignedUnit<H, D, MK>>,
-    ) -> Alert<H, D, MK::Signature> {
-        Alert::new(
-            self.index(),
-            proof,
-            units.into_iter().map(|signed| signed.into()).collect(),
-        )
-    }
-
     fn on_request_coord(&mut self, node_id: NodeIndex, coord: UnitCoord) {
         debug!(target: "AlephBFT-runway", "{:?} Received fetch request for coord {:?} from {:?}.", self.index(), coord, node_id);
-        let maybe_su = (self.store.unit_by_coord(coord)).cloned();
-
-        if let Some(su) = maybe_su {
-            trace!(target: "AlephBFT-runway", "{:?} Answering fetch request for coord {:?} from {:?}.", self.index(), coord, node_id);
-            self.send_message_for_network(RunwayNotificationOut::Response(
-                Response::Coord(su.into()),
-                node_id,
-            ));
-        } else {
-            trace!(target: "AlephBFT-runway", "{:?} Not answering fetch request for coord {:?}. Unit not in store.", self.index(), coord);
+        match self.store.canonical_unit(coord).cloned() {
+            Some(su) => {
+                trace!(target: "AlephBFT-runway", "{:?} Answering fetch request for coord {:?} from {:?}.", self.index(), coord, node_id);
+                self.send_message_for_network(RunwayNotificationOut::Response(
+                    Response::Coord(su.unpack().into()),
+                    node_id,
+                ));
+            }
+            None => {
+                trace!(target: "AlephBFT-runway", "{:?} Not answering fetch request for coord {:?}. Unit not in store.", self.index(), coord);
+            }
         }
     }
 
     fn on_request_parents(&mut self, node_id: NodeIndex, u_hash: H::Hash) {
         debug!(target: "AlephBFT-runway", "{:?} Received parents request for hash {:?} from {:?}.", self.index(), u_hash, node_id);
 
-        if let Some(p_hashes) = self.store.get_parents(u_hash) {
-            let p_hashes = p_hashes.clone();
-            trace!(target: "AlephBFT-runway", "{:?} Answering parents request for hash {:?} from {:?}.", self.index(), u_hash, node_id);
-            let mut full_units = Vec::new();
-            for hash in p_hashes.iter() {
-                if let Some(fu) = self.store.unit_by_hash(hash) {
-                    full_units.push(fu.clone().into());
-                } else {
-                    debug!(target: "AlephBFT-runway", "{:?} Not answering parents request, one of the parents missing from store.", self.index());
-                    //This can happen if we got a parents response from someone, but one of the units was a fork and we dropped it.
-                    //Either this parent is legit and we will soon get it in alert or the parent is not legit in which case
-                    //the unit u, whose parents are beeing seeked here is not legit either.
-                    //In any case, if a node added u to its Dag, then it should never reach this place in code when answering
-                    //a parents request (as all the parents must be legit an thus must be in store).
-                    return;
-                }
+        match self.store.unit(&u_hash) {
+            Some(unit) => {
+                trace!(target: "AlephBFT-runway", "{:?} Answering parents request for hash {:?} from {:?}.", self.index(), u_hash, node_id);
+                let parents = unit
+                    .parents()
+                    .values()
+                    .map(|parent_hash| {
+                        self.store
+                            .unit(parent_hash)
+                            .expect("We add units to the store in order.")
+                            .clone()
+                            .unpack()
+                            .into_unchecked()
+                    })
+                    .collect();
+                self.send_message_for_network(RunwayNotificationOut::Response(
+                    Response::Parents(u_hash, parents),
+                    node_id,
+                ));
             }
-            self.send_message_for_network(RunwayNotificationOut::Response(
-                Response::Parents(u_hash, full_units),
-                node_id,
-            ));
-        } else {
-            trace!(target: "AlephBFT-runway", "{:?} Not answering parents request for hash {:?}. Unit not in DAG yet.", self.index(), u_hash);
+            None => {
+                trace!(target: "AlephBFT-runway", "{:?} Not answering parents request for hash {:?}. Unit not in DAG yet.", self.index(), u_hash);
+            }
         }
     }
 
     fn on_request_newest(&mut self, requester: NodeIndex, salt: u64) {
-        let unit = self.store.newest_unit(requester);
+        let unit = self
+            .store
+            .canonical_units(requester)
+            .last()
+            .map(|unit| unit.clone().unpack().into_unchecked());
         let response = NewestUnitResponse::new(requester, self.index(), unit, salt);
 
         let signed_response = Signed::sign(response, &self.keychain).into_unchecked();
@@ -478,71 +416,75 @@ where
         }
     }
 
+    fn handle_validation_error(&mut self, e: ValidationError<H, D, MK>) {
+        use ValidationError::*;
+        match e {
+            Invalid(e) => {
+                warn!(target: "AlephBFT-runway", "Received unit failing validation: {}", e)
+            }
+            Duplicate(su) => {
+                trace!(target: "AlephBFT-runway", "Received unit with hash {:?} again.", su.hash())
+            }
+            Uncommitted(su) => {
+                debug!(target: "AlephBFT-runway", "Received unit with hash {:?} created by known forker {:?} for which we don't have a commitment, discarding.", su.hash(), su.creator())
+            }
+            NewForker(alert) => {
+                warn!(target: "AlephBFT-runway", "New forker detected.");
+                trace!(target: "AlephBFT-runway", "Created alert: {:?}.", alert);
+                if self.alerts_for_alerter.unbounded_send(*alert).is_err() {
+                    warn!(target: "AlephBFT-runway", "{:?} Channel to alerter should be open", self.index());
+                    self.exiting = true;
+                }
+            }
+        }
+    }
+
     fn on_parents_response(
         &mut self,
         u_hash: H::Hash,
         parents: Vec<UncheckedSignedUnit<H, D, MK::Signature>>,
     ) {
-        if self.store.get_parents(u_hash).is_some() {
-            trace!(target: "AlephBFT-runway", "{:?} We got parents response but already know the parents.", self.index());
+        use ValidationError::*;
+        if self.store.unit(&u_hash).is_some() {
+            trace!(target: "AlephBFT-runway", "{:?} We got parents response but already imported the unit.", self.index());
             return;
         }
-        let (u_round, u_control_hash, parent_ids) = match self.store.unit_by_hash(&u_hash) {
-            Some(su) => {
-                let full_unit = su.as_signable();
-                let parent_ids: Vec<_> = full_unit.control_hash().parents().collect();
-                (
-                    full_unit.round(),
-                    full_unit.control_hash().combined_hash,
-                    parent_ids,
-                )
-            }
-            None => {
-                trace!(target: "AlephBFT-runway", "{:?} We got parents but don't even know the unit. Ignoring.", self.index());
-                return;
-            }
-        };
-
-        if parent_ids.len() != parents.len() {
-            warn!(target: "AlephBFT-runway", "{:?} In received parent response expected {} parents got {} for unit {:?}.", self.index(), parents.len(), parent_ids.len(), u_hash);
-            return;
-        }
-
-        let mut p_hashes_node_map = NodeMap::with_size(self.node_count());
-        for (i, uu) in parents.into_iter().enumerate() {
-            let su = match self.validator.validate_unit(uu) {
-                Ok(su) => su,
-                Err(e) => {
+        let mut parent_hashes = HashMap::new();
+        for unit in parents.into_iter() {
+            let su = match self.validator.validate(unit, &self.store) {
+                Ok(su) => {
+                    self.send_unit_for_reconstruction(su.clone());
+                    su
+                }
+                Err(Duplicate(su)) => {
+                    trace!(target: "AlephBFT-runway", "Already have parent {:?}.", su.hash());
+                    su
+                }
+                Err(Uncommitted(su)) => {
+                    debug!(target: "AlephBFT-runway", "Received uncommitted parent {:?}, we should get the commitment soon.", su.hash());
+                    su
+                }
+                Err(NewForker(alert)) => {
+                    warn!(target: "AlephBFT-runway", "New forker detected.");
+                    trace!(target: "AlephBFT-runway", "Created alert: {:?}.", alert);
+                    if self.alerts_for_alerter.unbounded_send(*alert).is_err() {
+                        warn!(target: "AlephBFT-runway", "{:?} Channel to alerter should be open", self.index());
+                        self.exiting = true;
+                    }
+                    // technically this was a correct unit, so we could have passed it on,
+                    // but this will happen at most once and we will receive the parent
+                    // response again, so we just discard it now
+                    return;
+                }
+                Err(Invalid(e)) => {
                     warn!(target: "AlephBFT-runway", "{:?} In received parent response received a unit that does not pass validation: {}", self.index(), e);
                     return;
                 }
             };
-            let full_unit = su.as_signable();
-            if full_unit.round() + 1 != u_round {
-                warn!(target: "AlephBFT-runway", "{:?} In received parent response received a unit with wrong round.", self.index());
-                return;
-            }
-            if full_unit.creator() != parent_ids[i] {
-                warn!(target: "AlephBFT-runway", "{:?} In received parent response received a unit with wrong creator.", self.index());
-                return;
-            }
-            let p_hash = full_unit.hash();
-            let ix = full_unit.creator();
-            p_hashes_node_map.insert(ix, p_hash);
-            // There might be some optimization possible here to not validate twice, but overall
-            // this piece of code should be executed extremely rarely.
-            self.resolve_missing_coord(&su.as_signable().coord());
-            self.add_unit_to_store_unless_fork(su);
+            parent_hashes.insert(su.coord(), su.hash());
         }
 
-        if ControlHash::<H>::combine_hashes(&p_hashes_node_map) != u_control_hash {
-            warn!(target: "AlephBFT-runway", "{:?} In received parent response the control hash is incorrect {:?}.", self.index(), p_hashes_node_map);
-            return;
-        }
-        let p_hashes: Vec<_> = p_hashes_node_map.into_values().collect();
-        self.store.add_parents(u_hash, p_hashes.clone());
-        trace!(target: "AlephBFT-runway", "{:?} Succesful parents response for {:?}.", self.index(), u_hash);
-        self.send_consensus_notification(NotificationIn::UnitParents(u_hash, p_hashes));
+        self.send_parents_for_reconstruction((u_hash, parent_hashes));
     }
 
     fn resolve_missing_parents(&mut self, u_hash: &H::Hash) {
@@ -551,52 +493,50 @@ where
         }
     }
 
-    fn on_created(&mut self, signed_unit: SignedUnit<H, D, MK>) {
+    fn on_unit_created(&mut self, unit: SignedUnit<H, D, MK>) {
         debug!(target: "AlephBFT-runway", "{:?} On create notification.", self.index());
-        self.store.add_unit(signed_unit, false);
+        let signed_unit = self
+            .validator
+            .validate(unit.into_unchecked(), &self.store)
+            .expect("unit created by us is correct and not a fork");
+        // we are guaranteed this will immediately succeed, because creation uses the first units we add to the dag,
+        // i.e. the canonical units in the store
+        self.send_unit_for_reconstruction(signed_unit);
     }
 
-    fn on_alert_notification(&mut self, notification: ForkingNotification<H, D, MK::Signature>) {
-        use ForkingNotification::*;
-        match notification {
-            Forker(proof) => {
-                let forker = proof.0.index();
-                if !self.store.is_forker(forker) {
-                    self.on_new_forker_detected(forker, proof);
-                }
+    fn on_reconstruction_request(&mut self, request: ReconstructionRequest<H>) {
+        use ReconstructionRequest::*;
+        match request {
+            Coord(coord) => {
+                self.on_missing_coord(coord);
             }
-
-            Units(units) => {
-                for uu in units {
-                    self.on_unit_received(uu, true);
-                }
+            ParentsOf(h) => {
+                self.on_wrong_control_hash(h);
             }
         }
     }
 
-    fn on_consensus_notification(&mut self, notification: NotificationOut<H>) {
-        match notification {
-            NotificationOut::MissingUnits(coords) => {
-                self.on_missing_coords(coords);
-            }
-            NotificationOut::WrongControlHash(h) => {
-                self.on_wrong_control_hash(h);
-            }
-            NotificationOut::AddedToDag(h, p_hashes) => {
-                self.store.add_parents(h, p_hashes);
-                self.resolve_missing_parents(&h);
-                if let Some(su) = self.store.unit_by_hash(&h).cloned() {
-                    if self
-                        .backup_units_for_saver
-                        .unbounded_send(su.into())
-                        .is_err()
-                    {
-                        error!(target: "AlephBFT-runway", "{:?} A unit couldn't be sent to backup: {:?}.", self.index(), h);
-                    }
-                } else {
-                    error!(target: "AlephBFT-runway", "{:?} A unit already added to DAG is not in our store: {:?}.", self.index(), h);
-                }
-            }
+    fn on_unit_reconstructed(&mut self, unit: ReconstructedUnit<SignedUnit<H, D, MK>>) {
+        let unit_hash = unit.hash();
+        trace!(target: "AlephBFT-runway", "Unit {:?} {} reconstructed.", unit_hash, unit.coord());
+        self.validator.finished_processing(&unit_hash);
+        self.store.insert(unit.clone());
+        self.resolve_missing_parents(&unit_hash);
+        self.resolve_missing_coord(&unit.coord());
+        if self
+            .units_for_extender
+            .unbounded_send(unit.extender_unit())
+            .is_err()
+        {
+            error!(target: "AlephBFT-runway", "{:?} A unit couldn't be sent to extender: {:?}.", self.index(), unit_hash);
+            self.exiting = true;
+        }
+        if self
+            .backup_units_for_saver
+            .unbounded_send(unit.unpack().into())
+            .is_err()
+        {
+            error!(target: "AlephBFT-runway", "{:?} A unit couldn't be sent to backup: {:?}.", self.index(), unit_hash);
         }
     }
 
@@ -609,11 +549,11 @@ where
         }
     }
 
-    fn on_missing_coords(&mut self, mut coords: Vec<UnitCoord>) {
-        trace!(target: "AlephBFT-runway", "{:?} Dealing with missing coords notification {:?}.", self.index(), coords);
-        coords.retain(|coord| !self.store.contains_coord(coord));
-        for coord in coords {
-            if self.missing_coords.insert(coord) {
+    fn on_missing_coord(&mut self, coord: UnitCoord) {
+        trace!(target: "AlephBFT-runway", "{:?} Dealing with missing coord notification {:?}.", self.index(), coord);
+        if self.store.canonical_unit(coord).is_none() {
+            let new_request = self.missing_coords.insert(coord);
+            if new_request {
                 self.send_message_for_network(RunwayNotificationOut::Request(Request::Coord(
                     coord,
                 )));
@@ -623,14 +563,7 @@ where
 
     fn on_wrong_control_hash(&mut self, u_hash: H::Hash) {
         trace!(target: "AlephBFT-runway", "{:?} Dealing with wrong control hash notification {:?}.", self.index(), u_hash);
-        if let Some(p_hashes) = self.store.get_parents(u_hash) {
-            // We have the parents by some strange reason (someone sent us parents
-            // without us requesting them).
-            let p_hashes = p_hashes.clone();
-            trace!(target: "AlephBFT-runway", "{:?} We have the parents for {:?} even though we did not request them.", self.index(), u_hash);
-            let notification = NotificationIn::UnitParents(u_hash, p_hashes);
-            self.send_consensus_notification(notification);
-        } else if self.missing_parents.insert(u_hash) {
+        if self.missing_parents.insert(u_hash) {
             self.send_message_for_network(RunwayNotificationOut::Request(Request::Parents(u_hash)));
         }
     }
@@ -639,14 +572,15 @@ where
         for hash in batch {
             let unit = self
                 .store
-                .unit_by_hash(&hash)
+                .unit(&hash)
                 .expect("Ordered units must be in store")
-                .as_signable();
+                .clone()
+                .unpack();
 
             self.finalization_handler.unit_finalized(
                 unit.creator(),
                 unit.round(),
-                unit.data().clone(),
+                unit.as_signable().data().clone(),
             )
         }
     }
@@ -672,30 +606,36 @@ where
         }
     }
 
-    fn send_consensus_notification(&mut self, notification: NotificationIn<H>) {
-        if self.tx_consensus.unbounded_send(notification).is_err() {
-            warn!(target: "AlephBFT-runway", "{:?} Channel to consensus should be open", self.index());
+    fn send_unit_for_reconstruction(&mut self, unit: SignedUnit<H, D, MK>) {
+        trace!(target: "AlephBFT-runway", "Sending unit {:?} {} to reconstruction.", unit.hash(), unit.coord());
+        if self.units_for_reconstruction.unbounded_send(unit).is_err() {
+            warn!(target: "AlephBFT-runway", "{:?} Unit channel to reconstruction should be open", self.index());
             self.exiting = true;
         }
     }
 
-    fn move_units_to_consensus(&mut self) {
-        let units_to_move = self
-            .store
-            .yield_buffer_units()
-            .into_iter()
-            .map(|su| su.as_signable().unit())
-            .collect();
-        self.send_consensus_notification(NotificationIn::NewUnits(units_to_move))
+    fn send_parents_for_reconstruction(&mut self, parents: ExplicitParents<H>) {
+        if self
+            .parents_for_reconstruction
+            .unbounded_send(parents)
+            .is_err()
+        {
+            warn!(target: "AlephBFT-runway", "{:?} Parents channel to reconstruction should be open", self.index());
+            self.exiting = true;
+        }
+    }
+
+    fn status(&self) -> RunwayStatus<'_, H> {
+        RunwayStatus {
+            missing_coords: &self.missing_coords,
+            missing_parents: &self.missing_parents,
+            validator_status: self.validator.status(),
+            dag_status: self.store.status(),
+        }
     }
 
     fn status_report(&self) {
-        let runway_status: RunwayStatus<H> = RunwayStatus::new(
-            self.store.get_status_of(self.index()),
-            &self.missing_coords,
-            &self.missing_parents,
-        );
-        info!(target: "AlephBFT-runway", "{}", runway_status);
+        info!(target: "AlephBFT-runway", "{}", self.status());
     }
 
     async fn run(
@@ -713,7 +653,7 @@ where
         match data_from_backup.await {
             Ok(units) => {
                 for unit in units {
-                    self.on_unit_received(unit, false);
+                    self.on_unit_received(unit);
                 }
             }
             Err(e) => {
@@ -725,16 +665,24 @@ where
         debug!(target: "AlephBFT-runway", "{:?} Runway started.", index);
         loop {
             futures::select! {
-                notification = self.rx_consensus.next() => match notification {
-                    Some(notification) => self.on_consensus_notification(notification),
+                unit = self.units_from_reconstruction.next() => match unit {
+                    Some(unit) => self.on_unit_reconstructed(unit),
                     None => {
-                        error!(target: "AlephBFT-runway", "{:?} Consensus notification stream closed.", index);
+                        error!(target: "AlephBFT-runway", "{:?} Reconstructed unit stream closed.", index);
                         break;
                     }
                 },
 
-                signed_unit = self.signed_units_from_creation.next() => match signed_unit {
-                    Some((signed_unit, _)) => self.on_created(signed_unit),
+                request = self.requests_from_reconstruction.next() => match request {
+                    Some(request) => self.on_reconstruction_request(request),
+                    None => {
+                        error!(target: "AlephBFT-runway", "{:?} Reconstruction request stream closed.", index);
+                        break;
+                    }
+                },
+
+                signed_unit = self.new_units_from_creation.next() => match signed_unit {
+                    Some(signed_unit) => self.on_unit_created(signed_unit),
                     None => {
                         error!(target: "AlephBFT-runway", "{:?} Creation stream closed.", index);
                         break;
@@ -743,7 +691,16 @@ where
 
                 notification = self.notifications_from_alerter.next() => match notification {
                     Some(notification) => {
-                        self.on_alert_notification(notification)
+                        trace!(target: "AlephBFT-runway", "Received alerter notification: {:?}.", notification);
+                        for result in self.validator.process_forking_notification(notification, &self.store) {
+                            match result {
+                                Ok(unit) => {
+                                    trace!(target: "AlephBFT-runway", "Validated unit {:?} from alerter.", unit.hash());
+                                    self.send_unit_for_reconstruction(unit)
+                                },
+                                Err(e) => self.handle_validation_error(e),
+                            }
+                        }
                     },
                     None => {
                         error!(target: "AlephBFT-runway", "{:?} Alert notification stream closed.", index);
@@ -784,7 +741,6 @@ where
                     self.exiting = true;
                 }
             }
-            self.move_units_to_consensus();
 
             if self.exiting {
                 debug!(target: "AlephBFT-runway", "{:?} Runway decided to exit.", index);
@@ -808,7 +764,7 @@ pub(crate) struct NetworkIO<H: Hasher, D: Data, MK: MultiKeychain> {
 #[cfg(feature = "initial_unit_collection")]
 fn initial_unit_collection<'a, H: Hasher, D: Data, MK: MultiKeychain>(
     keychain: &'a MK,
-    validator: &'a Validator<MK>,
+    validator: &'a UnitValidator<MK>,
     unit_messages_for_network: &Sender<RunwayNotificationOut<H, D, MK::Signature>>,
     unit_collection_sender: oneshot::Sender<Round>,
     responses_from_runway: Receiver<CollectionResponse<H, D, MK>>,
@@ -909,10 +865,12 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
         _phantom: _,
     } = runway_io;
 
-    let (tx_consensus, consensus_stream) = mpsc::unbounded();
-    let (consensus_sink, rx_consensus) = mpsc::unbounded();
+    let (units_for_reconstruction, units_from_runway) = mpsc::unbounded();
+    let (parents_for_reconstruction, parents_from_runway) = mpsc::unbounded();
+    let (units_for_runway, units_from_reconstruction) = mpsc::unbounded();
+    let (requests_for_runway, requests_from_reconstruction) = mpsc::unbounded();
     let (ordered_batch_tx, ordered_batch_rx) = mpsc::unbounded();
-    let (signed_units_for_runway, signed_units_from_creation) = mpsc::unbounded();
+    let (new_units_for_runway, new_units_from_creation) = mpsc::unbounded();
 
     let consensus_terminator = terminator.add_offspring_connection("AlephBFT-consensus");
     let consensus_config = config.clone();
@@ -924,11 +882,12 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
         consensus::run(
             consensus_config,
             consensus::IO {
-                incoming_notifications: consensus_stream,
-                outgoing_notifications: consensus_sink,
-                units_for_runway: signed_units_for_runway,
+                units_from_runway,
+                parents_from_runway,
+                units_for_runway,
+                requests_for_runway,
+                new_units_for_runway,
                 data_provider,
-                ordered_batch_tx,
                 starting_round,
             },
             consensus_keychain,
@@ -983,7 +942,7 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
         .fuse();
 
     let index = keychain.index();
-    let validator = Validator::new(config.session_id(), keychain.clone(), config.max_round());
+    let validator = UnitValidator::new(config.session_id(), keychain.clone(), config.max_round());
     let (responses_for_collection, responses_from_runway) = mpsc::unbounded();
     let (unit_collections_sender, unit_collection_result) = oneshot::channel();
     let (loaded_data_tx, loaded_data_rx) = oneshot::channel();
@@ -1024,23 +983,34 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
     };
     pin_mut!(starting_round_handle);
 
+    let (units_for_extender, units_from_runway) = mpsc::unbounded();
+    let extender = Extender::<H>::new(index, units_from_runway, ordered_batch_tx);
+    let extender_terminator = terminator.add_offspring_connection("AlephBFT-extender");
+    let mut extender_handle = spawn_handle
+        .spawn_essential("runway/extender", async move {
+            extender.run(extender_terminator).await
+        })
+        .fuse();
+
     let runway_handle = spawn_handle
         .spawn_essential("runway", {
             let runway_config = RunwayConfig {
                 finalization_handler,
                 backup_units_for_saver,
+                units_for_extender,
                 backup_units_from_saver,
                 alerts_for_alerter,
                 notifications_from_alerter,
-                tx_consensus,
-                rx_consensus,
+                units_for_reconstruction,
+                parents_for_reconstruction,
+                units_from_reconstruction,
+                requests_from_reconstruction,
                 unit_messages_from_network: network_io.unit_messages_from_network,
                 unit_messages_for_network: network_io.unit_messages_for_network,
                 ordered_batch_rx,
                 responses_for_collection,
                 resolved_requests: network_io.resolved_requests,
-                max_round: config.max_round(),
-                signed_units_from_creation,
+                new_units_from_creation,
             };
             let runway_terminator = terminator.add_offspring_connection("AlephBFT-runway");
             let validator = validator.clone();
@@ -1057,6 +1027,9 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
             _ = runway_handle => {
                 debug!(target: "AlephBFT-runway", "{:?} Runway task terminated early.", index);
                 break;
+            },
+            _ = extender_handle => {
+                debug!(target: "AlephBFT-runway", "{:?} Extender task terminated early.", index);
             },
             _ = alerter_handle => {
                 debug!(target: "AlephBFT-runway", "{:?} Alerter task terminated early.", index);
@@ -1085,6 +1058,7 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
     debug!(target: "AlephBFT-runway", "{:?} Ending run.", index);
     terminator.terminate_sync().await;
 
+    handle_task_termination(extender_handle, "AlephBFT-runway", "Extender", index).await;
     handle_task_termination(consensus_handle, "AlephBFT-runway", "Consensus", index).await;
     handle_task_termination(alerter_handle, "AlephBFT-runway", "Alerter", index).await;
     handle_task_termination(runway_handle, "AlephBFT-runway", "Runway", index).await;

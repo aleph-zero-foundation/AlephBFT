@@ -1,7 +1,7 @@
 use crate::{
     config::Config,
     units::{PreUnit, SignedUnit, Unit},
-    Data, DataProvider, Hasher, MultiKeychain, Receiver, Round, Sender, Terminator,
+    Data, DataProvider, MultiKeychain, Receiver, Round, Sender, Terminator,
 };
 use futures::{
     channel::{
@@ -32,19 +32,17 @@ impl<T> From<TrySendError<T>> for CreatorError {
     }
 }
 
-pub type SignedUnitWithParents<H, D, MK> = (SignedUnit<H, D, MK>, Vec<<H as Hasher>::Hash>);
-
-pub struct IO<H: Hasher, D: Data, MK: MultiKeychain, DP: DataProvider<D>> {
-    pub incoming_parents: Receiver<Unit<H>>,
-    pub outgoing_units: Sender<SignedUnitWithParents<H, D, MK>>,
+pub struct IO<U: Unit, D: Data, MK: MultiKeychain, DP: DataProvider<D>> {
+    pub incoming_parents: Receiver<U>,
+    pub outgoing_units: Sender<SignedUnit<U::Hasher, D, MK>>,
     pub data_provider: DP,
 }
 
-async fn create_unit<H: Hasher>(
+async fn create_unit<U: Unit>(
     round: Round,
-    creator: &mut Creator<H>,
-    incoming_parents: &mut Receiver<Unit<H>>,
-) -> Result<(PreUnit<H>, Vec<H::Hash>), CreatorError> {
+    creator: &mut Creator<U::Hasher>,
+    incoming_parents: &mut Receiver<U>,
+) -> Result<PreUnit<U::Hasher>, CreatorError> {
     loop {
         match creator.create_unit(round) {
             Ok(unit) => return Ok(unit),
@@ -58,9 +56,9 @@ async fn create_unit<H: Hasher>(
 
 /// Tries to process a single parent from given `incoming_parents` receiver.
 /// Returns error when `incoming_parents` channel is closed.
-async fn process_unit<H: Hasher>(
-    creator: &mut Creator<H>,
-    incoming_parents: &mut Receiver<Unit<H>>,
+async fn process_unit<U: Unit>(
+    creator: &mut Creator<U::Hasher>,
+    incoming_parents: &mut Receiver<U>,
 ) -> anyhow::Result<(), CreatorError> {
     let unit = incoming_parents
         .next()
@@ -70,18 +68,18 @@ async fn process_unit<H: Hasher>(
     Ok(())
 }
 
-async fn keep_processing_units<H: Hasher>(
-    creator: &mut Creator<H>,
-    incoming_parents: &mut Receiver<Unit<H>>,
+async fn keep_processing_units<U: Unit>(
+    creator: &mut Creator<U::Hasher>,
+    incoming_parents: &mut Receiver<U>,
 ) -> anyhow::Result<(), CreatorError> {
     loop {
         process_unit(creator, incoming_parents).await?;
     }
 }
 
-async fn keep_processing_units_until<H: Hasher>(
-    creator: &mut Creator<H>,
-    incoming_parents: &mut Receiver<Unit<H>>,
+async fn keep_processing_units_until<U: Unit>(
+    creator: &mut Creator<U::Hasher>,
+    incoming_parents: &mut Receiver<U>,
     until: Delay,
 ) -> anyhow::Result<(), CreatorError> {
     futures::select! {
@@ -108,9 +106,9 @@ async fn keep_processing_units_until<H: Hasher>(
 ///
 /// We refer to the documentation https://cardinal-cryptography.github.io/AlephBFT/internals.html
 /// Section 5.1 for a discussion of this component.
-pub async fn run<H: Hasher, D: Data, MK: MultiKeychain, DP: DataProvider<D>>(
+pub async fn run<U: Unit, D: Data, MK: MultiKeychain, DP: DataProvider<D>>(
     conf: Config,
-    mut io: IO<H, D, MK, DP>,
+    mut io: IO<U, D, MK, DP>,
     keychain: MK,
     mut starting_round: oneshot::Receiver<Option<Round>>,
     mut terminator: Terminator,
@@ -126,13 +124,13 @@ pub async fn run<H: Hasher, D: Data, MK: MultiKeychain, DP: DataProvider<D>>(
 }
 
 async fn read_starting_round_and_run_creator<
-    H: Hasher,
+    U: Unit,
     D: Data,
     MK: MultiKeychain,
     DP: DataProvider<D>,
 >(
     conf: Config,
-    io: &mut IO<H, D, MK, DP>,
+    io: &mut IO<U, D, MK, DP>,
     keychain: MK,
     starting_round: &mut oneshot::Receiver<Option<Round>>,
 ) {
@@ -161,9 +159,9 @@ async fn read_starting_round_and_run_creator<
     }
 }
 
-async fn run_creator<H: Hasher, D: Data, MK: MultiKeychain, DP: DataProvider<D>>(
+async fn run_creator<U: Unit, D: Data, MK: MultiKeychain, DP: DataProvider<D>>(
     conf: Config,
-    io: &mut IO<H, D, MK, DP>,
+    io: &mut IO<U, D, MK, DP>,
     keychain: MK,
     starting_round: Round,
 ) -> anyhow::Result<(), CreatorError> {
@@ -190,13 +188,13 @@ async fn run_creator<H: Hasher, D: Data, MK: MultiKeychain, DP: DataProvider<D>>
             keep_processing_units_until(&mut creator, incoming_parents, delay).await?;
         }
 
-        let (preunit, parent_hashes) = create_unit(round, &mut creator, incoming_parents).await?;
+        let preunit = create_unit(round, &mut creator, incoming_parents).await?;
         trace!(target: LOG_TARGET, "Created a new preunit {:?} at round {:?}.", preunit, round);
         let data = data_provider.get_data().await;
         trace!(target: LOG_TARGET, "Received data: {:?}.", data);
         let unit = packer.pack(preunit, data);
 
-        outgoing_units.unbounded_send((unit, parent_hashes))?;
+        outgoing_units.unbounded_send(unit)?;
     }
 
     warn!(target: LOG_TARGET, "Maximum round reached. Not creating another unit.");

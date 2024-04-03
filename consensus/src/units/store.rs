@@ -1,291 +1,274 @@
-use super::*;
-use itertools::Itertools;
-use log::{trace, warn};
-use std::{collections::HashSet, fmt};
+use std::{
+    collections::HashMap,
+    fmt::{Display, Formatter, Result as FmtResult},
+};
 
-#[derive(Clone, Eq, PartialEq, Hash)]
-pub struct UnitStoreStatus<'a> {
-    index: NodeIndex,
-    forkers: &'a NodeSubset,
+use crate::{
+    units::{HashFor, Unit, UnitCoord},
+    NodeCount, NodeIndex, NodeMap, Round,
+};
+
+/// An overview of what is in the unit store.
+pub struct UnitStoreStatus {
     size: usize,
-    height: Round,
     top_row: NodeMap<Round>,
-    first_missing_rounds: NodeMap<Round>,
 }
 
-impl<'a> UnitStoreStatus<'a> {
-    fn new(
-        index: NodeIndex,
-        forkers: &'a NodeSubset,
-        size: usize,
-        height: Round,
-        top_row: NodeMap<Round>,
-        first_missing_rounds: NodeMap<Round>,
-    ) -> Self {
-        Self {
-            index,
-            forkers,
-            size,
-            height,
-            top_row,
-            first_missing_rounds,
-        }
-    }
-
-    pub fn rounds_behind(&self) -> Round {
-        self.height
-            .saturating_sub(self.top_row.get(self.index).cloned().unwrap_or(0))
+impl UnitStoreStatus {
+    /// Highest round among units in the store.
+    pub fn top_round(&self) -> Round {
+        self.top_row.values().max().cloned().unwrap_or(0)
     }
 }
 
-impl<'a> fmt::Display for UnitStoreStatus<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "DAG size - {}; DAG height - {}", self.size, self.height)?;
-        if self.first_missing_rounds.item_count() > 0 {
-            write!(
-                f,
-                "; DAG first missing rounds - {}",
-                self.first_missing_rounds
-            )?;
-        }
-        write!(f, "; DAG top row - {}", self.top_row)?;
-        if !self.forkers.is_empty() {
-            write!(f, "; forkers - {}", self.forkers)?;
-        }
-        Ok(())
+impl Display for UnitStoreStatus {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "total units: {}, top row: {}", self.size, self.top_row)
     }
 }
 
-/// A component for temporarily storing units before they are declared "legit" and sent
-/// to the Terminal. We refer to the documentation https://cardinal-cryptography.github.io/AlephBFT/internals.html
-/// Section 5.4 for a discussion of this component and the notion of "legit" units.
-
-pub(crate) struct UnitStore<H: Hasher, D: Data, K: Keychain> {
-    by_coord: HashMap<UnitCoord, SignedUnit<H, D, K>>,
-    by_hash: HashMap<H::Hash, SignedUnit<H, D, K>>,
-    parents: HashMap<H::Hash, Vec<H::Hash>>,
-    //the number of unique nodes that we hold units for a given round
-    is_forker: NodeSubset,
-    legit_buffer: Vec<SignedUnit<H, D, K>>,
-    max_round: Round,
+/// Stores units, and keeps track of which are canonical, i.e. the first ones inserted with a given coordinate.
+/// See `remove` for limitation on trusting canonical units, although they don't impact our usecases.
+pub struct UnitStore<U: Unit> {
+    by_hash: HashMap<HashFor<U>, U>,
+    canonical_units: NodeMap<HashMap<Round, HashFor<U>>>,
 }
 
-impl<H: Hasher, D: Data, K: Keychain> UnitStore<H, D, K> {
-    pub(crate) fn new(n_nodes: NodeCount, max_round: Round) -> Self {
+impl<U: Unit> UnitStore<U> {
+    /// Create a new unit store for the given number of nodes.
+    pub fn new(node_count: NodeCount) -> Self {
+        let mut canonical_units = NodeMap::with_size(node_count);
+        for node_id in node_count.into_iterator() {
+            canonical_units.insert(node_id, HashMap::new());
+        }
         UnitStore {
-            by_coord: HashMap::new(),
             by_hash: HashMap::new(),
-            parents: HashMap::new(),
-            // is_forker is initialized with default values for bool, i.e., false
-            is_forker: NodeSubset::with_size(n_nodes),
-            legit_buffer: Vec::new(),
-            max_round,
+            canonical_units,
         }
     }
 
-    pub fn get_status_of(&self, node: NodeIndex) -> UnitStoreStatus {
-        let n_nodes: NodeCount = self.is_forker.size().into();
-        let gm = self
-            .by_coord
-            .keys()
-            .map(|c| (c.creator, c.round))
-            .into_grouping_map();
-        let top_row = NodeMap::from_hashmap(n_nodes, gm.clone().max());
-        let first_missing_rounds = NodeMap::from_hashmap(
-            n_nodes,
-            gm.collect::<HashSet<_>>()
-                .into_iter()
-                .filter_map(|(id, rounds)| match top_row.get(id) {
-                    Some(&row) => (0..row)
-                        .position(|round| !rounds.contains(&round))
-                        .map(|round| (id, round as Round)),
-                    None => None,
-                })
-                .collect(),
-        );
-        UnitStoreStatus::new(
-            node,
-            &self.is_forker,
-            self.by_coord.len(),
-            self.by_coord.keys().map(|k| k.round).max().unwrap_or(0),
-            top_row,
-            first_missing_rounds,
-        )
+    fn mut_hashes_by(&mut self, creator: NodeIndex) -> &mut HashMap<Round, HashFor<U>> {
+        self.canonical_units
+            .get_mut(creator)
+            .expect("all hashmaps initialized")
     }
 
-    pub(crate) fn unit_by_coord(&self, coord: UnitCoord) -> Option<&SignedUnit<H, D, K>> {
-        self.by_coord.get(&coord)
+    fn hashes_by(&self, creator: NodeIndex) -> &HashMap<Round, HashFor<U>> {
+        self.canonical_units
+            .get(creator)
+            .expect("all hashmaps initialized")
     }
 
-    pub(crate) fn unit_by_hash(&self, hash: &H::Hash) -> Option<&SignedUnit<H, D, K>> {
+    // only call this for canonical units
+    fn canonical_by_hash(&self, hash: &HashFor<U>) -> &U {
+        self.by_hash.get(hash).expect("we have all canonical units")
+    }
+
+    /// Insert a unit. If no other unit with this coord is in the store it becomes canonical.
+    pub fn insert(&mut self, unit: U) {
+        let unit_hash = unit.hash();
+        let unit_coord = unit.coord();
+        if self.canonical_unit(unit_coord).is_none() {
+            self.mut_hashes_by(unit_coord.creator())
+                .insert(unit.coord().round(), unit_hash);
+        }
+        self.by_hash.insert(unit_hash, unit);
+    }
+
+    /// Remove a unit with a given hash. Notably if you remove a unit another might become canonical in its place in the future.
+    pub fn remove(&mut self, hash: &HashFor<U>) {
+        if let Some(unit) = self.by_hash.remove(hash) {
+            let creator_hashes = self.mut_hashes_by(unit.creator());
+            if creator_hashes.get(&unit.round()) == Some(&unit.hash()) {
+                creator_hashes.remove(&unit.round());
+            }
+        }
+    }
+
+    /// The canonical unit for the given coord if it exists.
+    pub fn canonical_unit(&self, coord: UnitCoord) -> Option<&U> {
+        self.hashes_by(coord.creator())
+            .get(&coord.round())
+            .map(|hash| self.canonical_by_hash(hash))
+    }
+
+    /// All the canonical units for the given creator, in order of rounds.
+    pub fn canonical_units(&self, creator: NodeIndex) -> impl Iterator<Item = &U> {
+        let canonical_hashes = self.hashes_by(creator);
+        let max_round = canonical_hashes.keys().max().cloned().unwrap_or(0);
+        (0..=max_round)
+            .filter_map(|round| canonical_hashes.get(&round))
+            .map(|hash| self.canonical_by_hash(hash))
+    }
+
+    /// The unit for the given hash, if present.
+    pub fn unit(&self, hash: &HashFor<U>) -> Option<&U> {
         self.by_hash.get(hash)
     }
 
-    pub(crate) fn contains_hash(&self, hash: &H::Hash) -> bool {
-        self.by_hash.contains_key(hash)
-    }
-
-    pub(crate) fn contains_coord(&self, coord: &UnitCoord) -> bool {
-        self.by_coord.contains_key(coord)
-    }
-
-    pub(crate) fn newest_unit(
-        &self,
-        index: NodeIndex,
-    ) -> Option<UncheckedSignedUnit<H, D, K::Signature>> {
-        Some(
-            self.by_coord
-                .values()
-                .filter(|su| su.as_signable().creator() == index)
-                .max_by_key(|su| su.as_signable().round())?
-                .clone()
-                .into_unchecked(),
-        )
-    }
-
-    // Outputs new legit units that are supposed to be sent to Consensus and empties the buffer.
-    pub(crate) fn yield_buffer_units(&mut self) -> Vec<SignedUnit<H, D, K>> {
-        std::mem::take(&mut self.legit_buffer)
-    }
-
-    // Outputs None if this is not a newly-discovered fork or Some(sv) where (su, sv) form a fork
-    pub(crate) fn is_new_fork(&self, fu: &FullUnit<H, D>) -> Option<SignedUnit<H, D, K>> {
-        if self.contains_hash(&fu.hash()) {
-            return None;
+    /// The status summary of this store.
+    pub fn status(&self) -> UnitStoreStatus {
+        let mut top_row = NodeMap::with_size(self.canonical_units.size());
+        for (creator, units) in self.canonical_units.iter() {
+            if let Some(round) = units.keys().max() {
+                top_row.insert(creator, *round);
+            }
         }
-        self.unit_by_coord(fu.coord()).cloned()
-    }
-
-    pub(crate) fn is_forker(&self, node_id: NodeIndex) -> bool {
-        self.is_forker[node_id]
-    }
-
-    // Marks a node as a forker and outputs all units in store created by this node.
-    // The returned vector is sorted w.r.t. increasing rounds.
-    pub(crate) fn mark_forker(&mut self, forker: NodeIndex) -> Vec<SignedUnit<H, D, K>> {
-        if self.is_forker[forker] {
-            warn!(target: "AlephBFT-unit-store", "Trying to mark the node {:?} as forker for the second time.", forker);
+        UnitStoreStatus {
+            size: self.by_hash.len(),
+            top_row,
         }
-        self.is_forker.insert(forker);
-        (0..=self.max_round)
-            .filter_map(|r| self.unit_by_coord(UnitCoord::new(r, forker)).cloned())
-            .collect()
-    }
-
-    pub(crate) fn add_unit(&mut self, su: SignedUnit<H, D, K>, alert: bool) {
-        let hash = su.as_signable().hash();
-        let creator = su.as_signable().creator();
-
-        if alert {
-            trace!(target: "AlephBFT-unit-store", "Adding unit with alert {:?}.", su.as_signable());
-            assert!(
-                self.is_forker[creator],
-                "The forker must be marked before adding alerted units."
-            );
-        }
-        if self.contains_hash(&hash) {
-            // Ignoring a duplicate.
-            trace!(target: "AlephBFT-unit-store", "A unit ignored as a duplicate {:?}.", su.as_signable());
-            return;
-        }
-        self.by_hash.insert(hash, su.clone());
-        self.by_coord.insert(su.as_signable().coord(), su.clone());
-
-        if alert || !self.is_forker[creator] {
-            self.legit_buffer.push(su);
-        }
-    }
-
-    pub(crate) fn add_parents(&mut self, hash: H::Hash, parents: Vec<H::Hash>) {
-        self.parents.insert(hash, parents);
-    }
-
-    pub(crate) fn get_parents(&mut self, hash: H::Hash) -> Option<&Vec<H::Hash>> {
-        self.parents.get(&hash)
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::{
-        units::{ControlHash, FullUnit, PreUnit, SignedUnit, UnitCoord, UnitStore},
-        NodeCount, NodeIndex, NodeMap, Round, Signed,
-    };
-    use aleph_bft_mock::{Data, Hasher64, Keychain};
+mod test {
+    use std::collections::HashSet;
 
-    fn create_unit(
-        round: Round,
-        node_idx: NodeIndex,
-        count: NodeCount,
-        session_id: u64,
-        keychain: &Keychain,
-    ) -> SignedUnit<Hasher64, Data, Keychain> {
-        let preunit = PreUnit::<Hasher64>::new(
-            node_idx,
-            round,
-            ControlHash::new(&NodeMap::with_size(count)),
-        );
-        let full_unit = FullUnit::new(preunit, Some(0), session_id);
-        Signed::sign(full_unit, keychain)
+    use crate::{
+        units::{random_full_parent_units_up_to, TestingFullUnit, Unit, UnitCoord, UnitStore},
+        NodeCount, NodeIndex,
+    };
+
+    #[test]
+    fn empty_has_no_units() {
+        let node_count = NodeCount(7);
+        let store = UnitStore::<TestingFullUnit>::new(node_count);
+        assert!(store
+            .canonical_unit(UnitCoord::new(0, NodeIndex(0)))
+            .is_none());
+        assert!(store.canonical_units(NodeIndex(0)).next().is_none());
     }
 
     #[test]
-    fn mark_forker_restore_state() {
-        let n_nodes = NodeCount(10);
+    fn single_unit_basic_operations() {
+        let node_count = NodeCount(7);
+        let mut store = UnitStore::new(node_count);
+        let unit = random_full_parent_units_up_to(0, node_count, 43)
+            .get(0)
+            .expect("we have the first round")
+            .get(0)
+            .expect("we have the initial unit for the zeroth creator")
+            .clone();
+        store.insert(unit.clone());
+        assert_eq!(store.unit(&unit.hash()), Some(&unit));
+        assert_eq!(store.canonical_unit(unit.coord()), Some(&unit));
+        {
+            // in block to drop the iterator
+            let mut canonical_units = store.canonical_units(unit.creator());
+            assert_eq!(canonical_units.next(), Some(&unit));
+            assert_eq!(canonical_units.next(), None);
+        }
+        store.remove(&unit.hash());
+        assert_eq!(store.unit(&unit.hash()), None);
+        assert_eq!(store.canonical_unit(unit.coord()), None);
+        assert_eq!(store.canonical_units(unit.creator()).next(), None);
+    }
 
-        let mut store = UnitStore::<Hasher64, Data, Keychain>::new(n_nodes, 100);
-
-        let keychains: Vec<_> = (0..=4)
-            .map(|i| Keychain::new(n_nodes, NodeIndex(i)))
+    #[test]
+    fn first_variant_is_canonical() {
+        let node_count = NodeCount(7);
+        let mut store = UnitStore::new(node_count);
+        // only unique variants
+        #[allow(clippy::mutable_key_type)]
+        let variants: HashSet<_> = (0..15)
+            .map(|_| {
+                random_full_parent_units_up_to(0, node_count, 43)
+                    .get(0)
+                    .expect("we have the first round")
+                    .get(0)
+                    .expect("we have the initial unit for the zeroth creator")
+                    .clone()
+            })
             .collect();
+        let variants: Vec<_> = variants.into_iter().collect();
+        for unit in &variants {
+            store.insert(unit.clone());
+        }
+        for unit in &variants {
+            assert_eq!(store.unit(&unit.hash()), Some(unit));
+        }
+        let canonical_unit = variants.get(0).expect("we have the unit").clone();
+        assert_eq!(
+            store.canonical_unit(canonical_unit.coord()),
+            Some(&canonical_unit)
+        );
+        {
+            // in block to drop the iterator
+            let mut canonical_units = store.canonical_units(canonical_unit.creator());
+            assert_eq!(canonical_units.next(), Some(&canonical_unit));
+            assert_eq!(canonical_units.next(), None);
+        }
+        store.remove(&canonical_unit.hash());
+        assert_eq!(store.unit(&canonical_unit.hash()), None);
+        // we don't have a canonical unit any more
+        assert_eq!(store.canonical_unit(canonical_unit.coord()), None);
+        assert_eq!(store.canonical_units(canonical_unit.creator()).next(), None);
+        // we still have all this other units
+        for unit in variants.iter().skip(1) {
+            assert_eq!(store.unit(&unit.hash()), Some(unit));
+        }
+    }
 
-        let mut forker_hashes = Vec::new();
-
-        for round in 0..4 {
-            for (i, keychain) in keychains.iter().enumerate() {
-                let unit = create_unit(round, NodeIndex(i), n_nodes, 0, keychain);
-                if i == 0 {
-                    forker_hashes.push(unit.as_signable().hash());
-                }
-                store.add_unit(unit, false);
+    #[test]
+    fn stores_lots_of_units() {
+        let node_count = NodeCount(7);
+        let mut store = UnitStore::new(node_count);
+        let max_round = 15;
+        let units = random_full_parent_units_up_to(max_round, node_count, 43);
+        for round_units in &units {
+            for unit in round_units {
+                store.insert(unit.clone());
             }
         }
-
-        // Forker's units
-        for round in 4..7 {
-            let unit = create_unit(round, NodeIndex(0), n_nodes, 0, &keychains[0]);
-            forker_hashes.push(unit.as_signable().hash());
-            store.add_unit(unit, false);
+        for round_units in &units {
+            for unit in round_units {
+                assert_eq!(store.unit(&unit.hash()), Some(unit));
+                assert_eq!(store.canonical_unit(unit.coord()), Some(unit));
+            }
         }
-
-        let forker_units: Vec<_> = store
-            .mark_forker(NodeIndex(0))
-            .iter()
-            .map(|unit| unit.clone().into_unchecked().as_signable().round())
-            .collect();
-
-        assert_eq!(vec![0, 1, 2, 3, 4, 5, 6], forker_units);
-        assert!(store.is_forker[NodeIndex(0)]);
-
-        // All rounds still have forker's units
-        for (round, hash) in forker_hashes[0..4].iter().enumerate() {
-            let round = round as Round;
-            let coord = UnitCoord::new(round, NodeIndex(0));
-            assert!(store.by_coord.contains_key(&coord));
-            assert!(store.by_hash.contains_key(hash));
+        for node_id in node_count.into_iterator() {
+            let mut canonical_units = store.canonical_units(node_id);
+            for round in 0..=max_round {
+                assert_eq!(
+                    canonical_units.next(),
+                    Some(&units[round as usize][node_id.0])
+                );
+            }
+            assert_eq!(canonical_units.next(), None);
         }
+    }
 
-        assert!(store
-            .by_coord
-            .contains_key(&UnitCoord::new(4, NodeIndex(0))));
-        assert!(store.by_hash.contains_key(&forker_hashes[4]));
-
-        for (round, hash) in forker_hashes[5..7].iter().enumerate() {
-            let round = round as Round;
-            let round = round + 5;
-            let coord = UnitCoord::new(round, NodeIndex(0));
-            assert!(store.by_coord.contains_key(&coord));
-            assert!(store.by_hash.contains_key(hash));
+    #[test]
+    fn handles_fragmented_canonical() {
+        let node_count = NodeCount(7);
+        let mut store = UnitStore::new(node_count);
+        let max_round = 15;
+        let units = random_full_parent_units_up_to(max_round, node_count, 43);
+        for round_units in &units {
+            for unit in round_units {
+                store.insert(unit.clone());
+            }
+        }
+        for round_units in &units {
+            for unit in round_units {
+                // remove some units with a weird criterion
+                if unit.round() as usize % (unit.creator().0 + 1) == 0 {
+                    store.remove(&unit.hash());
+                }
+            }
+        }
+        for node_id in node_count.into_iterator() {
+            let mut canonical_units = store.canonical_units(node_id);
+            for round in 0..=max_round {
+                if round as usize % (node_id.0 + 1) != 0 {
+                    assert_eq!(
+                        canonical_units.next(),
+                        Some(&units[round as usize][node_id.0])
+                    );
+                }
+            }
+            assert_eq!(canonical_units.next(), None);
         }
     }
 }

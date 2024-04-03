@@ -1,6 +1,7 @@
 use crate::{
-    units::{ControlHash, FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit},
-    Data, Hasher, Keychain, NodeCount, NodeMap, Round, SessionId, Signature, SignatureError,
+    units::{ControlHash, FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit, Unit},
+    Data, Hasher, Keychain, NodeCount, NodeIndex, NodeMap, Round, SessionId, Signature,
+    SignatureError,
 };
 use std::{
     fmt::{Display, Formatter, Result as FmtResult},
@@ -77,6 +78,14 @@ impl<K: Keychain> Validator<K> {
             keychain,
             max_round,
         }
+    }
+
+    pub fn node_count(&self) -> NodeCount {
+        self.keychain.node_count()
+    }
+
+    pub fn index(&self) -> NodeIndex {
+        self.keychain.index()
     }
 
     pub fn validate_unit<H: Hasher, D: Data>(

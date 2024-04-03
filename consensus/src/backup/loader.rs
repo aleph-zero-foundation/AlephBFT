@@ -10,7 +10,7 @@ use futures::{channel::oneshot, AsyncRead, AsyncReadExt};
 use log::{error, info, warn};
 
 use crate::{
-    units::{UncheckedSignedUnit, UnitCoord},
+    units::{UncheckedSignedUnit, Unit, UnitCoord},
     Data, Hasher, NodeIndex, Round, SessionId, Signature,
 };
 
@@ -246,7 +246,7 @@ mod tests {
     use crate::{
         backup::BackupLoader,
         units::{
-            create_preunits, creator_set, preunit_to_unchecked_signed_unit, preunit_to_unit,
+            create_preunits, creator_set, preunit_to_full_unit, preunit_to_unchecked_signed_unit,
             UncheckedSignedUnit as GenericUncheckedSignedUnit,
         },
         NodeCount, NodeIndex, Round, SessionId,
@@ -277,14 +277,14 @@ mod tests {
 
             let units: Vec<_> = pre_units
                 .iter()
-                .map(|(pre_unit, _)| preunit_to_unit(pre_unit.clone(), session_id))
+                .map(|pre_unit| preunit_to_full_unit(pre_unit.clone(), session_id))
                 .collect();
             for creator in creators.iter_mut() {
                 creator.add_units(&units);
             }
 
             let mut unchecked_signed_units = Vec::with_capacity(pre_units.len());
-            for ((pre_unit, _), keychain) in pre_units.into_iter().zip(keychains.iter()) {
+            for (pre_unit, keychain) in pre_units.into_iter().zip(keychains.iter()) {
                 unchecked_signed_units.push(preunit_to_unchecked_signed_unit(
                     pre_unit, session_id, keychain,
                 ))

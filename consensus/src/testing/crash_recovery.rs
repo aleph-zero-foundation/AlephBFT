@@ -1,6 +1,6 @@
 use crate::{
     testing::{init_log, spawn_honest_member, HonestMember, Network, ReconnectSender},
-    units::{UncheckedSignedUnit, UnitCoord},
+    units::{UncheckedSignedUnit, Unit, UnitCoord},
     NodeCount, NodeIndex, SpawnHandle, TaskHandle,
 };
 use aleph_bft_mock::{Data, Hasher64, Router, Signature, Spawner};

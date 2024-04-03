@@ -1,10 +1,12 @@
 use crate::{
     consensus,
-    creation::SignedUnitWithParents as GenericSignedUnitWithParents,
-    runway::{NotificationIn as GenericNotificationIn, NotificationOut as GenericNotificationOut},
+    extension::Service as Extender,
+    reconstruction::{ReconstructedUnit as GenericReconstructedUnit, Request as GenericRequest},
+    runway::ExplicitParents as GenericExplicitParents,
     testing::{complete_oneshot, gen_config, gen_delay_config},
-    units::{ControlHash, PreUnit, Unit},
-    NodeCount, NodeIndex, NodeMap, NodeSubset, Receiver, Round, Sender, SpawnHandle, Terminator,
+    units::{ControlHash, FullUnit, PreUnit, SignedUnit as GenericSignedUnit, Unit, UnitCoord},
+    NodeCount, NodeIndex, NodeMap, NodeSubset, Receiver, Round, Sender, Signed, SpawnHandle,
+    Terminator,
 };
 use aleph_bft_mock::{Data, DataProvider, Hash64, Hasher64, Keychain, Spawner};
 use futures::{
@@ -13,39 +15,32 @@ use futures::{
     FutureExt,
 };
 use futures_timer::Delay;
-use log::{debug, error, trace};
+use log::{debug, trace};
 use rand::{distributions::Open01, prelude::*};
 use std::{cmp, collections::HashMap, time::Duration};
 
-type NotificationIn = GenericNotificationIn<Hasher64>;
-type NotificationOut = GenericNotificationOut<Hasher64>;
-type SignedUnitWithParents = GenericSignedUnitWithParents<Hasher64, Data, Keychain>;
+type Request = GenericRequest<Hasher64>;
+type ExplicitParents = GenericExplicitParents<Hasher64>;
+type SignedUnit = GenericSignedUnit<Hasher64, Data, Keychain>;
+type ReconstructedUnit = GenericReconstructedUnit<SignedUnit>;
 
 #[derive(Clone)]
 struct UnitWithParents {
-    unit: Unit<Hasher64>,
+    unit: SignedUnit,
     parent_hashes: NodeMap<Hash64>,
-}
-
-fn unit_hash(round: Round, creator: NodeIndex, variant: usize) -> Hash64 {
-    let mut hash = Hash64::default();
-    hash[0] = round as u8;
-    hash[1] = creator.0 as u8;
-    hash[2] = variant as u8;
-    hash
 }
 
 impl UnitWithParents {
     fn new(
         round: Round,
         creator: NodeIndex,
-        variant: usize,
+        variant: Data,
         parent_hashes: NodeMap<Hash64>,
     ) -> Self {
+        let keychain = Keychain::new(parent_hashes.size(), creator);
         let control_hash = ControlHash::new(&parent_hashes);
         let pre_unit = PreUnit::new(creator, round, control_hash);
-        let hash = unit_hash(round, creator, variant);
-        let unit = Unit::new(pre_unit, hash);
+        let unit = Signed::sign(FullUnit::new(pre_unit, Some(variant), 0), &keychain);
         UnitWithParents {
             unit,
             parent_hashes,
@@ -55,83 +50,117 @@ impl UnitWithParents {
         self.unit.hash()
     }
 
-    fn parent_hashes_vec(&self) -> Vec<Hash64> {
-        self.parent_hashes.values().cloned().collect()
+    fn parent_hashes_map(&self) -> HashMap<UnitCoord, Hash64> {
+        let mut result = HashMap::new();
+        let round = self.unit.round();
+        for (creator, hash) in self.parent_hashes.iter() {
+            result.insert(UnitCoord::new(round - 1, creator), *hash);
+        }
+        result
     }
 }
 
 struct ConsensusDagFeeder {
-    tx_in: Sender<NotificationIn>,
-    rx_out: Receiver<NotificationOut>,
-    units_from_creator: Receiver<SignedUnitWithParents>,
+    units_for_consensus: Sender<SignedUnit>,
+    parents_for_consensus: Sender<ExplicitParents>,
+    requests_from_consensus: Receiver<Request>,
+    reconstructed_units_from_consensus: Receiver<ReconstructedUnit>,
+    units_from_creator: Receiver<SignedUnit>,
     units: Vec<UnitWithParents>,
     units_map: HashMap<Hash64, UnitWithParents>,
 }
 
+type DagFeederParts = (
+    ConsensusDagFeeder,
+    Receiver<SignedUnit>,
+    Receiver<ExplicitParents>,
+    Sender<Request>,
+    Sender<ReconstructedUnit>,
+    Sender<SignedUnit>,
+);
+
 impl ConsensusDagFeeder {
-    fn new(
-        units: Vec<UnitWithParents>,
-    ) -> (
-        Self,
-        Receiver<NotificationIn>,
-        Sender<NotificationOut>,
-        Sender<SignedUnitWithParents>,
-    ) {
+    fn new(units: Vec<UnitWithParents>) -> DagFeederParts {
         let units_map = units.iter().map(|u| (u.hash(), u.clone())).collect();
-        let (tx_in, rx_in) = mpsc::unbounded();
-        let (tx_out, rx_out) = mpsc::unbounded();
+        let (units_for_consensus, units_from_feeder) = mpsc::unbounded();
+        let (parents_for_consensus, parents_from_feeder) = mpsc::unbounded();
+        let (requests_for_feeder, requests_from_consensus) = mpsc::unbounded();
+        let (reconstructed_units_for_feeder, reconstructed_units_from_consensus) =
+            mpsc::unbounded();
         let (units_for_feeder, units_from_creator) = mpsc::unbounded();
         let cdf = ConsensusDagFeeder {
-            tx_in,
-            rx_out,
+            units_for_consensus,
+            parents_for_consensus,
+            requests_from_consensus,
+            reconstructed_units_from_consensus,
             units_from_creator,
             units,
             units_map,
         };
-        (cdf, rx_in, tx_out, units_for_feeder)
+        (
+            cdf,
+            units_from_feeder,
+            parents_from_feeder,
+            requests_for_feeder,
+            reconstructed_units_for_feeder,
+            units_for_feeder,
+        )
     }
 
-    fn on_consensus_notification(&self, notification: NotificationOut) {
-        match notification {
-            NotificationOut::WrongControlHash(h) => {
+    fn on_request(&self, request: Request) {
+        use GenericRequest::*;
+        match request {
+            ParentsOf(h) => {
                 // We need to answer these requests as otherwise reconstruction cannot make progress
-                let parent_hashes = self.units_map.get(&h).unwrap().parent_hashes_vec();
-                let notification = NotificationIn::UnitParents(h, parent_hashes);
-                self.tx_in.unbounded_send(notification).unwrap();
+                let parent_hashes = self.units_map.get(&h).unwrap().parent_hashes_map();
+                let parents = (h, parent_hashes);
+                self.parents_for_consensus.unbounded_send(parents).unwrap();
             }
-            NotificationOut::AddedToDag(h, p_hashes) => {
-                let expected_hashes = self.units_map.get(&h).unwrap().parent_hashes_vec();
-                assert!(p_hashes == expected_hashes);
+            Coord(_) => {
+                // We don't need to answer missing units requests.
             }
-            _ => {
-                //We ignore the remaining notifications. We don't need to answer missing units requests.
-            }
+        }
+    }
+
+    fn on_reconstructed_unit(&self, unit: ReconstructedUnit) {
+        let h = unit.hash();
+        let round = unit.round();
+        let parents = unit.parents();
+        let expected_hashes = self
+            .units_map
+            .get(&h)
+            .expect("we have the unit")
+            .parent_hashes_map();
+        assert_eq!(parents.item_count(), expected_hashes.len());
+        for (creator, hash) in parents {
+            assert_eq!(
+                Some(hash),
+                expected_hashes.get(&UnitCoord::new(round - 1, creator))
+            );
         }
     }
 
     async fn run(mut self) {
         for unit in &self.units {
-            let notification = NotificationIn::NewUnits(vec![unit.unit.clone()]);
-            self.tx_in.unbounded_send(notification).unwrap();
+            self.units_for_consensus
+                .unbounded_send(unit.unit.clone())
+                .expect("channel should be open");
         }
 
         loop {
-            let notification = loop {
-                futures::select! {
-                notification = self.rx_out.next() => {
-                    break notification;
+            futures::select! {
+                request = self.requests_from_consensus.next() => match request {
+                    Some(request) => self.on_request(request),
+                    None => break,
+                },
+                unit = self.reconstructed_units_from_consensus.next() => match unit {
+                    Some(unit) => self.on_reconstructed_unit(unit),
+                    None => break,
                 },
                 _ = self.units_from_creator.next() => continue,
-                }
             };
-            match notification {
-                Some(notification) => self.on_consensus_notification(notification),
-                None => {
-                    error!(target: "dag-test", "Consensus notification stream closed.");
-                    break;
-                }
-            }
         }
+        debug!(target: "dag-test", "Consensus stream closed.");
     }
 }
 
@@ -141,29 +170,48 @@ async fn run_consensus_on_dag(
     deadline_ms: u64,
 ) -> Vec<Vec<Hash64>> {
     let node_id = NodeIndex(0);
-    let (feeder, rx_in, tx_out, units_for_feeder) = ConsensusDagFeeder::new(units);
+    let (
+        feeder,
+        units_from_feeder,
+        parents_from_feeder,
+        requests_for_feeder,
+        reconstructed_units_for_feeder,
+        units_for_feeder,
+    ) = ConsensusDagFeeder::new(units);
     let conf = gen_config(node_id, n_members, gen_delay_config());
     let keychain = Keychain::new(n_members, node_id);
     let (_exit_tx, exit_rx) = oneshot::channel();
+    let (_extender_exit_tx, extender_exit_rx) = oneshot::channel();
+    let (reconstructed_units_for_us, mut reconstructed_units_from_consensus) = mpsc::unbounded();
     let (batch_tx, mut batch_rx) = mpsc::unbounded();
     let spawner = Spawner::new();
     let starting_round = complete_oneshot(Some(0));
+    let (units_for_extender, units_from_us) = mpsc::unbounded();
+    let extender = Extender::<Hasher64>::new(node_id, units_from_us, batch_tx);
     spawner.spawn(
         "consensus",
         consensus::run(
             conf,
             consensus::IO {
-                incoming_notifications: rx_in,
-                outgoing_notifications: tx_out,
-                units_for_runway: units_for_feeder,
+                units_from_runway: units_from_feeder,
+                parents_from_runway: parents_from_feeder,
+                units_for_runway: reconstructed_units_for_us,
+                requests_for_runway: requests_for_feeder,
+                new_units_for_runway: units_for_feeder,
                 data_provider: DataProvider::new(),
-                ordered_batch_tx: batch_tx,
                 starting_round,
             },
             keychain,
             spawner,
             Terminator::create_root(exit_rx, "AlephBFT-consensus"),
         ),
+    );
+    spawner.spawn(
+        "extender",
+        extender.run(Terminator::create_root(
+            extender_exit_rx,
+            "AlephBFT-extender",
+        )),
     );
     spawner.spawn("feeder", feeder.run());
     let mut batches = Vec::new();
@@ -173,6 +221,11 @@ async fn run_consensus_on_dag(
             batch = batch_rx.next() => {
                 batches.push(batch.unwrap());
             },
+            unit = reconstructed_units_from_consensus.next() => {
+                let unit = unit.expect("consensus is operating");
+                units_for_extender.unbounded_send(unit.extender_unit()).expect("extender is operating");
+                reconstructed_units_for_feeder.unbounded_send(unit).expect("feeder is operating");
+            }
             _ = &mut delay_fut => {
                 break;
             }
@@ -202,7 +255,7 @@ fn generate_random_dag(n_members: NodeCount, height: Round, seed: u64) -> Vec<Un
     // For a fixed node the probability that it will terminate before height is a constant around 0.1
     let prob_terminate = 0.15 / ((height + 1) as f64);
     // Maximum number of forks per round per forker.
-    let max_variants = rng.gen_range(1..=4);
+    let max_variants: u32 = rng.gen_range(1..=4);
 
     let threshold = n_members.consensus_threshold();
 

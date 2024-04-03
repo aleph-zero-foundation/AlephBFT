@@ -1,17 +1,20 @@
-use crate::{reconstruction::ReconstructedUnit, Hasher};
+use crate::{
+    reconstruction::ReconstructedUnit,
+    units::{HashFor, Unit},
+};
 use std::collections::{HashMap, HashSet, VecDeque};
 
-struct OrphanedUnit<H: Hasher> {
-    unit: ReconstructedUnit<H>,
-    missing_parents: HashSet<H::Hash>,
+struct OrphanedUnit<U: Unit> {
+    unit: ReconstructedUnit<U>,
+    missing_parents: HashSet<HashFor<U>>,
 }
 
-impl<H: Hasher> OrphanedUnit<H> {
+impl<U: Unit> OrphanedUnit<U> {
     /// If there are no missing parents then returns just the internal unit.
     pub fn new(
-        unit: ReconstructedUnit<H>,
-        missing_parents: HashSet<H::Hash>,
-    ) -> Result<Self, ReconstructedUnit<H>> {
+        unit: ReconstructedUnit<U>,
+        missing_parents: HashSet<HashFor<U>>,
+    ) -> Result<Self, ReconstructedUnit<U>> {
         match missing_parents.is_empty() {
             true => Err(unit),
             false => Ok(OrphanedUnit {
@@ -22,7 +25,7 @@ impl<H: Hasher> OrphanedUnit<H> {
     }
 
     /// If this was the last missing parent return the reconstructed unit.
-    pub fn resolve_parent(self, parent: H::Hash) -> Result<ReconstructedUnit<H>, Self> {
+    pub fn resolve_parent(self, parent: HashFor<U>) -> Result<ReconstructedUnit<U>, Self> {
         let OrphanedUnit {
             unit,
             mut missing_parents,
@@ -38,27 +41,25 @@ impl<H: Hasher> OrphanedUnit<H> {
     }
 
     /// The hash of the unit.
-    pub fn hash(&self) -> H::Hash {
+    pub fn hash(&self) -> HashFor<U> {
         self.unit.hash()
     }
 
     /// The set of still missing parents.
-    pub fn missing_parents(&self) -> &HashSet<H::Hash> {
+    pub fn missing_parents(&self) -> &HashSet<HashFor<U>> {
         &self.missing_parents
     }
 }
 
 /// A structure ensuring that units added to it are output in an order
 /// in agreement with the DAG order.
-/// TODO: This should likely be the final destination of units going through a pipeline.
-/// This requires quite a bit more of a refactor.
-pub struct Dag<H: Hasher> {
-    orphaned_units: HashMap<H::Hash, OrphanedUnit<H>>,
-    waiting_for: HashMap<H::Hash, Vec<H::Hash>>,
-    dag_units: HashSet<H::Hash>,
+pub struct Dag<U: Unit> {
+    orphaned_units: HashMap<HashFor<U>, OrphanedUnit<U>>,
+    waiting_for: HashMap<HashFor<U>, Vec<HashFor<U>>>,
+    dag_units: HashSet<HashFor<U>>,
 }
 
-impl<H: Hasher> Dag<H> {
+impl<U: Unit> Dag<U> {
     /// Create a new empty DAG.
     pub fn new() -> Self {
         Dag {
@@ -68,7 +69,7 @@ impl<H: Hasher> Dag<H> {
         }
     }
 
-    fn move_to_dag(&mut self, unit: ReconstructedUnit<H>) -> Vec<ReconstructedUnit<H>> {
+    fn move_to_dag(&mut self, unit: ReconstructedUnit<U>) -> Vec<ReconstructedUnit<U>> {
         let mut result = Vec::new();
         let mut ready_units = VecDeque::from([unit]);
         while let Some(unit) = ready_units.pop_front() {
@@ -94,7 +95,7 @@ impl<H: Hasher> Dag<H> {
 
     /// Add a unit to the Dag. Returns all the units that now have all their parents in the Dag,
     /// in an order agreeing with the Dag structure.
-    pub fn add_unit(&mut self, unit: ReconstructedUnit<H>) -> Vec<ReconstructedUnit<H>> {
+    pub fn add_unit(&mut self, unit: ReconstructedUnit<U>) -> Vec<ReconstructedUnit<U>> {
         if self.dag_units.contains(&unit.hash()) {
             // Deduplicate.
             return Vec::new();
@@ -123,10 +124,10 @@ impl<H: Hasher> Dag<H> {
 mod test {
     use crate::{
         reconstruction::{dag::Dag, ReconstructedUnit},
-        units::{random_full_parent_units_up_to, FullUnit},
+        units::{random_full_parent_units_up_to, TestingFullUnit, Unit},
         Hasher, NodeCount, NodeIndex, NodeMap,
     };
-    use aleph_bft_mock::{Data, Hasher64};
+    use aleph_bft_mock::Hasher64;
     use std::collections::HashSet;
 
     fn full_parents_to_map(
@@ -141,19 +142,19 @@ mod test {
 
     // silly clippy, the map below doesn't work with &[..]
     #[allow(clippy::ptr_arg)]
-    fn unit_hashes(units: &Vec<FullUnit<Hasher64, Data>>) -> Vec<<Hasher64 as Hasher>::Hash> {
+    fn unit_hashes(units: &Vec<TestingFullUnit>) -> Vec<<Hasher64 as Hasher>::Hash> {
         units.iter().map(|unit| unit.hash()).collect()
     }
 
     fn reconstructed(
-        dag: Vec<Vec<FullUnit<Hasher64, Data>>>,
-    ) -> Vec<Vec<ReconstructedUnit<Hasher64>>> {
+        dag: Vec<Vec<TestingFullUnit>>,
+    ) -> Vec<Vec<ReconstructedUnit<TestingFullUnit>>> {
         let hashes: Vec<_> = dag.iter().map(unit_hashes).collect();
         let initial_units: Vec<_> = dag
             .get(0)
             .expect("only called on nonempty dags")
             .iter()
-            .map(|unit| ReconstructedUnit::initial(unit.unit()))
+            .map(|unit| ReconstructedUnit::initial(unit.clone()))
             .collect();
         let mut result = vec![initial_units];
         for (units, parents) in dag.iter().skip(1).zip(hashes) {
@@ -161,7 +162,7 @@ mod test {
             let reconstructed = units
                 .iter()
                 .map(|unit| {
-                    ReconstructedUnit::with_parents(unit.unit(), parents.clone())
+                    ReconstructedUnit::with_parents(unit.clone(), parents.clone())
                         .expect("parents are correct")
                 })
                 .collect();

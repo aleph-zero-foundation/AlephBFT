@@ -7,7 +7,7 @@ use crate::{
 };
 use aleph_bft_rmc::{DoublingDelayScheduler, Message as RmcMessage};
 use futures::{FutureExt, StreamExt};
-use log::{debug, error, warn};
+use log::{debug, error, trace, warn};
 use std::time::Duration;
 
 const LOG_TARGET: &str = "AlephBFT-alerter";
@@ -147,6 +147,7 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Service<H, D, MK> {
     }
 
     fn handle_alert_from_runway(&mut self, alert: Alert<H, D, MK::Signature>) {
+        trace!(target: LOG_TARGET, "Handling alert {:?}.", alert);
         let (message, recipient, hash) = self.handler.on_own_alert(alert.clone());
         self.send_message_for_network(message, recipient);
         if let Some(multisigned) = self.rmc_service.start_rmc(hash) {

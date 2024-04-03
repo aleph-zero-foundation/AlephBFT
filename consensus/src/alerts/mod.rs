@@ -1,6 +1,7 @@
 use crate::{
-    units::UncheckedSignedUnit, Data, Hasher, Index, Keychain, MultiKeychain, Multisigned,
-    NodeIndex, PartialMultisignature, Signable, Signature, UncheckedSigned,
+    units::{UncheckedSignedUnit, Unit},
+    Data, Hasher, Index, Keychain, MultiKeychain, Multisigned, NodeIndex, PartialMultisignature,
+    Signable, Signature, UncheckedSigned,
 };
 use aleph_bft_rmc::Message as RmcMessage;
 use codec::{Decode, Encode};

@@ -1,7 +1,7 @@
 use crate::{
-    creation::{run, SignedUnitWithParents as GenericSignedUnitWithParents, IO},
+    creation::{run, IO},
     testing::{gen_config, gen_delay_config},
-    units::Unit as GenericUnit,
+    units::{SignedUnit as GenericSignedUnit, Unit as GenericUnit},
     NodeCount, Receiver, Round, Sender, Terminator,
 };
 use aleph_bft_mock::{Data, DataProvider, Hasher64, Keychain};
@@ -10,19 +10,18 @@ use futures::{
     FutureExt, StreamExt,
 };
 
-type Unit = GenericUnit<Hasher64>;
-type SignedUnitWithParents = GenericSignedUnitWithParents<Hasher64, Data, Keychain>;
+type SignedUnit = GenericSignedUnit<Hasher64, Data, Keychain>;
 
 struct TestController {
     max_round_per_creator: Vec<Round>,
-    parents_for_creators: Sender<Unit>,
-    units_from_creators: Receiver<SignedUnitWithParents>,
+    parents_for_creators: Sender<SignedUnit>,
+    units_from_creators: Receiver<SignedUnit>,
 }
 
 impl TestController {
     fn new(
-        parents_for_creators: Sender<Unit>,
-        units_from_creators: Receiver<SignedUnitWithParents>,
+        parents_for_creators: Sender<SignedUnit>,
+        units_from_creators: Receiver<SignedUnit>,
         n_members: NodeCount,
     ) -> Self {
         TestController {
@@ -35,12 +34,11 @@ impl TestController {
     async fn control_until(&mut self, max_round: Round) {
         let mut round_reached = 0;
         while round_reached < max_round {
-            let (unit, _) = self
+            let unit = self
                 .units_from_creators
                 .next()
                 .await
                 .expect("Creator output channel isn't closed.");
-            let unit = unit.into_unchecked().as_signable().unit();
             if unit.round() > round_reached {
                 round_reached = unit.round();
             }
@@ -56,8 +54,8 @@ struct TestSetup {
     test_controller: TestController,
     killers: Vec<oneshot::Sender<()>>,
     handles: Vec<tokio::task::JoinHandle<()>>,
-    units_from_controller: Receiver<Unit>,
-    units_for_creators: Vec<Sender<Unit>>,
+    units_from_controller: Receiver<SignedUnit>,
+    units_for_creators: Vec<Sender<SignedUnit>>,
 }
 
 fn setup_test(n_members: NodeCount) -> TestSetup {

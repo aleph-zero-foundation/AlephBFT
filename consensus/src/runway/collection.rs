@@ -1,6 +1,6 @@
 use crate::{
     runway::Request,
-    units::{UncheckedSignedUnit, ValidationError, Validator},
+    units::{UncheckedSignedUnit, Unit, ValidationError, Validator},
     Data, Hasher, Keychain, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Signable,
     Signature, SignatureError, UncheckedSigned,
 };
@@ -456,7 +456,7 @@ mod tests {
         let creator = Creator::new(creator_id, n_members);
         let validator = Validator::new(session_id, *keychain, max_round);
         let (mut collection, salt) = Collection::new(keychain, &validator);
-        let (preunit, _) = creator.create_unit(0).expect("Creation should succeed.");
+        let preunit = creator.create_unit(0).expect("Creation should succeed.");
         let unit = preunit_to_unchecked_signed_unit(preunit, session_id, keychain);
         let responses = create_responses(
             keychains
@@ -519,7 +519,7 @@ mod tests {
         let creator = Creator::new(creator_id, n_members);
         let validator = Validator::new(session_id, *keychain, max_round);
         let (mut collection, salt) = Collection::new(keychain, &validator);
-        let (preunit, _) = creator.create_unit(0).expect("Creation should succeed.");
+        let preunit = creator.create_unit(0).expect("Creation should succeed.");
         let unit = preunit_to_unchecked_signed_unit(preunit, wrong_session_id, keychain);
         let responses = create_responses(
             keychains.iter().skip(1).zip(repeat(Some(unit))),
@@ -547,7 +547,7 @@ mod tests {
         let creator = Creator::new(other_creator_id, n_members);
         let validator = Validator::new(session_id, *keychain, max_round);
         let (mut collection, salt) = Collection::new(keychain, &validator);
-        let (preunit, _) = creator.create_unit(0).expect("Creation should succeed.");
+        let preunit = creator.create_unit(0).expect("Creation should succeed.");
         let unit = preunit_to_unchecked_signed_unit(preunit, session_id, &keychains[1]);
         let responses = create_responses(
             keychains.iter().skip(1).zip(repeat(Some(unit))),

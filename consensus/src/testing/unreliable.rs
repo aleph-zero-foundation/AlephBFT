@@ -2,6 +2,7 @@ use crate::{
     member::UnitMessage,
     network::NetworkDataInner,
     testing::{init_log, spawn_honest_member, HonestMember, NetworkData},
+    units::Unit,
     Index, NodeCount, NodeIndex, Round, Signed, SpawnHandle,
 };
 use aleph_bft_mock::{BadSigning, Keychain, NetworkHook, Router, Spawner};

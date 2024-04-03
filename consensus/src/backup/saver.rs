@@ -140,7 +140,7 @@ mod tests {
         let units: Vec<TestUnit> = (0..5)
             .map(|k| {
                 preunit_to_unchecked_signed_unit(
-                    creators[k].create_unit(0).unwrap().0,
+                    creators[k].create_unit(0).unwrap(),
                     0,
                     &keychains[k],
                 )

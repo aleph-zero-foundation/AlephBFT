@@ -7,7 +7,7 @@ use crate::{
         RunwayNotificationOut,
     },
     task_queue::TaskQueue,
-    units::{UncheckedSignedUnit, UnitCoord},
+    units::{UncheckedSignedUnit, Unit, UnitCoord},
     Config, Data, DataProvider, FinalizationHandler, Hasher, MultiKeychain, Network, NodeIndex,
     Receiver, Recipient, Round, Sender, Signature, SpawnHandle, Terminator, UncheckedSigned,
 };
