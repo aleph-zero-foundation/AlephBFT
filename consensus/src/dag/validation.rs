@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 
 use crate::{
-    alerts::{Alert, ForkingNotification},
+    alerts::Alert,
     units::{
         SignedUnit, UncheckedSignedUnit, Unit, UnitStore, UnitStoreStatus, ValidationError,
         Validator as UnitValidator, WrappedUnit,
@@ -147,7 +147,8 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Validator<H, D, MK> {
         Ok(unit)
     }
 
-    fn validate_committed<U: WrappedUnit<H, Wrapped = SignedUnit<H, D, MK>>>(
+    /// Validate a committed unit, it has to be from a forker.
+    pub fn validate_committed<U: WrappedUnit<H, Wrapped = SignedUnit<H, D, MK>>>(
         &mut self,
         unit: UncheckedSignedUnit<H, D, MK::Signature>,
         store: &UnitStore<U>,
@@ -159,26 +160,6 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Validator<H, D, MK> {
         );
         self.processing_units.insert(unit.clone());
         Ok(unit)
-    }
-
-    /// Process a forking notification, potentially returning a lot of unit processing results.
-    pub fn process_forking_notification<U: WrappedUnit<H, Wrapped = SignedUnit<H, D, MK>>>(
-        &mut self,
-        notification: ForkingNotification<H, D, MK::Signature>,
-        store: &UnitStore<U>,
-    ) -> Vec<ValidatorResult<H, D, MK>> {
-        use ForkingNotification::*;
-        match notification {
-            Forker((unit, other_unit)) => {
-                // Just treat them as normal incoming units, if they are a forking proof
-                // this will either trigger a new forker or we already knew about this one.
-                vec![self.validate(unit, store), self.validate(other_unit, store)]
-            }
-            Units(units) => units
-                .into_iter()
-                .map(|unit| self.validate_committed(unit, store))
-                .collect(),
-        }
     }
 
     /// Signal that a unit finished processing and thus it's copy no longer has to be kept for fork detection.
@@ -199,12 +180,11 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Validator<H, D, MK> {
 #[cfg(test)]
 mod test {
     use crate::{
-        alerts::ForkingNotification,
+        dag::validation::{Error, Validator},
         units::{
             random_full_parent_units_up_to, Unit, UnitStore, Validator as UnitValidator,
             WrappedSignedUnit,
         },
-        validation::{Error, Validator},
         NodeCount, NodeIndex, Signed,
     };
     use aleph_bft_mock::Keychain;
@@ -401,40 +381,6 @@ mod test {
     }
 
     #[test]
-    fn detects_fork_through_notification() {
-        let node_count = NodeCount(7);
-        let session_id = 0;
-        let max_round = 2137;
-        let keychains: Vec<_> = node_count
-            .into_iterator()
-            .map(|node_id| Keychain::new(node_count, node_id))
-            .collect();
-        let store = UnitStore::<WrappedSignedUnit>::new(node_count);
-        let mut validator = Validator::new(UnitValidator::new(session_id, keychains[0], max_round));
-        let unit = random_full_parent_units_up_to(2, node_count, session_id)
-            .get(2)
-            .expect("we have the requested round")
-            .get(0)
-            .expect("we have the unit for the zeroth creator")
-            .clone();
-        let unit = Signed::sign(unit, &keychains[0]);
-        let fork = random_full_parent_units_up_to(2, node_count, session_id)
-            .get(2)
-            .expect("we have the requested round")
-            .get(0)
-            .expect("we have the unit for the zeroth creator")
-            .clone();
-        let fork = Signed::sign(fork, &keychains[0]);
-        let results = validator.process_forking_notification(
-            ForkingNotification::Forker((unit.clone().into(), fork.into())),
-            &store,
-        );
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0], Ok(unit.clone()));
-        assert!(matches!(results[1], Err(Error::NewForker(_))));
-    }
-
-    #[test]
     fn accepts_committed() {
         let node_count = NodeCount(7);
         let session_id = 0;
@@ -469,15 +415,9 @@ mod test {
             validator.validate(fork.clone().into(), &store),
             Err(Error::NewForker(_))
         ));
-        let results = validator.process_forking_notification(
-            ForkingNotification::Units(units.clone().into_iter().map(|unit| unit.into()).collect()),
-            &store,
+        assert_eq!(
+            validator.validate_committed(fork.clone().into(), &store),
+            Ok(fork)
         );
-        for (unit, result) in units.iter().zip(results.iter()).take(3) {
-            assert_eq!(result, &Err(Error::Duplicate(unit.clone())));
-        }
-        for (unit, result) in units.iter().zip(results.iter()).skip(3) {
-            assert_eq!(result, &Ok(unit.clone()));
-        }
     }
 }

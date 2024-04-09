@@ -1,7 +1,7 @@
 use crate::{
-    reconstruction::ReconstructedUnit,
+    dag::reconstruction::{ReconstructedUnit, ReconstructionResult, Request},
     units::{ControlHash, HashFor, Unit, UnitCoord},
-    Hasher, NodeIndex, NodeMap,
+    NodeIndex, NodeMap,
 };
 use std::collections::{hash_map::Entry, HashMap};
 
@@ -96,76 +96,6 @@ impl<U: Unit> ReconstructingUnit<U> {
     }
 }
 
-/// What we need to request to reconstruct units.
-#[derive(Debug, PartialEq, Eq)]
-pub enum Request<H: Hasher> {
-    /// We need a unit at this coordinate.
-    Coord(UnitCoord),
-    /// We need the explicit list of parents for the unit identified by the hash.
-    /// This should only happen in the presence of forks, when optimistic reconstruction failed.
-    ParentsOf(H::Hash),
-}
-
-/// The result of a reconstruction attempt. Might contain multiple reconstructed units,
-/// as well as requests for some data that is needed for further reconstruction.
-#[derive(Debug, PartialEq, Eq)]
-pub struct ReconstructionResult<U: Unit> {
-    reconstructed_units: Vec<ReconstructedUnit<U>>,
-    requests: Vec<Request<U::Hasher>>,
-}
-
-impl<U: Unit> ReconstructionResult<U> {
-    fn new() -> Self {
-        ReconstructionResult {
-            reconstructed_units: Vec::new(),
-            requests: Vec::new(),
-        }
-    }
-
-    fn reconstructed(unit: ReconstructedUnit<U>) -> Self {
-        ReconstructionResult {
-            reconstructed_units: vec![unit],
-            requests: Vec::new(),
-        }
-    }
-
-    fn request(request: Request<U::Hasher>) -> Self {
-        ReconstructionResult {
-            reconstructed_units: Vec::new(),
-            requests: vec![request],
-        }
-    }
-
-    fn add_unit(&mut self, unit: ReconstructedUnit<U>) {
-        self.reconstructed_units.push(unit);
-    }
-
-    fn add_request(&mut self, request: Request<U::Hasher>) {
-        self.requests.push(request);
-    }
-
-    fn accumulate(&mut self, other: ReconstructionResult<U>) {
-        let ReconstructionResult {
-            mut reconstructed_units,
-            mut requests,
-        } = other;
-        self.reconstructed_units.append(&mut reconstructed_units);
-        self.requests.append(&mut requests);
-    }
-}
-
-impl<U: Unit> From<ReconstructionResult<U>>
-    for (Vec<ReconstructedUnit<U>>, Vec<Request<U::Hasher>>)
-{
-    fn from(result: ReconstructionResult<U>) -> Self {
-        let ReconstructionResult {
-            reconstructed_units,
-            requests,
-        } = result;
-        (reconstructed_units, requests)
-    }
-}
-
 /// Receives units with control hashes and reconstructs their parents.
 pub struct Reconstruction<U: Unit> {
     reconstructing_units: HashMap<HashFor<U>, ReconstructingUnit<U>>,
@@ -195,7 +125,7 @@ impl<U: Unit> Reconstruction<U> {
                 Reconstructed(unit) => ReconstructionResult::reconstructed(unit),
                 InProgress(unit) => {
                     self.reconstructing_units.insert(child_hash, unit);
-                    ReconstructionResult::new()
+                    ReconstructionResult::empty()
                 }
                 RequestParents(unit) => {
                     let hash = unit.as_unit().hash();
@@ -205,13 +135,13 @@ impl<U: Unit> Reconstruction<U> {
             },
             // We might have reconstructed the unit through explicit parents if someone sent them to us for no reason,
             // in which case we don't have it any more.
-            None => ReconstructionResult::new(),
+            None => ReconstructionResult::empty(),
         }
     }
 
     /// Add a unit and start reconstructing its parents.
     pub fn add_unit(&mut self, unit: U) -> ReconstructionResult<U> {
-        let mut result = ReconstructionResult::new();
+        let mut result = ReconstructionResult::empty();
         let unit_hash = unit.hash();
         if self.reconstructing_units.contains_key(&unit_hash) {
             // We already received this unit once, no need to do anything.
@@ -275,10 +205,10 @@ impl<U: Unit> Reconstruction<U> {
                 Ok(unit) => ReconstructionResult::reconstructed(unit),
                 Err(unit) => {
                     self.reconstructing_units.insert(unit_hash, unit);
-                    ReconstructionResult::new()
+                    ReconstructionResult::empty()
                 }
             },
-            None => ReconstructionResult::new(),
+            None => ReconstructionResult::empty(),
         }
     }
 }
@@ -288,9 +218,8 @@ mod test {
     use std::collections::HashMap;
 
     use crate::{
-        reconstruction::{
-            parents::{Reconstruction, Request},
-            ReconstructedUnit,
+        dag::reconstruction::{
+            parents::Reconstruction, ReconstructedUnit, ReconstructionResult, Request,
         },
         units::{random_full_parent_units_up_to, Unit, UnitCoord},
         NodeCount, NodeIndex,
@@ -300,10 +229,13 @@ mod test {
     fn reconstructs_initial_units() {
         let mut reconstruction = Reconstruction::new();
         for unit in &random_full_parent_units_up_to(0, NodeCount(4), 43)[0] {
-            let (mut reconstructed_units, requests) = reconstruction.add_unit(unit.clone()).into();
+            let ReconstructionResult {
+                mut units,
+                requests,
+            } = reconstruction.add_unit(unit.clone());
             assert!(requests.is_empty());
-            assert_eq!(reconstructed_units.len(), 1);
-            let reconstructed_unit = reconstructed_units.pop().expect("just checked its there");
+            assert_eq!(units.len(), 1);
+            let reconstructed_unit = units.pop().expect("just checked its there");
             assert_eq!(reconstructed_unit, ReconstructedUnit::initial(unit.clone()));
             assert_eq!(reconstructed_unit.parents().item_count(), 0);
         }
@@ -316,11 +248,13 @@ mod test {
         for units in &dag {
             for unit in units {
                 let round = unit.round();
-                let (mut reconstructed_units, requests) =
-                    reconstruction.add_unit(unit.clone()).into();
+                let ReconstructionResult {
+                    mut units,
+                    requests,
+                } = reconstruction.add_unit(unit.clone());
                 assert!(requests.is_empty());
-                assert_eq!(reconstructed_units.len(), 1);
-                let reconstructed_unit = reconstructed_units.pop().expect("just checked its there");
+                assert_eq!(units.len(), 1);
+                let reconstructed_unit = units.pop().expect("just checked its there");
                 match round {
                     0 => {
                         assert_eq!(reconstructed_unit, ReconstructedUnit::initial(unit.clone()));
@@ -351,8 +285,8 @@ mod test {
             .expect("just created")
             .last()
             .expect("we have a unit");
-        let (reconstructed_units, requests) = reconstruction.add_unit(unit.clone()).into();
-        assert!(reconstructed_units.is_empty());
+        let ReconstructionResult { units, requests } = reconstruction.add_unit(unit.clone());
+        assert!(units.is_empty());
         assert_eq!(requests.len(), 4);
     }
 
@@ -368,8 +302,8 @@ mod test {
             .expect("just created")
             .last()
             .expect("we have a unit");
-        let (reconstructed_units, requests) = reconstruction.add_unit(unit.clone()).into();
-        assert!(reconstructed_units.is_empty());
+        let ReconstructionResult { units, requests } = reconstruction.add_unit(unit.clone());
+        assert!(units.is_empty());
         assert_eq!(requests.len(), 1);
         assert_eq!(
             requests.last().expect("just checked"),
@@ -383,20 +317,22 @@ mod test {
         let mut dag = random_full_parent_units_up_to(7, NodeCount(4), 43);
         dag.reverse();
         for unit in dag.get(0).expect("we have the top units") {
-            let (reconstructed_units, requests) = reconstruction.add_unit(unit.clone()).into();
-            assert!(reconstructed_units.is_empty());
+            let ReconstructionResult { units, requests } = reconstruction.add_unit(unit.clone());
+            assert!(units.is_empty());
             assert_eq!(requests.len(), 4);
         }
         let mut total_reconstructed = 0;
         for mut units in dag.into_iter().skip(1) {
             let last_unit = units.pop().expect("we have the unit");
             for unit in units {
-                let (reconstructed_units, _) = reconstruction.add_unit(unit.clone()).into();
-                total_reconstructed += reconstructed_units.len();
+                let ReconstructionResult { units, requests: _ } =
+                    reconstruction.add_unit(unit.clone());
+                total_reconstructed += units.len();
             }
-            let (reconstructed_units, _) = reconstruction.add_unit(last_unit.clone()).into();
-            total_reconstructed += reconstructed_units.len();
-            assert!(reconstructed_units.len() >= 4);
+            let ReconstructionResult { units, requests: _ } =
+                reconstruction.add_unit(last_unit.clone());
+            total_reconstructed += units.len();
+            assert!(units.len() >= 4);
         }
         assert_eq!(total_reconstructed, 4 * 8);
     }
@@ -415,8 +351,8 @@ mod test {
             .last()
             .expect("we have a unit");
         let unit_hash = unit.hash();
-        let (reconstructed_units, requests) = reconstruction.add_unit(unit.clone()).into();
-        assert!(reconstructed_units.is_empty());
+        let ReconstructionResult { units, requests } = reconstruction.add_unit(unit.clone());
+        assert!(units.is_empty());
         assert_eq!(requests.len(), 1);
         assert_eq!(
             requests.last().expect("just checked"),
@@ -428,12 +364,13 @@ mod test {
             .iter()
             .map(|unit| (unit.coord(), unit.hash()))
             .collect();
-        let (mut reconstructed_units, requests) = reconstruction
-            .add_parents(unit_hash, parent_hashes.clone())
-            .into();
+        let ReconstructionResult {
+            mut units,
+            requests,
+        } = reconstruction.add_parents(unit_hash, parent_hashes.clone());
         assert!(requests.is_empty());
-        assert_eq!(reconstructed_units.len(), 1);
-        let reconstructed_unit = reconstructed_units.pop().expect("just checked its there");
+        assert_eq!(units.len(), 1);
+        let reconstructed_unit = units.pop().expect("just checked its there");
         assert_eq!(reconstructed_unit.parents().item_count(), 4);
         for (coord, parent_hash) in parent_hashes {
             assert_eq!(

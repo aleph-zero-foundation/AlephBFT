@@ -1,7 +1,6 @@
 #![cfg(test)]
 mod alerts;
 mod byzantine;
-mod consensus;
 mod crash;
 mod crash_recovery;
 mod creation;
@@ -30,12 +29,6 @@ pub fn init_log() {
         .filter_level(log::LevelFilter::max())
         .is_test(true)
         .try_init();
-}
-
-pub fn complete_oneshot<T: std::fmt::Debug>(t: T) -> oneshot::Receiver<T> {
-    let (tx, rx) = oneshot::channel();
-    tx.send(t).unwrap();
-    rx
 }
 
 pub fn gen_delay_config() -> DelayConfig {

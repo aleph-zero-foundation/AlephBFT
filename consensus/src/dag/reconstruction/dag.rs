@@ -1,5 +1,5 @@
 use crate::{
-    reconstruction::ReconstructedUnit,
+    dag::reconstruction::ReconstructedUnit,
     units::{HashFor, Unit},
 };
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -123,7 +123,7 @@ impl<U: Unit> Dag<U> {
 #[cfg(test)]
 mod test {
     use crate::{
-        reconstruction::{dag::Dag, ReconstructedUnit},
+        dag::reconstruction::{dag::Dag, ReconstructedUnit},
         units::{random_full_parent_units_up_to, TestingFullUnit, Unit},
         Hasher, NodeCount, NodeIndex, NodeMap,
     };

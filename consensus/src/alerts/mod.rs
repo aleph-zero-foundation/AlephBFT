@@ -73,9 +73,9 @@ impl<H: Hasher, D: Data, S: Signature> Alert<H, D, S> {
         }
     }
 
-    // Simplified forker check, should only be called for alerts that have already been checked to
-    // contain valid proofs.
-    fn forker(&self) -> NodeIndex {
+    /// Simplified forker check, should only be called for alerts that have already been checked to
+    /// contain valid proofs.
+    pub fn forker(&self) -> NodeIndex {
         self.proof.0.as_signable().creator()
     }
 
