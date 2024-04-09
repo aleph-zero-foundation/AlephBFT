@@ -528,20 +528,23 @@ That being said, there are <strong>practical</strong> issues when it comes to de
 <ol>
 <li>The unit is created by one of the node's <code>Creator</code> component -- implemented in <code>creation/</code>. Creator sends the produced unit to <code>runway/</code>, which then sends it to <code>member.rs</code>.</li>
 <li>A recurring task of broadcasting this unit is put in the task queue. The unit will be broadcast to all other nodes a few times (with some delays in between).</li>
-<li>The unit is received by another node -- happens in <code>member.rs</code> and immediately send to <code>runway/</code> for further processing in <code>validation.rs</code>.</li>
-<li>Validation checks signatures and basic unit properties, plus catches forks. This means that only <strong>legit units</strong>, in the sense defined in <a href="how_alephbft_does_it.html#25-alerts----dealing-with-fork-spam">the section on alerts</a>, are sent further. Thus no fork is ever passed on unless coming from an alert.</li>
-<li>The units are further moved to a component responsible for reconstructing the explicit parents for these units -- implemented in <code>reconstruction/parents.rs</code>.</li>
-<li>Each unit whose parents are successfully decoded, is passed on to <code>reconstruction/dag.rs</code>, which ensures that units are passed on only when their parents already were. They are then put in a store in <code>runway/</code>. Each unit in the store is legit + has all its parents in the store.</li>
+<li>The unit is received by another node -- happens in <code>member.rs</code> and immediately send to <code>runway/</code> for further processing in <code>dag/</code>.</li>
+<li>Dag validates and reconstructs a unit's parents in several steps:</li>
+<li>Validation, implemented in <code>dag/validation.rs</code>, checks signatures and basic unit properties, plus catches forks. This means that only <strong>legit units</strong>, in the sense defined in <a href="how_alephbft_does_it.html#25-alerts----dealing-with-fork-spam">the section on alerts</a>, are sent further. Thus no fork is ever passed on unless coming from an alert.</li>
+<li>The units are further moved to a component responsible for reconstructing the explicit parents for these units -- implemented in <code>dag/reconstruction/parents.rs</code>.</li>
+<li>Each unit whose parents are successfully decoded, is passed on to <code>dag/reconstruction/dag.rs</code>, which ensures that units are passed on only when their parents already were. They are then returned back to <code>runway/</code>.</li>
+<li>In <code>runway/</code> such units are put in a store. Each unit in the store is legit + has all its parents in the store.</li>
 <li>Such units are passed to a component called the <code>Extender</code> -- see the files in <code>extension/</code>. The role of the extender is to efficiently run the <code>OrderData</code> algorithm, described in the <a href="how_alephbft_does_it.html">section on AlephBFT</a>.</li>
 <li>Once a unit's data is placed in one of batches by the <code>Extender</code> then its path is over, although we keep it in the runway store to be able to send it to other nodes on request.</li>
 </ol>
 <h3 id="51-creator"><a class="header" href="#51-creator">5.1 Creator</a></h3>
 <p>The creator produces units according to the AlephBFT protocol rules. It will wait until the prespecified delay has passed and attempt to create a unit using a maximal number of parents. If it is not possible yet, it will wait till the first moment enough parents are available. After creating the last unit, the creator stops producing new ones, although this is never expected to happen during correct execution.</p>
-<h3 id="52-validation"><a class="header" href="#52-validation">5.2 Validation</a></h3>
+<h3 id="52-dag"><a class="header" href="#52-dag">5.2 Dag</a></h3>
+<p>The dag receives units from the network and returns any that were successfully reconstructed with parents. It does that in several steps, starting with validation.</p>
+<h4 id="521-validation"><a class="header" href="#521-validation">5.2.1 Validation</a></h4>
 <p>The validation process consists of checking basic properties of units (correct number of parents, correct session etc.), the signatures, and whether the unit is a fork based on the units that the node either already has or at least started processing. As mentioned, the idea is that only legit units are passed to the reconstructing component. In case a fork by a node <code>i</code> is detected, all of <code>i</code>'s units are attached to the appropriate alert, so that other nodes can accept them as legit.</p>
-<h3 id="53-reconstruction"><a class="header" href="#53-reconstruction">5.3 Reconstruction</a></h3>
 <p>The next step is to reconstruct the structure of the Dag from the somewhat compressed information in the units.</p>
-<h4 id="531-parents"><a class="header" href="#531-parents">5.3.1 Parents</a></h4>
+<h4 id="522-parents"><a class="header" href="#522-parents">5.2.2 Parents</a></h4>
 <p>The reconstruction service receives legit units, but the information about their parents is only present as a control hash, i.e. which nodes created the parents and what was the combined hash of all the parents' hashes. Parents reconstruction remembers the first unit for any creator-round combination it encounters and optimistically uses this information to check the combined hash. If there are no dishonest nodes, which is the usual situation, then this means that every unit might at most have some parents that cannot yet be checked, because the node has not yet received them. In such a case requests for these missing units are sent to <code>Member</code>. After the units are received, the control hash check succeeds and thus the parents are reconstructed successfully.</p>
 <p>If dishonest nodes participate in the protocol, then two additional things can go wrong:</p>
 <ol>
@@ -549,9 +552,9 @@ That being said, there are <strong>practical</strong> issues when it comes to de
 <li>or the unit's creator is dishonest and just put a control hash in the unit that does not &quot;unhash&quot; to anything meaningful.</li>
 </ol>
 <p>In any case the reconstruction triggers a request to <code>Member</code> to download the full list of the unit's parent hashes, so that the ambiguity is resolved. Once a response is received by <code>Member</code> then it is passed back to the reconstruction so that it can &quot;decode&quot; the parents and proceed.</p>
-<h4 id="532-dag"><a class="header" href="#532-dag">5.3.2 Dag</a></h4>
-<p>The units parents might, for many reasons, not be reconstructed in an order agreeing with the Dag order, i.e. some of their ancestors might not yet be reconstructed. The Dag component ensures that units are only added to the store after their parents were already added, and thus any units emitted by this component are in an order agreeing with the Dag order.</p>
-<h3 id="54-extender"><a class="header" href="#54-extender">5.4 Extender</a></h3>
+<h4 id="523-dag"><a class="header" href="#523-dag">5.2.3 Dag</a></h4>
+<p>The units parents might, for many reasons, not be reconstructed in an order agreeing with the Dag order, i.e. some of their ancestors might not yet be reconstructed. The Dag component ensures that units are only added to the store after their parents were already added, and thus any units emitted by the Dag component are in an order agreeing with the Dag order.</p>
+<h3 id="53-extender"><a class="header" href="#53-extender">5.3 Extender</a></h3>
 <p>The <code>Extender</code>'s role is to receive Dag units (in an order agreeing with the Dag order) and extend the output stream. Towards this end it elects the <code>Head</code> for each <code>round</code>. Such an election works by going through candidate units from this round either eliminating them or eventually electing one. Votes are computed and cached for each candidate until a decision on it is made, after which the election moves on to the next round (if elected as <code>Head</code>) or to the next unit (otherwise). After electing every <code>Head</code> the <code>Extender</code> deterministically orders all its unordered ancestors and the <code>Head</code> itself and returns the resulting batch.</p>
 <div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h2 id="6-reliable-broadcast"><a class="header" href="#6-reliable-broadcast">6 Reliable Broadcast</a></h2>
 <p>Recall that Reliable Broadcast is the primitive we use to broadcast <code>fork alerts</code> among nodes -- see <a href="how_alephbft_does_it.html#25-alerts----dealing-with-fork-spam">the section on alerts</a>. There are two requirements for a protocol realizing reliable broadcast:</p>
