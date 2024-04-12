@@ -70,11 +70,23 @@ impl Creator {
     }
 }
 
+pub fn full_unit_to_signed_unit(full_unit: FullUnit, keychain: &Keychain) -> SignedUnit {
+    Signed::sign(full_unit, keychain)
+}
+
+pub fn preunit_to_signed_unit(
+    pu: PreUnit,
+    session_id: SessionId,
+    keychain: &Keychain,
+) -> SignedUnit {
+    full_unit_to_signed_unit(preunit_to_full_unit(pu, session_id), keychain)
+}
+
 pub fn full_unit_to_unchecked_signed_unit(
     full_unit: FullUnit,
     keychain: &Keychain,
 ) -> UncheckedSignedUnit {
-    Signed::sign(full_unit, keychain).into()
+    full_unit_to_signed_unit(full_unit, keychain).into()
 }
 
 pub fn preunit_to_unchecked_signed_unit(
@@ -82,7 +94,7 @@ pub fn preunit_to_unchecked_signed_unit(
     session_id: SessionId,
     keychain: &Keychain,
 ) -> UncheckedSignedUnit {
-    full_unit_to_unchecked_signed_unit(preunit_to_full_unit(pu, session_id), keychain)
+    preunit_to_signed_unit(pu, session_id, keychain).into()
 }
 
 fn initial_preunit(n_members: NodeCount, node_id: NodeIndex) -> PreUnit {

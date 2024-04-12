@@ -1,7 +1,7 @@
 use crate::{
     alerts::{Alert, ForkingNotification, NetworkMessage},
     creation,
-    dag::{Dag, DagResult, DagStatus, ReconstructedUnit, Request as ReconstructionRequest},
+    dag::{Dag, DagResult, DagStatus, DagUnit, Request as ReconstructionRequest},
     extension::{ExtenderUnit, Service as Extender},
     handle_task_termination,
     member::UnitMessage,
@@ -109,7 +109,7 @@ where
 {
     missing_coords: HashSet<UnitCoord>,
     missing_parents: HashSet<H::Hash>,
-    store: UnitStore<ReconstructedUnit<SignedUnit<H, D, MK>>>,
+    store: UnitStore<DagUnit<H, D, MK>>,
     keychain: MK,
     dag: Dag<H, D, MK>,
     alerts_for_alerter: Sender<Alert<H, D, MK::Signature>>,
@@ -118,12 +118,12 @@ where
     unit_messages_for_network: Sender<RunwayNotificationOut<H, D, MK::Signature>>,
     responses_for_collection: Sender<CollectionResponse<H, D, MK>>,
     resolved_requests: Sender<Request<H>>,
-    parents_for_creator: Sender<ReconstructedUnit<SignedUnit<H, D, MK>>>,
+    parents_for_creator: Sender<DagUnit<H, D, MK>>,
     ordered_batch_rx: Receiver<Vec<H::Hash>>,
     finalization_handler: FH,
-    backup_units_for_saver: Sender<UncheckedSignedUnit<H, D, MK::Signature>>,
+    backup_units_for_saver: Sender<DagUnit<H, D, MK>>,
     units_for_extender: Sender<ExtenderUnit<H>>,
-    backup_units_from_saver: Receiver<UncheckedSignedUnit<H, D, MK::Signature>>,
+    backup_units_from_saver: Receiver<DagUnit<H, D, MK>>,
     new_units_from_creation: Receiver<SignedUnit<H, D, MK>>,
     exiting: bool,
 }
@@ -210,15 +210,15 @@ impl<'a, H: Hasher> Display for RunwayStatus<'a, H> {
 
 struct RunwayConfig<H: Hasher, D: Data, FH: FinalizationHandler<D>, MK: MultiKeychain> {
     finalization_handler: FH,
-    backup_units_for_saver: Sender<UncheckedSignedUnit<H, D, MK::Signature>>,
+    backup_units_for_saver: Sender<DagUnit<H, D, MK>>,
     units_for_extender: Sender<ExtenderUnit<H>>,
-    backup_units_from_saver: Receiver<UncheckedSignedUnit<H, D, MK::Signature>>,
+    backup_units_from_saver: Receiver<DagUnit<H, D, MK>>,
     alerts_for_alerter: Sender<Alert<H, D, MK::Signature>>,
     notifications_from_alerter: Receiver<ForkingNotification<H, D, MK::Signature>>,
     unit_messages_from_network: Receiver<RunwayNotificationIn<H, D, MK::Signature>>,
     unit_messages_for_network: Sender<RunwayNotificationOut<H, D, MK::Signature>>,
     responses_for_collection: Sender<CollectionResponse<H, D, MK>>,
-    parents_for_creator: Sender<ReconstructedUnit<SignedUnit<H, D, MK>>>,
+    parents_for_creator: Sender<DagUnit<H, D, MK>>,
     ordered_batch_rx: Receiver<Vec<H::Hash>>,
     resolved_requests: Sender<Request<H>>,
     new_units_from_creation: Receiver<SignedUnit<H, D, MK>>,
@@ -455,10 +455,18 @@ where
         }
     }
 
-    fn on_unit_reconstructed(&mut self, unit: ReconstructedUnit<SignedUnit<H, D, MK>>) {
+    fn on_unit_reconstructed(&mut self, unit: DagUnit<H, D, MK>) {
         let unit_hash = unit.hash();
         trace!(target: "AlephBFT-runway", "Unit {:?} {} reconstructed.", unit_hash, unit.coord());
+        if self.backup_units_for_saver.unbounded_send(unit).is_err() {
+            error!(target: "AlephBFT-runway", "{:?} A unit couldn't be sent to backup: {:?}.", self.index(), unit_hash);
+        }
+    }
+
+    fn on_unit_backup_saved(&mut self, unit: DagUnit<H, D, MK>) {
+        let unit_hash = unit.hash();
         self.store.insert(unit.clone());
+        self.dag.finished_processing(&unit_hash);
         self.resolve_missing_parents(&unit_hash);
         self.resolve_missing_coord(&unit.coord());
         if self
@@ -477,21 +485,12 @@ where
             warn!(target: "AlephBFT-runway", "Creator channel should be open.");
             self.exiting = true;
         }
-        if self
-            .backup_units_for_saver
-            .unbounded_send(unit.unpack().into())
-            .is_err()
-        {
-            error!(target: "AlephBFT-runway", "{:?} A unit couldn't be sent to backup: {:?}.", self.index(), unit_hash);
-        }
-    }
-
-    fn on_unit_backup_saved(&mut self, unit: UncheckedSignedUnit<H, D, MK::Signature>) {
-        self.send_message_for_network(RunwayNotificationOut::NewAnyUnit(unit.clone()));
+        let unit = unit.unpack();
+        self.send_message_for_network(RunwayNotificationOut::NewAnyUnit(unit.clone().into()));
 
         if unit.as_signable().creator() == self.index() {
             trace!(target: "AlephBFT-runway", "{:?} Sending a unit {:?}.", self.index(), unit.as_signable().hash());
-            self.send_message_for_network(RunwayNotificationOut::NewSelfUnit(unit));
+            self.send_message_for_network(RunwayNotificationOut::NewSelfUnit(unit.into()));
         }
     }
 

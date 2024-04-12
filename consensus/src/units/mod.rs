@@ -16,8 +16,9 @@ pub(crate) use store::*;
 #[cfg(test)]
 pub use testing::{
     create_preunits, creator_set, full_unit_to_unchecked_signed_unit, preunit_to_full_unit,
-    preunit_to_unchecked_signed_unit, random_full_parent_units_up_to, random_unit_with_parents,
-    FullUnit as TestingFullUnit, SignedUnit as TestingSignedUnit, WrappedSignedUnit,
+    preunit_to_signed_unit, preunit_to_unchecked_signed_unit, random_full_parent_units_up_to,
+    random_unit_with_parents, FullUnit as TestingFullUnit, SignedUnit as TestingSignedUnit,
+    WrappedSignedUnit,
 };
 pub use validator::{ValidationError, Validator};
 

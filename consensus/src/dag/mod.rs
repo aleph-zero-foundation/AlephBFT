@@ -20,10 +20,12 @@ use validation::{Error as ValidationError, Validator};
 
 const LOG_TARGET: &str = "AlephBFT-dag";
 
+pub type DagUnit<H, D, MK> = ReconstructedUnit<SignedUnit<H, D, MK>>;
+
 /// The result of sending some information to the Dag.
 pub struct DagResult<H: Hasher, D: Data, MK: MultiKeychain> {
     /// Units added to the dag.
-    pub units: Vec<ReconstructedUnit<SignedUnit<H, D, MK>>>,
+    pub units: Vec<DagUnit<H, D, MK>>,
     /// Requests for more information.
     pub requests: Vec<Request<H>>,
     /// Alerts raised due to encountered forks.
@@ -114,25 +116,16 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Dag<H, D, MK> {
         }
     }
 
-    fn handle_result(&mut self, result: &DagResult<H, D, MK>) {
-        // just clean the validator cache of units that we are returning
-        for unit in &result.units {
-            self.validator.finished_processing(&unit.hash());
-        }
-    }
-
     /// Add a unit to the Dag.
     pub fn add_unit<U: WrappedUnit<H, Wrapped = SignedUnit<H, D, MK>>>(
         &mut self,
         unit: UncheckedSignedUnit<H, D, MK::Signature>,
         store: &UnitStore<U>,
     ) -> DagResult<H, D, MK> {
-        let result = match self.validator.validate(unit, store) {
+        match self.validator.validate(unit, store) {
             Ok(unit) => self.reconstruction.add_unit(unit).into(),
             Err(e) => Self::handle_validation_error(e),
-        };
-        self.handle_result(&result);
-        result
+        }
     }
 
     /// Add parents of a unit to the Dag.
@@ -180,7 +173,6 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Dag<H, D, MK> {
                 .add_parents(unit_hash, parent_hashes)
                 .into(),
         );
-        self.handle_result(&result);
         result
     }
 
@@ -208,8 +200,12 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Dag<H, D, MK> {
                 }
             }
         }
-        self.handle_result(&result);
         result
+    }
+
+    /// Notify the dag that a unit has finished processing and can be cleared from the cache.
+    pub fn finished_processing(&mut self, hash: &H::Hash) {
+        self.validator.finished_processing(hash);
     }
 
     pub fn status(&self) -> DagStatus {

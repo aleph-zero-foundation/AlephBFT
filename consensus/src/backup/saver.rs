@@ -1,6 +1,10 @@
 use std::pin::Pin;
 
-use crate::{units::UncheckedSignedUnit, Data, Hasher, Receiver, Sender, Signature, Terminator};
+use crate::{
+    dag::DagUnit,
+    units::{UncheckedSignedUnit, WrappedUnit},
+    Data, Hasher, MultiKeychain, Receiver, Sender, Terminator,
+};
 use codec::Encode;
 use futures::{AsyncWrite, AsyncWriteExt, FutureExt, StreamExt};
 use log::{debug, error};
@@ -10,18 +14,18 @@ const LOG_TARGET: &str = "AlephBFT-backup-saver";
 /// Component responsible for saving units into backup.
 /// It waits for items to appear on its receivers, and writes them to backup.
 /// It announces a successful write through an appropriate response sender.
-pub struct BackupSaver<H: Hasher, D: Data, S: Signature, W: AsyncWrite> {
-    units_from_runway: Receiver<UncheckedSignedUnit<H, D, S>>,
-    responses_for_runway: Sender<UncheckedSignedUnit<H, D, S>>,
+pub struct BackupSaver<H: Hasher, D: Data, MK: MultiKeychain, W: AsyncWrite> {
+    units_from_runway: Receiver<DagUnit<H, D, MK>>,
+    responses_for_runway: Sender<DagUnit<H, D, MK>>,
     backup: Pin<Box<W>>,
 }
 
-impl<H: Hasher, D: Data, S: Signature, W: AsyncWrite> BackupSaver<H, D, S, W> {
+impl<H: Hasher, D: Data, MK: MultiKeychain, W: AsyncWrite> BackupSaver<H, D, MK, W> {
     pub fn new(
-        units_from_runway: Receiver<UncheckedSignedUnit<H, D, S>>,
-        responses_for_runway: Sender<UncheckedSignedUnit<H, D, S>>,
+        units_from_runway: Receiver<DagUnit<H, D, MK>>,
+        responses_for_runway: Sender<DagUnit<H, D, MK>>,
         backup: W,
-    ) -> BackupSaver<H, D, S, W> {
+    ) -> BackupSaver<H, D, MK, W> {
         BackupSaver {
             units_from_runway,
             responses_for_runway,
@@ -29,11 +33,9 @@ impl<H: Hasher, D: Data, S: Signature, W: AsyncWrite> BackupSaver<H, D, S, W> {
         }
     }
 
-    pub async fn save_item(
-        &mut self,
-        item: &UncheckedSignedUnit<H, D, S>,
-    ) -> Result<(), std::io::Error> {
-        self.backup.write_all(&item.encode()).await?;
+    pub async fn save_unit(&mut self, unit: &DagUnit<H, D, MK>) -> Result<(), std::io::Error> {
+        let unit: UncheckedSignedUnit<_, _, _> = unit.clone().unpack().into();
+        self.backup.write_all(&unit.encode()).await?;
         self.backup.flush().await
     }
 
@@ -49,7 +51,7 @@ impl<H: Hasher, D: Data, S: Signature, W: AsyncWrite> BackupSaver<H, D, S, W> {
                             break;
                         },
                     };
-                    if let Err(e) = self.save_item(&item).await {
+                    if let Err(e) = self.save_unit(&item).await {
                         error!(target: LOG_TARGET, "couldn't save item to backup: {:?}", e);
                         break;
                     }
@@ -80,16 +82,17 @@ mod tests {
         StreamExt,
     };
 
-    use aleph_bft_mock::{Data, Hasher64, Keychain, Saver, Signature};
+    use aleph_bft_mock::{Data, Hasher64, Keychain, Saver};
 
     use crate::{
         backup::BackupSaver,
-        units::{creator_set, preunit_to_unchecked_signed_unit, UncheckedSignedUnit},
-        NodeCount, NodeIndex, Terminator,
+        dag::ReconstructedUnit,
+        units::{creator_set, preunit_to_signed_unit, TestingSignedUnit},
+        NodeCount, Terminator,
     };
 
-    type TestBackupSaver = BackupSaver<Hasher64, Data, Signature, Saver>;
-    type TestUnit = UncheckedSignedUnit<Hasher64, Data, Signature>;
+    type TestUnit = ReconstructedUnit<TestingSignedUnit>;
+    type TestBackupSaver = BackupSaver<Hasher64, Data, Keychain, Saver>;
     struct PrepareSaverResponse<F: futures::Future> {
         task: F,
         units_for_saver: mpsc::UnboundedSender<TestUnit>,
@@ -122,6 +125,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_proper_relative_responses_ordering() {
+        let node_count = NodeCount(5);
         let PrepareSaverResponse {
             task,
             units_for_saver,
@@ -133,17 +137,19 @@ mod tests {
             task.await;
         });
 
-        let creators = creator_set(NodeCount(5));
-        let keychains: Vec<_> = (0..5)
-            .map(|id| Keychain::new(NodeCount(5), NodeIndex(id)))
+        let creators = creator_set(node_count);
+        let keychains: Vec<_> = node_count
+            .into_iterator()
+            .map(|id| Keychain::new(node_count, id))
             .collect();
-        let units: Vec<TestUnit> = (0..5)
-            .map(|k| {
-                preunit_to_unchecked_signed_unit(
-                    creators[k].create_unit(0).unwrap(),
+        let units: Vec<TestUnit> = node_count
+            .into_iterator()
+            .map(|id| {
+                ReconstructedUnit::initial(preunit_to_signed_unit(
+                    creators[id.0].create_unit(0).unwrap(),
                     0,
-                    &keychains[k],
-                )
+                    &keychains[id.0],
+                ))
             })
             .collect();
 
