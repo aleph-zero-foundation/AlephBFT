@@ -4,25 +4,20 @@ use crate::{
         Dag as GenericDag, DagResult, ReconstructedUnit as GenericReconstructedUnit,
         Request as GenericRequest,
     },
-    extension::Service as Extender,
+    extension::Ordering,
     units::{
-        ControlHash, FullUnit, PreUnit, SignedUnit as GenericSignedUnit, Unit, UnitStore, Validator,
+        ControlHash, FullUnit, PreUnit, SignedUnit as GenericSignedUnit, Unit, UnitStore,
+        UnitWithParents as _, Validator,
     },
-    NodeCount, NodeIndex, NodeMap, NodeSubset, Round, Signed, SpawnHandle, Terminator,
+    FinalizationHandler, NodeCount, NodeIndex, NodeMap, NodeSubset, Round, Signed,
 };
-use aleph_bft_mock::{Data, Hash64, Hasher64, Keychain, Spawner};
-use futures::{
-    channel::{mpsc, oneshot},
-    stream::StreamExt,
-    FutureExt,
-};
-use futures_timer::Delay;
-use log::{debug, trace};
+use aleph_bft_mock::{Data, Hash64, Hasher64, Keychain};
+use log::debug;
+use parking_lot::Mutex;
 use rand::{distributions::Open01, prelude::*};
 use std::{
-    cmp,
     collections::{HashMap, HashSet},
-    time::Duration,
+    sync::Arc,
 };
 
 type Request = GenericRequest<Hasher64>;
@@ -206,43 +201,41 @@ impl DagFeeder {
     }
 }
 
-async fn run_consensus_on_dag(
+struct RecordingHandler {
+    finalized: Arc<Mutex<Vec<Data>>>,
+}
+
+impl RecordingHandler {
+    fn new() -> (Self, Arc<Mutex<Vec<Data>>>) {
+        let finalized = Arc::new(Mutex::new(Vec::new()));
+        (
+            RecordingHandler {
+                finalized: finalized.clone(),
+            },
+            finalized,
+        )
+    }
+}
+
+impl FinalizationHandler<Data> for RecordingHandler {
+    fn data_finalized(&mut self, data: Data) {
+        self.finalized.lock().push(data);
+    }
+}
+
+fn run_consensus_on_dag(
     units: Vec<UnitWithParents>,
     forker_units: HashMap<NodeIndex, Vec<UnitWithParents>>,
-    deadline_ms: u64,
-) -> Vec<Vec<Hash64>> {
+) -> Vec<Data> {
     let node_id = NodeIndex(0);
     let feeder = DagFeeder::new(node_id, units, forker_units);
-    let spawner = Spawner::new();
-    let (_extender_exit_tx, extender_exit_rx) = oneshot::channel();
-    let (batch_tx, mut batch_rx) = mpsc::unbounded();
-    let (units_for_extender, units_from_us) = mpsc::unbounded();
-    let extender = Extender::<Hasher64>::new(node_id, units_from_us, batch_tx);
-    spawner.spawn(
-        "extender",
-        extender.run(Terminator::create_root(
-            extender_exit_rx,
-            "AlephBFT-extender",
-        )),
-    );
+    let (recording_handler, finalized) = RecordingHandler::new();
+    let mut ordering = Ordering::new(recording_handler);
     for unit in feeder.feed() {
-        units_for_extender
-            .unbounded_send(unit.extender_unit())
-            .expect("channel should be open");
+        ordering.add_unit(unit);
     }
-    let mut batches = Vec::new();
-    let mut delay_fut = Delay::new(Duration::from_millis(deadline_ms)).fuse();
-    loop {
-        futures::select! {
-            batch = batch_rx.next() => {
-                batches.push(batch.unwrap());
-            },
-            _ = &mut delay_fut => {
-                break;
-            }
-        };
-    }
-    batches
+    let finalized = finalized.lock().clone();
+    finalized
 }
 
 fn generate_random_dag(
@@ -361,15 +354,6 @@ fn generate_random_dag(
     (dag_units, forker_units)
 }
 
-fn batch_lists_consistent(batches1: &[Vec<Hash64>], batches2: &[Vec<Hash64>]) -> bool {
-    for i in 0..cmp::min(batches1.len(), batches2.len()) {
-        if batches1[i] != batches2[i] {
-            return false;
-        }
-    }
-    true
-}
-
 #[tokio::test]
 async fn ordering_random_dag_consistency_under_permutations() {
     for seed in 0..4u64 {
@@ -377,50 +361,28 @@ async fn ordering_random_dag_consistency_under_permutations() {
         let n_members = NodeCount(rng.gen_range(1..11));
         let height = rng.gen_range(3..11);
         let (mut units, forker_units) = generate_random_dag(n_members, height, seed);
-        let batch_on_sorted = run_consensus_on_dag(
-            units.clone(),
-            forker_units.clone(),
-            80 + (n_members.0 as u64) * 5,
-        )
-        .await;
+        let finalized_data = run_consensus_on_dag(units.clone(), forker_units.clone());
         debug!(target: "dag-test",
-            "seed {:?} n_members {:?} height {:?} batch_len {:?}",
+            "seed {:?} n_members {:?} height {:?} data_len {:?}",
             seed,
             n_members,
             height,
-            batch_on_sorted.len()
+            finalized_data.len()
         );
         for i in 0..8 {
             units.shuffle(&mut rng);
-            let mut batch = run_consensus_on_dag(
-                units.clone(),
-                forker_units.clone(),
-                25 + (n_members.0 as u64) * 5,
-            )
-            .await;
-            if batch != batch_on_sorted {
-                if batch_lists_consistent(&batch, &batch_on_sorted) {
-                    // there might be some timing issue here, we run it with more time
-                    batch = run_consensus_on_dag(units.clone(), forker_units.clone(), 200).await;
-                }
-                if batch != batch_on_sorted {
-                    debug!(target: "dag-test",
-                        "seed {:?} n_members {:?} height {:?} i {:?}",
-                        seed, n_members, height, i
-                    );
-                    debug!(target: "dag-test",
-                        "batch lens {:?} \n {:?}",
-                        batch_on_sorted.len(),
-                        batch.len()
-                    );
-                    trace!(target: "dag-test", "batches {:?} \n {:?}", batch_on_sorted, batch);
-                    assert!(batch == batch_on_sorted);
-                } else {
-                    debug!(
-                        "False alarm at seed {:?} n_members {:?} height {:?}!",
-                        seed, n_members, height
-                    );
-                }
+            let other_finalized_data = run_consensus_on_dag(units.clone(), forker_units.clone());
+            if other_finalized_data != finalized_data {
+                debug!(target: "dag-test",
+                    "seed {:?} n_members {:?} height {:?} i {:?}",
+                    seed, n_members, height, i
+                );
+                debug!(target: "dag-test",
+                    "batch lens {:?} \n {:?}",
+                    finalized_data.len(),
+                    other_finalized_data.len()
+                );
+                assert_eq!(other_finalized_data, finalized_data);
             }
         }
     }

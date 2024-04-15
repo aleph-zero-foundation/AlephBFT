@@ -2,12 +2,12 @@ use crate::{
     alerts::{Alert, ForkingNotification, NetworkMessage},
     creation,
     dag::{Dag, DagResult, DagStatus, DagUnit, Request as ReconstructionRequest},
-    extension::{ExtenderUnit, Service as Extender},
+    extension::Ordering,
     handle_task_termination,
     member::UnitMessage,
     units::{
-        SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore, UnitStoreStatus, Validator,
-        WrappedUnit,
+        SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore, UnitStoreStatus,
+        UnitWithParents, Validator, WrappedUnit,
     },
     Config, Data, DataProvider, FinalizationHandler, Hasher, Index, Keychain, MultiKeychain,
     NodeIndex, Receiver, Round, Sender, Signature, Signed, SpawnHandle, Terminator,
@@ -112,6 +112,7 @@ where
     store: UnitStore<DagUnit<H, D, MK>>,
     keychain: MK,
     dag: Dag<H, D, MK>,
+    ordering: Ordering<H, D, MK, FH>,
     alerts_for_alerter: Sender<Alert<H, D, MK::Signature>>,
     notifications_from_alerter: Receiver<ForkingNotification<H, D, MK::Signature>>,
     unit_messages_from_network: Receiver<RunwayNotificationIn<H, D, MK::Signature>>,
@@ -119,10 +120,7 @@ where
     responses_for_collection: Sender<CollectionResponse<H, D, MK>>,
     resolved_requests: Sender<Request<H>>,
     parents_for_creator: Sender<DagUnit<H, D, MK>>,
-    ordered_batch_rx: Receiver<Vec<H::Hash>>,
-    finalization_handler: FH,
     backup_units_for_saver: Sender<DagUnit<H, D, MK>>,
-    units_for_extender: Sender<ExtenderUnit<H>>,
     backup_units_from_saver: Receiver<DagUnit<H, D, MK>>,
     new_units_from_creation: Receiver<SignedUnit<H, D, MK>>,
     exiting: bool,
@@ -211,7 +209,6 @@ impl<'a, H: Hasher> Display for RunwayStatus<'a, H> {
 struct RunwayConfig<H: Hasher, D: Data, FH: FinalizationHandler<D>, MK: MultiKeychain> {
     finalization_handler: FH,
     backup_units_for_saver: Sender<DagUnit<H, D, MK>>,
-    units_for_extender: Sender<ExtenderUnit<H>>,
     backup_units_from_saver: Receiver<DagUnit<H, D, MK>>,
     alerts_for_alerter: Sender<Alert<H, D, MK::Signature>>,
     notifications_from_alerter: Receiver<ForkingNotification<H, D, MK::Signature>>,
@@ -219,7 +216,6 @@ struct RunwayConfig<H: Hasher, D: Data, FH: FinalizationHandler<D>, MK: MultiKey
     unit_messages_for_network: Sender<RunwayNotificationOut<H, D, MK::Signature>>,
     responses_for_collection: Sender<CollectionResponse<H, D, MK>>,
     parents_for_creator: Sender<DagUnit<H, D, MK>>,
-    ordered_batch_rx: Receiver<Vec<H::Hash>>,
     resolved_requests: Sender<Request<H>>,
     new_units_from_creation: Receiver<SignedUnit<H, D, MK>>,
 }
@@ -236,7 +232,6 @@ where
         let RunwayConfig {
             finalization_handler,
             backup_units_for_saver,
-            units_for_extender,
             backup_units_from_saver,
             alerts_for_alerter,
             notifications_from_alerter,
@@ -244,17 +239,18 @@ where
             unit_messages_for_network,
             responses_for_collection,
             parents_for_creator,
-            ordered_batch_rx,
             resolved_requests,
             new_units_from_creation,
         } = config;
         let store = UnitStore::new(n_members);
         let dag = Dag::new(validator);
+        let ordering = Ordering::new(finalization_handler);
 
         Runway {
             store,
             keychain,
             dag,
+            ordering,
             missing_coords: HashSet::new(),
             missing_parents: HashSet::new(),
             resolved_requests,
@@ -263,10 +259,7 @@ where
             unit_messages_from_network,
             unit_messages_for_network,
             parents_for_creator,
-            ordered_batch_rx,
-            finalization_handler,
             backup_units_for_saver,
-            units_for_extender,
             backup_units_from_saver,
             responses_for_collection,
             new_units_from_creation,
@@ -470,14 +463,6 @@ where
         self.resolve_missing_parents(&unit_hash);
         self.resolve_missing_coord(&unit.coord());
         if self
-            .units_for_extender
-            .unbounded_send(unit.extender_unit())
-            .is_err()
-        {
-            error!(target: "AlephBFT-runway", "{:?} A unit couldn't be sent to extender: {:?}.", self.index(), unit_hash);
-            self.exiting = true;
-        }
-        if self
             .parents_for_creator
             .unbounded_send(unit.clone())
             .is_err()
@@ -485,13 +470,16 @@ where
             warn!(target: "AlephBFT-runway", "Creator channel should be open.");
             self.exiting = true;
         }
-        let unit = unit.unpack();
-        self.send_message_for_network(RunwayNotificationOut::NewAnyUnit(unit.clone().into()));
+        let unpacked_unit = unit.clone().unpack();
+        self.send_message_for_network(RunwayNotificationOut::NewAnyUnit(
+            unpacked_unit.clone().into(),
+        ));
 
-        if unit.as_signable().creator() == self.index() {
-            trace!(target: "AlephBFT-runway", "{:?} Sending a unit {:?}.", self.index(), unit.as_signable().hash());
-            self.send_message_for_network(RunwayNotificationOut::NewSelfUnit(unit.into()));
+        if unit.creator() == self.index() {
+            trace!(target: "AlephBFT-runway", "{:?} Sending a unit {:?}.", self.index(), unit.hash());
+            self.send_message_for_network(RunwayNotificationOut::NewSelfUnit(unpacked_unit.into()));
         }
+        self.ordering.add_unit(unit.clone());
     }
 
     fn on_missing_coord(&mut self, coord: UnitCoord) {
@@ -510,23 +498,6 @@ where
         trace!(target: "AlephBFT-runway", "{:?} Dealing with wrong control hash notification {:?}.", self.index(), u_hash);
         if self.missing_parents.insert(u_hash) {
             self.send_message_for_network(RunwayNotificationOut::Request(Request::Parents(u_hash)));
-        }
-    }
-
-    fn on_ordered_batch(&mut self, batch: Vec<H::Hash>) {
-        for hash in batch {
-            let unit = self
-                .store
-                .unit(&hash)
-                .expect("Ordered units must be in store")
-                .clone()
-                .unpack();
-
-            self.finalization_handler.unit_finalized(
-                unit.creator(),
-                unit.round(),
-                unit.as_signable().data().clone(),
-            )
         }
     }
 
@@ -622,14 +593,6 @@ where
                     Some(unit) => self.on_unit_backup_saved(unit),
                     None => {
                         error!(target: "AlephBFT-runway", "{:?} Saved units receiver closed.", index);
-                    }
-                },
-
-                batch = self.ordered_batch_rx.next() => match batch {
-                    Some(batch) => self.on_ordered_batch(batch),
-                    None => {
-                        error!(target: "AlephBFT-runway", "{:?} Ordered batch stream closed.", index);
-                        break;
                     }
                 },
 
@@ -767,7 +730,6 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
         _phantom: _,
     } = runway_io;
 
-    let (ordered_batch_tx, ordered_batch_rx) = mpsc::unbounded();
     let (new_units_for_runway, new_units_from_creation) = mpsc::unbounded();
 
     let (parents_for_creator, parents_from_runway) = mpsc::unbounded();
@@ -888,28 +850,17 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
     };
     pin_mut!(starting_round_handle);
 
-    let (units_for_extender, units_from_runway) = mpsc::unbounded();
-    let extender = Extender::<H>::new(index, units_from_runway, ordered_batch_tx);
-    let extender_terminator = terminator.add_offspring_connection("AlephBFT-extender");
-    let mut extender_handle = spawn_handle
-        .spawn_essential("runway/extender", async move {
-            extender.run(extender_terminator).await
-        })
-        .fuse();
-
     let runway_handle = spawn_handle
         .spawn_essential("runway", {
             let runway_config = RunwayConfig {
                 finalization_handler,
                 backup_units_for_saver,
-                units_for_extender,
                 backup_units_from_saver,
                 alerts_for_alerter,
                 notifications_from_alerter,
                 unit_messages_from_network: network_io.unit_messages_from_network,
                 unit_messages_for_network: network_io.unit_messages_for_network,
                 parents_for_creator,
-                ordered_batch_rx,
                 responses_for_collection,
                 resolved_requests: network_io.resolved_requests,
                 new_units_from_creation,
@@ -929,9 +880,6 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
             _ = runway_handle => {
                 debug!(target: "AlephBFT-runway", "{:?} Runway task terminated early.", index);
                 break;
-            },
-            _ = extender_handle => {
-                debug!(target: "AlephBFT-runway", "{:?} Extender task terminated early.", index);
             },
             _ = alerter_handle => {
                 debug!(target: "AlephBFT-runway", "{:?} Alerter task terminated early.", index);
@@ -960,7 +908,6 @@ pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
     debug!(target: "AlephBFT-runway", "{:?} Ending run.", index);
     terminator.terminate_sync().await;
 
-    handle_task_termination(extender_handle, "AlephBFT-runway", "Extender", index).await;
     handle_task_termination(creation_handle, "AlephBFT-runway", "Creator", index).await;
     handle_task_termination(alerter_handle, "AlephBFT-runway", "Alerter", index).await;
     handle_task_termination(runway_handle, "AlephBFT-runway", "Runway", index).await;

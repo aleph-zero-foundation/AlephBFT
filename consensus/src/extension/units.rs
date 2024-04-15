@@ -1,15 +1,18 @@
 use std::collections::{HashMap, VecDeque};
 
-use crate::{extension::ExtenderUnit, Hasher, Round};
+use crate::{
+    units::{HashFor, UnitWithParents},
+    Round,
+};
 
 /// Units kept in a way optimized for easy batch extraction.
-pub struct Units<H: Hasher> {
-    units: HashMap<H::Hash, ExtenderUnit<H>>,
-    by_round: HashMap<Round, Vec<H::Hash>>,
+pub struct Units<U: UnitWithParents> {
+    units: HashMap<HashFor<U>, U>,
+    by_round: HashMap<Round, Vec<HashFor<U>>>,
     highest_round: Round,
 }
 
-impl<H: Hasher> Units<H> {
+impl<U: UnitWithParents> Units<U> {
     /// Create empty unit store.
     pub fn new() -> Self {
         Units {
@@ -20,24 +23,24 @@ impl<H: Hasher> Units<H> {
     }
 
     /// Add a unit to the store.
-    pub fn add_unit(&mut self, u: ExtenderUnit<H>) {
-        let round = u.round;
+    pub fn add_unit(&mut self, u: U) {
+        let round = u.round();
         if round > self.highest_round {
             self.highest_round = round;
         }
 
-        self.by_round.entry(round).or_default().push(u.hash);
-        self.units.insert(u.hash, u);
+        self.by_round.entry(round).or_default().push(u.hash());
+        self.units.insert(u.hash(), u);
     }
 
-    pub fn get(&self, hash: &H::Hash) -> Option<&ExtenderUnit<H>> {
+    pub fn get(&self, hash: &HashFor<U>) -> Option<&U> {
         self.units.get(hash)
     }
 
     /// Get the list of unit hashes from the given round.
     /// Panics if called for a round greater or equal to the round
     /// of the highest head of a removed batch.
-    pub fn in_round(&self, round: Round) -> Option<Vec<&ExtenderUnit<H>>> {
+    pub fn in_round(&self, round: Round) -> Option<Vec<&U>> {
         self.by_round.get(&round).map(|hashes| {
             hashes
                 .iter()
@@ -52,21 +55,21 @@ impl<H: Hasher> Units<H> {
     }
 
     /// Remove a batch of units, deterministically ordered based on the given head.
-    pub fn remove_batch(&mut self, head: H::Hash) -> Vec<H::Hash> {
+    pub fn remove_batch(&mut self, head: &HashFor<U>) -> Vec<U> {
         let mut batch = Vec::new();
         let mut queue = VecDeque::new();
         queue.push_back(
             self.units
-                .remove(&head)
+                .remove(head)
                 .expect("head is picked among units we have"),
         );
         while let Some(u) = queue.pop_front() {
-            batch.push(u.hash);
-            for u_hash in u.parents.into_values() {
+            for u_hash in u.parents().clone().into_values() {
                 if let Some(v) = self.units.remove(&u_hash) {
                     queue.push_back(v);
                 }
             }
+            batch.push(u);
         }
         // Since we construct the batch using BFS, the ordering is canonical and respects the DAG partial order.
 
@@ -79,14 +82,14 @@ impl<H: Hasher> Units<H> {
 #[cfg(test)]
 mod test {
     use crate::{
-        extension::{tests::construct_unit_all_parents, units::Units},
-        NodeCount, NodeIndex,
+        extension::units::Units,
+        units::{random_full_parent_reconstrusted_units_up_to, TestingDagUnit, Unit},
+        NodeCount,
     };
-    use aleph_bft_mock::Hasher64;
 
     #[test]
     fn initially_empty() {
-        let units = Units::<Hasher64>::new();
+        let units = Units::<TestingDagUnit>::new();
         assert!(units.in_round(0).is_none());
         assert_eq!(units.highest_round(), 0);
     }
@@ -95,11 +98,12 @@ mod test {
     fn accepts_unit() {
         let mut units = Units::new();
         let n_members = NodeCount(4);
-        let unit = construct_unit_all_parents(NodeIndex(0), 0, n_members);
+        let session_id = 2137;
+        let unit = &random_full_parent_reconstrusted_units_up_to(0, n_members, session_id)[0][0];
         units.add_unit(unit.clone());
         assert_eq!(units.highest_round(), 0);
-        assert_eq!(units.in_round(0), Some(vec![&unit]));
-        assert_eq!(units.get(&unit.hash), Some(&unit));
+        assert_eq!(units.in_round(0), Some(vec![unit]));
+        assert_eq!(units.get(&unit.hash()), Some(unit));
     }
 
     #[test]
@@ -107,20 +111,22 @@ mod test {
         let mut units = Units::new();
         let n_members = NodeCount(4);
         let max_round = 43;
+        let session_id = 2137;
         let mut heads = Vec::new();
-        for round in 0..=max_round {
-            for creator in n_members.into_iterator() {
-                let unit = construct_unit_all_parents(creator, round, n_members);
-                if round as usize % n_members.0 == creator.0 {
-                    heads.push(unit.hash)
-                }
+        for (round, round_units) in
+            random_full_parent_reconstrusted_units_up_to(max_round, n_members, session_id)
+                .into_iter()
+                .enumerate()
+        {
+            heads.push(round_units[round % n_members.0].clone());
+            for unit in round_units {
                 units.add_unit(unit);
             }
         }
         assert_eq!(units.highest_round(), max_round);
         assert_eq!(units.in_round(max_round + 1), None);
         for head in heads {
-            let mut batch = units.remove_batch(head);
+            let mut batch = units.remove_batch(&head.hash());
             assert_eq!(batch.pop(), Some(head));
         }
     }
@@ -131,24 +137,24 @@ mod test {
         let mut units_but_backwards = Units::new();
         let n_members = NodeCount(4);
         let max_round = 43;
+        let session_id = 2137;
         let mut heads = Vec::new();
-        for round in 0..=max_round {
-            let mut round_units = Vec::new();
-            for creator in n_members.into_iterator() {
-                let unit = construct_unit_all_parents(creator, round, n_members);
-                if round as usize % n_members.0 == creator.0 {
-                    heads.push(unit.hash)
-                }
-                round_units.push(unit.clone());
-                units.add_unit(unit);
+        for (round, round_units) in
+            random_full_parent_reconstrusted_units_up_to(max_round, n_members, session_id)
+                .into_iter()
+                .enumerate()
+        {
+            heads.push(round_units[round % n_members.0].clone());
+            for unit in &round_units {
+                units.add_unit(unit.clone());
             }
             for unit in round_units.into_iter().rev() {
                 units_but_backwards.add_unit(unit);
             }
         }
         for head in heads {
-            let batch1 = units.remove_batch(head);
-            let batch2 = units_but_backwards.remove_batch(head);
+            let batch1 = units.remove_batch(&head.hash());
+            let batch2 = units_but_backwards.remove_batch(&head.hash());
             assert_eq!(batch1, batch2);
         }
     }

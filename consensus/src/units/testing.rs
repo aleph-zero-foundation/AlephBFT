@@ -1,5 +1,6 @@
 use crate::{
     creation::Creator as GenericCreator,
+    dag::ReconstructedUnit,
     units::{
         ControlHash as GenericControlHash, FullUnit as GenericFullUnit, PreUnit as GenericPreUnit,
         SignedUnit as GenericSignedUnit, UncheckedSignedUnit as GenericUncheckedSignedUnit, Unit,
@@ -15,6 +16,7 @@ type PreUnit = GenericPreUnit<Hasher64>;
 pub type FullUnit = GenericFullUnit<Hasher64, Data>;
 type UncheckedSignedUnit = GenericUncheckedSignedUnit<Hasher64, Data, Signature>;
 pub type SignedUnit = GenericSignedUnit<Hasher64, Data, Keychain>;
+pub type DagUnit = ReconstructedUnit<FullUnit>;
 
 #[derive(Clone)]
 pub struct WrappedSignedUnit(pub SignedUnit);
@@ -32,6 +34,10 @@ impl Unit for WrappedSignedUnit {
 
     fn control_hash(&self) -> &ControlHash {
         self.0.control_hash()
+    }
+
+    fn session_id(&self) -> SessionId {
+        self.0.session_id()
     }
 }
 
@@ -105,17 +111,27 @@ fn initial_preunit(n_members: NodeCount, node_id: NodeIndex) -> PreUnit {
     )
 }
 
-fn random_initial_units(n_members: NodeCount, session_id: SessionId) -> Vec<FullUnit> {
+fn random_initial_reconstructed_units(n_members: NodeCount, session_id: SessionId) -> Vec<DagUnit> {
     n_members
         .into_iterator()
         .map(|node_id| initial_preunit(n_members, node_id))
-        .map(|preunit| preunit_to_full_unit(preunit, session_id))
+        .map(|preunit| ReconstructedUnit::initial(preunit_to_full_unit(preunit, session_id)))
         .collect()
 }
 
-pub fn random_unit_with_parents(creator: NodeIndex, parents: &Vec<FullUnit>) -> FullUnit {
+fn random_initial_units(n_members: NodeCount, session_id: SessionId) -> Vec<FullUnit> {
+    random_initial_reconstructed_units(n_members, session_id)
+        .into_iter()
+        .map(|unit| unit.unpack())
+        .collect()
+}
+
+pub fn random_reconstructed_unit_with_parents<U: Unit<Hasher = Hasher64>>(
+    creator: NodeIndex,
+    parents: &Vec<U>,
+) -> DagUnit {
     let representative_parent = parents.last().expect("there are parents");
-    let n_members = representative_parent.as_pre_unit().n_members();
+    let n_members = representative_parent.control_hash().n_members();
     let session_id = representative_parent.session_id();
     let round = representative_parent.round() + 1;
     let mut parent_map = NodeMap::with_size(n_members);
@@ -123,7 +139,18 @@ pub fn random_unit_with_parents(creator: NodeIndex, parents: &Vec<FullUnit>) -> 
         parent_map.insert(parent.creator(), parent.hash());
     }
     let control_hash = ControlHash::new(&parent_map);
-    preunit_to_full_unit(PreUnit::new(creator, round, control_hash), session_id)
+    ReconstructedUnit::with_parents(
+        preunit_to_full_unit(PreUnit::new(creator, round, control_hash), session_id),
+        parent_map,
+    )
+    .expect("correct parents")
+}
+
+pub fn random_unit_with_parents<U: Unit<Hasher = Hasher64>>(
+    creator: NodeIndex,
+    parents: &Vec<U>,
+) -> FullUnit {
+    random_reconstructed_unit_with_parents(creator, parents).unpack()
 }
 
 pub fn random_full_parent_units_up_to(
@@ -137,6 +164,27 @@ pub fn random_full_parent_units_up_to(
             .into_iterator()
             .map(|node_id| {
                 random_unit_with_parents(node_id, result.last().expect("previous round present"))
+            })
+            .collect();
+        result.push(units);
+    }
+    result
+}
+
+pub fn random_full_parent_reconstrusted_units_up_to(
+    round: Round,
+    n_members: NodeCount,
+    session_id: SessionId,
+) -> Vec<Vec<DagUnit>> {
+    let mut result = vec![random_initial_reconstructed_units(n_members, session_id)];
+    for _ in 0..round {
+        let units = n_members
+            .into_iterator()
+            .map(|node_id| {
+                random_reconstructed_unit_with_parents(
+                    node_id,
+                    result.last().expect("previous round present"),
+                )
             })
             .collect();
         result.push(units);

@@ -16,9 +16,10 @@ pub(crate) use store::*;
 #[cfg(test)]
 pub use testing::{
     create_preunits, creator_set, full_unit_to_unchecked_signed_unit, preunit_to_full_unit,
-    preunit_to_signed_unit, preunit_to_unchecked_signed_unit, random_full_parent_units_up_to,
-    random_unit_with_parents, FullUnit as TestingFullUnit, SignedUnit as TestingSignedUnit,
-    WrappedSignedUnit,
+    preunit_to_signed_unit, preunit_to_unchecked_signed_unit,
+    random_full_parent_reconstrusted_units_up_to, random_full_parent_units_up_to,
+    random_reconstructed_unit_with_parents, random_unit_with_parents, DagUnit as TestingDagUnit,
+    FullUnit as TestingFullUnit, SignedUnit as TestingSignedUnit, WrappedSignedUnit,
 };
 pub use validator::{ValidationError, Validator};
 
@@ -160,9 +161,6 @@ impl<H: Hasher, D: Data> FullUnit<H, D> {
     pub(crate) fn included_data(&self) -> Vec<D> {
         self.data.iter().cloned().collect()
     }
-    pub(crate) fn session_id(&self) -> SessionId {
-        self.session_id
-    }
 }
 
 impl<H: Hasher, D: Data> Signable for FullUnit<H, D> {
@@ -192,6 +190,8 @@ pub trait Unit: 'static + Send + Clone {
 
     fn control_hash(&self) -> &ControlHash<Self::Hasher>;
 
+    fn session_id(&self) -> SessionId;
+
     fn creator(&self) -> NodeIndex {
         self.coord().creator()
     }
@@ -205,6 +205,10 @@ pub trait WrappedUnit<H: Hasher>: Unit<Hasher = H> {
     type Wrapped: Unit<Hasher = H>;
 
     fn unpack(self) -> Self::Wrapped;
+}
+
+pub trait UnitWithParents: Unit {
+    fn parents(&self) -> &NodeMap<HashFor<Self>>;
 }
 
 impl<H: Hasher, D: Data> Unit for FullUnit<H, D> {
@@ -229,6 +233,10 @@ impl<H: Hasher, D: Data> Unit for FullUnit<H, D> {
     fn control_hash(&self) -> &ControlHash<Self::Hasher> {
         self.pre_unit.control_hash()
     }
+
+    fn session_id(&self) -> SessionId {
+        self.session_id
+    }
 }
 
 impl<H: Hasher, D: Data, MK: MultiKeychain> Unit for SignedUnit<H, D, MK> {
@@ -244,6 +252,10 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Unit for SignedUnit<H, D, MK> {
 
     fn control_hash(&self) -> &ControlHash<Self::Hasher> {
         self.as_signable().control_hash()
+    }
+
+    fn session_id(&self) -> SessionId {
+        self.as_signable().session_id()
     }
 }
 

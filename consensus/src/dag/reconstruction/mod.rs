@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
 use crate::{
-    extension::ExtenderUnit,
-    units::{ControlHash, HashFor, Unit, UnitCoord, WrappedUnit},
-    Hasher, NodeMap,
+    units::{ControlHash, HashFor, Unit, UnitCoord, UnitWithParents, WrappedUnit},
+    Hasher, NodeMap, SessionId,
 };
 
 mod dag;
@@ -41,21 +40,6 @@ impl<U: Unit> ReconstructedUnit<U> {
             parents: NodeMap::with_size(n_members),
         }
     }
-
-    /// The reconstructed parents, guaranteed to be correct.
-    pub fn parents(&self) -> &NodeMap<HashFor<U>> {
-        &self.parents
-    }
-
-    /// Create an extender unit from this one.
-    pub fn extender_unit(&self) -> ExtenderUnit<U::Hasher> {
-        ExtenderUnit::new(
-            self.unit.creator(),
-            self.unit.round(),
-            self.hash(),
-            self.parents.clone(),
-        )
-    }
 }
 
 impl<U: Unit> Unit for ReconstructedUnit<U> {
@@ -72,6 +56,10 @@ impl<U: Unit> Unit for ReconstructedUnit<U> {
     fn control_hash(&self) -> &ControlHash<Self::Hasher> {
         self.unit.control_hash()
     }
+
+    fn session_id(&self) -> SessionId {
+        self.unit.session_id()
+    }
 }
 
 impl<U: Unit> WrappedUnit<U::Hasher> for ReconstructedUnit<U> {
@@ -79,6 +67,12 @@ impl<U: Unit> WrappedUnit<U::Hasher> for ReconstructedUnit<U> {
 
     fn unpack(self) -> U {
         self.unit
+    }
+}
+
+impl<U: Unit> UnitWithParents for ReconstructedUnit<U> {
+    fn parents(&self) -> &NodeMap<HashFor<Self>> {
+        &self.parents
     }
 }
 
@@ -148,7 +142,7 @@ impl<U: Unit> ReconstructionResult<U> {
 /// it eventually outputs versions with explicit parents in an order conforming to the Dag order.
 pub struct Reconstruction<U: Unit> {
     parents: ParentReconstruction<U>,
-    dag: Dag<U>,
+    dag: Dag<ReconstructedUnit<U>>,
 }
 
 impl<U: Unit> Reconstruction<U> {
@@ -194,7 +188,7 @@ mod test {
 
     use crate::{
         dag::reconstruction::{ReconstructedUnit, Reconstruction, ReconstructionResult, Request},
-        units::{random_full_parent_units_up_to, Unit, UnitCoord},
+        units::{random_full_parent_units_up_to, Unit, UnitCoord, UnitWithParents},
         NodeCount, NodeIndex,
     };
 

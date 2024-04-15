@@ -221,7 +221,7 @@ mod test {
         dag::reconstruction::{
             parents::Reconstruction, ReconstructedUnit, ReconstructionResult, Request,
         },
-        units::{random_full_parent_units_up_to, Unit, UnitCoord},
+        units::{random_full_parent_units_up_to, Unit, UnitCoord, UnitWithParents},
         NodeCount, NodeIndex,
     };
 

@@ -1,20 +1,14 @@
-use crate::{
-    dag::reconstruction::ReconstructedUnit,
-    units::{HashFor, Unit},
-};
+use crate::units::{HashFor, UnitWithParents};
 use std::collections::{HashMap, HashSet, VecDeque};
 
-struct OrphanedUnit<U: Unit> {
-    unit: ReconstructedUnit<U>,
+struct OrphanedUnit<U: UnitWithParents> {
+    unit: U,
     missing_parents: HashSet<HashFor<U>>,
 }
 
-impl<U: Unit> OrphanedUnit<U> {
+impl<U: UnitWithParents> OrphanedUnit<U> {
     /// If there are no missing parents then returns just the internal unit.
-    pub fn new(
-        unit: ReconstructedUnit<U>,
-        missing_parents: HashSet<HashFor<U>>,
-    ) -> Result<Self, ReconstructedUnit<U>> {
+    pub fn new(unit: U, missing_parents: HashSet<HashFor<U>>) -> Result<Self, U> {
         match missing_parents.is_empty() {
             true => Err(unit),
             false => Ok(OrphanedUnit {
@@ -24,8 +18,8 @@ impl<U: Unit> OrphanedUnit<U> {
         }
     }
 
-    /// If this was the last missing parent return the reconstructed unit.
-    pub fn resolve_parent(self, parent: HashFor<U>) -> Result<ReconstructedUnit<U>, Self> {
+    /// If this was the last missing parent return the unit.
+    pub fn resolve_parent(self, parent: HashFor<U>) -> Result<U, Self> {
         let OrphanedUnit {
             unit,
             mut missing_parents,
@@ -53,13 +47,13 @@ impl<U: Unit> OrphanedUnit<U> {
 
 /// A structure ensuring that units added to it are output in an order
 /// in agreement with the DAG order.
-pub struct Dag<U: Unit> {
+pub struct Dag<U: UnitWithParents> {
     orphaned_units: HashMap<HashFor<U>, OrphanedUnit<U>>,
     waiting_for: HashMap<HashFor<U>, Vec<HashFor<U>>>,
     dag_units: HashSet<HashFor<U>>,
 }
 
-impl<U: Unit> Dag<U> {
+impl<U: UnitWithParents> Dag<U> {
     /// Create a new empty DAG.
     pub fn new() -> Self {
         Dag {
@@ -69,7 +63,7 @@ impl<U: Unit> Dag<U> {
         }
     }
 
-    fn move_to_dag(&mut self, unit: ReconstructedUnit<U>) -> Vec<ReconstructedUnit<U>> {
+    fn move_to_dag(&mut self, unit: U) -> Vec<U> {
         let mut result = Vec::new();
         let mut ready_units = VecDeque::from([unit]);
         while let Some(unit) = ready_units.pop_front() {
@@ -95,7 +89,7 @@ impl<U: Unit> Dag<U> {
 
     /// Add a unit to the Dag. Returns all the units that now have all their parents in the Dag,
     /// in an order agreeing with the Dag structure.
-    pub fn add_unit(&mut self, unit: ReconstructedUnit<U>) -> Vec<ReconstructedUnit<U>> {
+    pub fn add_unit(&mut self, unit: U) -> Vec<U> {
         if self.dag_units.contains(&unit.hash()) {
             // Deduplicate.
             return Vec::new();
