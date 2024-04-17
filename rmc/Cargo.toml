@@ -1,6 +1,6 @@
 [package]
 name = "aleph-bft-rmc"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2021"
 authors = ["Cardinal Cryptography"]
 categories = ["algorithms", "cryptography"]
