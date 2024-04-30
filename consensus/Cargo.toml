@@ -31,7 +31,7 @@ thiserror = "1.0"
 aleph-bft-mock = { path = "../mock" }
 env_logger = "0.11"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time"] }
-serial_test = "3.1.0"
+serial_test = "3.1.1"
 
 [features]
 default = ["initial_unit_collection"]
