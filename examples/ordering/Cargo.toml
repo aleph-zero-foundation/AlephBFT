@@ -19,4 +19,4 @@ log = "0.4"
 parking_lot = "0.12"
 time = { version = "0.3", features = ["formatting", "macros", "local-offset"] }
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "io-util", "net", "time", "fs"] }
-tokio-util = { version = "0.7.10", features = ["compat"] }
+tokio-util = { version = "0.7.11", features = ["compat"] }
