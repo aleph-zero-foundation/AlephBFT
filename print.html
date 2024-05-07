@@ -360,8 +360,10 @@ That being said, there are <strong>practical</strong> issues when it comes to de
 <pre><pre class="playground"><code class="language-rust">
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>pub trait DataProvider&lt;Data&gt; {
-    async fn get_data(&amp;mut self) -&gt; Option&lt;Data&gt;;
+</span>pub trait DataProvider {
+    type Output: Data;
+
+    async fn get_data(&amp;mut self) -&gt; Option&lt;Self::Output&gt;;
 }
 <span class="boring">}
 </span></code></pre></pre>
@@ -371,7 +373,7 @@ That being said, there are <strong>practical</strong> issues when it comes to de
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>pub trait FinalizationHandler&lt;Data&gt; {
-    fn data_finalized(&amp;mut self, data: Data, creator: NodeIndex);
+    fn data_finalized(&amp;mut self, data: Data);
 }
 <span class="boring">}
 </span></code></pre></pre>
