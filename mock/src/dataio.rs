@@ -39,7 +39,9 @@ impl DataProvider {
 }
 
 #[async_trait]
-impl DataProviderT<Data> for DataProvider {
+impl DataProviderT for DataProvider {
+    type Output = Data;
+
     async fn get_data(&mut self) -> Option<Data> {
         self.counter += 1;
         if let Some(n_data) = self.n_data {
@@ -61,7 +63,9 @@ impl StalledDataProvider {
 }
 
 #[async_trait]
-impl DataProviderT<Data> for StalledDataProvider {
+impl DataProviderT for StalledDataProvider {
+    type Output = Data;
+
     async fn get_data(&mut self) -> Option<Data> {
         pending().await
     }
@@ -73,8 +77,8 @@ pub struct FinalizationHandler {
 }
 
 impl FinalizationHandlerT<Data> for FinalizationHandler {
-    fn data_finalized(&mut self, d: Data) {
-        if let Err(e) = self.tx.unbounded_send(d) {
+    fn data_finalized(&mut self, data: Data) {
+        if let Err(e) = self.tx.unbounded_send(data) {
             error!(target: "finalization-handler", "Error when sending data from FinalizationHandler {:?}.", e);
         }
     }

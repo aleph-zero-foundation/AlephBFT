@@ -9,11 +9,10 @@ use crate::{
         SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore, UnitStoreStatus,
         UnitWithParents, Validator, WrappedUnit,
     },
-    Config, Data, DataProvider, FinalizationHandler, Hasher, Index, Keychain, MultiKeychain,
-    NodeIndex, Receiver, Round, Sender, Signature, Signed, SpawnHandle, Terminator,
-    UncheckedSigned,
+    Config, Data, DataProvider, Hasher, Index, Keychain, MultiKeychain, NodeIndex, Receiver, Round,
+    Sender, Signature, Signed, SpawnHandle, Terminator, UncheckedSigned,
 };
-use aleph_bft_types::Recipient;
+use aleph_bft_types::{Recipient, UnitFinalizationHandler};
 use futures::{
     channel::{mpsc, oneshot},
     future::pending,
@@ -100,29 +99,27 @@ type CollectionResponse<H, D, MK> = UncheckedSigned<
     <MK as Keychain>::Signature,
 >;
 
-struct Runway<H, D, FH, MK>
+struct Runway<FH, MK>
 where
-    H: Hasher,
-    D: Data,
-    FH: FinalizationHandler<D>,
+    FH: UnitFinalizationHandler,
     MK: MultiKeychain,
 {
     missing_coords: HashSet<UnitCoord>,
-    missing_parents: HashSet<H::Hash>,
-    store: UnitStore<DagUnit<H, D, MK>>,
+    missing_parents: HashSet<<FH::Hasher as Hasher>::Hash>,
+    store: UnitStore<DagUnit<FH::Hasher, FH::Data, MK>>,
     keychain: MK,
-    dag: Dag<H, D, MK>,
-    ordering: Ordering<H, D, MK, FH>,
-    alerts_for_alerter: Sender<Alert<H, D, MK::Signature>>,
-    notifications_from_alerter: Receiver<ForkingNotification<H, D, MK::Signature>>,
-    unit_messages_from_network: Receiver<RunwayNotificationIn<H, D, MK::Signature>>,
-    unit_messages_for_network: Sender<RunwayNotificationOut<H, D, MK::Signature>>,
-    responses_for_collection: Sender<CollectionResponse<H, D, MK>>,
-    resolved_requests: Sender<Request<H>>,
-    parents_for_creator: Sender<DagUnit<H, D, MK>>,
-    backup_units_for_saver: Sender<DagUnit<H, D, MK>>,
-    backup_units_from_saver: Receiver<DagUnit<H, D, MK>>,
-    new_units_from_creation: Receiver<SignedUnit<H, D, MK>>,
+    dag: Dag<FH::Hasher, FH::Data, MK>,
+    ordering: Ordering<MK, FH>,
+    alerts_for_alerter: Sender<Alert<FH::Hasher, FH::Data, MK::Signature>>,
+    notifications_from_alerter: Receiver<ForkingNotification<FH::Hasher, FH::Data, MK::Signature>>,
+    unit_messages_from_network: Receiver<RunwayNotificationIn<FH::Hasher, FH::Data, MK::Signature>>,
+    unit_messages_for_network: Sender<RunwayNotificationOut<FH::Hasher, FH::Data, MK::Signature>>,
+    responses_for_collection: Sender<CollectionResponse<FH::Hasher, FH::Data, MK>>,
+    resolved_requests: Sender<Request<FH::Hasher>>,
+    parents_for_creator: Sender<DagUnit<FH::Hasher, FH::Data, MK>>,
+    backup_units_for_saver: Sender<DagUnit<FH::Hasher, FH::Data, MK>>,
+    backup_units_from_saver: Receiver<DagUnit<FH::Hasher, FH::Data, MK>>,
+    new_units_from_creation: Receiver<SignedUnit<FH::Hasher, FH::Data, MK>>,
     exiting: bool,
 }
 
@@ -206,28 +203,36 @@ impl<'a, H: Hasher> Display for RunwayStatus<'a, H> {
     }
 }
 
-struct RunwayConfig<H: Hasher, D: Data, FH: FinalizationHandler<D>, MK: MultiKeychain> {
-    finalization_handler: FH,
-    backup_units_for_saver: Sender<DagUnit<H, D, MK>>,
-    backup_units_from_saver: Receiver<DagUnit<H, D, MK>>,
-    alerts_for_alerter: Sender<Alert<H, D, MK::Signature>>,
-    notifications_from_alerter: Receiver<ForkingNotification<H, D, MK::Signature>>,
-    unit_messages_from_network: Receiver<RunwayNotificationIn<H, D, MK::Signature>>,
-    unit_messages_for_network: Sender<RunwayNotificationOut<H, D, MK::Signature>>,
-    responses_for_collection: Sender<CollectionResponse<H, D, MK>>,
-    parents_for_creator: Sender<DagUnit<H, D, MK>>,
-    resolved_requests: Sender<Request<H>>,
-    new_units_from_creation: Receiver<SignedUnit<H, D, MK>>,
+struct RunwayConfig<UFH: UnitFinalizationHandler, MK: MultiKeychain> {
+    finalization_handler: UFH,
+    backup_units_for_saver: Sender<DagUnit<UFH::Hasher, UFH::Data, MK>>,
+    backup_units_from_saver: Receiver<DagUnit<UFH::Hasher, UFH::Data, MK>>,
+    alerts_for_alerter: Sender<Alert<UFH::Hasher, UFH::Data, MK::Signature>>,
+    notifications_from_alerter:
+        Receiver<ForkingNotification<UFH::Hasher, UFH::Data, MK::Signature>>,
+    unit_messages_from_network:
+        Receiver<RunwayNotificationIn<UFH::Hasher, UFH::Data, MK::Signature>>,
+    unit_messages_for_network: Sender<RunwayNotificationOut<UFH::Hasher, UFH::Data, MK::Signature>>,
+    responses_for_collection: Sender<CollectionResponse<UFH::Hasher, UFH::Data, MK>>,
+    parents_for_creator: Sender<DagUnit<UFH::Hasher, UFH::Data, MK>>,
+    resolved_requests: Sender<Request<UFH::Hasher>>,
+    new_units_from_creation: Receiver<SignedUnit<UFH::Hasher, UFH::Data, MK>>,
 }
 
-impl<H, D, FH, MK> Runway<H, D, FH, MK>
+type BackupUnits<UFH, MK> = Vec<
+    UncheckedSignedUnit<
+        <UFH as UnitFinalizationHandler>::Hasher,
+        <UFH as UnitFinalizationHandler>::Data,
+        <MK as Keychain>::Signature,
+    >,
+>;
+
+impl<UFH, MK> Runway<UFH, MK>
 where
-    H: Hasher,
-    D: Data,
-    FH: FinalizationHandler<D>,
+    UFH: UnitFinalizationHandler,
     MK: MultiKeychain,
 {
-    fn new(config: RunwayConfig<H, D, FH, MK>, keychain: MK, validator: Validator<MK>) -> Self {
+    fn new(config: RunwayConfig<UFH, MK>, keychain: MK, validator: Validator<MK>) -> Self {
         let n_members = keychain.node_count();
         let RunwayConfig {
             finalization_handler,
@@ -271,7 +276,7 @@ where
         self.keychain.index()
     }
 
-    fn handle_dag_result(&mut self, result: DagResult<H, D, MK>) {
+    fn handle_dag_result(&mut self, result: DagResult<UFH::Hasher, UFH::Data, MK>) {
         let DagResult {
             units,
             requests,
@@ -291,12 +296,18 @@ where
         }
     }
 
-    fn on_unit_received(&mut self, unit: UncheckedSignedUnit<H, D, MK::Signature>) {
+    fn on_unit_received(
+        &mut self,
+        unit: UncheckedSignedUnit<UFH::Hasher, UFH::Data, MK::Signature>,
+    ) {
         let result = self.dag.add_unit(unit, &self.store);
         self.handle_dag_result(result);
     }
 
-    fn on_unit_message(&mut self, message: RunwayNotificationIn<H, D, MK::Signature>) {
+    fn on_unit_message(
+        &mut self,
+        message: RunwayNotificationIn<UFH::Hasher, UFH::Data, MK::Signature>,
+    ) {
         match message {
             RunwayNotificationIn::NewUnit(u) => {
                 trace!(target: "AlephBFT-runway", "{:?} New unit received {:?}.", self.index(), &u);
@@ -360,7 +371,7 @@ where
         }
     }
 
-    fn on_request_parents(&mut self, node_id: NodeIndex, u_hash: H::Hash) {
+    fn on_request_parents(&mut self, node_id: NodeIndex, u_hash: <UFH::Hasher as Hasher>::Hash) {
         debug!(target: "AlephBFT-runway", "{:?} Received parents request for hash {:?} from {:?}.", self.index(), u_hash, node_id);
 
         match self.store.unit(&u_hash) {
@@ -412,8 +423,8 @@ where
 
     fn on_parents_response(
         &mut self,
-        u_hash: H::Hash,
-        parents: Vec<UncheckedSignedUnit<H, D, MK::Signature>>,
+        u_hash: <UFH::Hasher as Hasher>::Hash,
+        parents: Vec<UncheckedSignedUnit<UFH::Hasher, UFH::Data, MK::Signature>>,
     ) {
         if self.store.unit(&u_hash).is_some() {
             trace!(target: "AlephBFT-runway", "{:?} We got parents response but already imported the unit.", self.index());
@@ -423,20 +434,23 @@ where
         self.handle_dag_result(result);
     }
 
-    fn on_forking_notification(&mut self, notification: ForkingNotification<H, D, MK::Signature>) {
+    fn on_forking_notification(
+        &mut self,
+        notification: ForkingNotification<UFH::Hasher, UFH::Data, MK::Signature>,
+    ) {
         let result = self
             .dag
             .process_forking_notification(notification, &self.store);
         self.handle_dag_result(result);
     }
 
-    fn resolve_missing_parents(&mut self, u_hash: &H::Hash) {
+    fn resolve_missing_parents(&mut self, u_hash: &<UFH::Hasher as Hasher>::Hash) {
         if self.missing_parents.remove(u_hash) {
             self.send_resolved_request_notification(Request::Parents(*u_hash));
         }
     }
 
-    fn on_reconstruction_request(&mut self, request: ReconstructionRequest<H>) {
+    fn on_reconstruction_request(&mut self, request: ReconstructionRequest<UFH::Hasher>) {
         use ReconstructionRequest::*;
         match request {
             Coord(coord) => {
@@ -448,7 +462,7 @@ where
         }
     }
 
-    fn on_unit_reconstructed(&mut self, unit: DagUnit<H, D, MK>) {
+    fn on_unit_reconstructed(&mut self, unit: DagUnit<UFH::Hasher, UFH::Data, MK>) {
         let unit_hash = unit.hash();
         trace!(target: "AlephBFT-runway", "Unit {:?} {} reconstructed.", unit_hash, unit.coord());
         if self.backup_units_for_saver.unbounded_send(unit).is_err() {
@@ -456,7 +470,7 @@ where
         }
     }
 
-    fn on_unit_backup_saved(&mut self, unit: DagUnit<H, D, MK>) {
+    fn on_unit_backup_saved(&mut self, unit: DagUnit<UFH::Hasher, UFH::Data, MK>) {
         let unit_hash = unit.hash();
         self.store.insert(unit.clone());
         self.dag.finished_processing(&unit_hash);
@@ -494,7 +508,7 @@ where
         }
     }
 
-    fn on_wrong_control_hash(&mut self, u_hash: H::Hash) {
+    fn on_wrong_control_hash(&mut self, u_hash: <UFH::Hasher as Hasher>::Hash) {
         trace!(target: "AlephBFT-runway", "{:?} Dealing with wrong control hash notification {:?}.", self.index(), u_hash);
         if self.missing_parents.insert(u_hash) {
             self.send_message_for_network(RunwayNotificationOut::Request(Request::Parents(u_hash)));
@@ -503,7 +517,7 @@ where
 
     fn send_message_for_network(
         &mut self,
-        notification: RunwayNotificationOut<H, D, MK::Signature>,
+        notification: RunwayNotificationOut<UFH::Hasher, UFH::Data, MK::Signature>,
     ) {
         if self
             .unit_messages_for_network
@@ -515,14 +529,14 @@ where
         }
     }
 
-    fn send_resolved_request_notification(&mut self, notification: Request<H>) {
+    fn send_resolved_request_notification(&mut self, notification: Request<UFH::Hasher>) {
         if self.resolved_requests.unbounded_send(notification).is_err() {
             warn!(target: "AlephBFT-runway", "{:?} resolved_requests channel should be open", self.index());
             self.exiting = true;
         }
     }
 
-    fn status(&self) -> RunwayStatus<'_, H> {
+    fn status(&self) -> RunwayStatus<'_, UFH::Hasher> {
         RunwayStatus {
             missing_coords: &self.missing_coords,
             missing_parents: &self.missing_parents,
@@ -537,7 +551,7 @@ where
 
     async fn run(
         mut self,
-        data_from_backup: oneshot::Receiver<Vec<UncheckedSignedUnit<H, D, MK::Signature>>>,
+        data_from_backup: oneshot::Receiver<BackupUnits<UFH, MK>>,
         mut terminator: Terminator,
     ) {
         let index = self.index();
@@ -664,34 +678,30 @@ fn trivial_start(
 }
 
 pub struct RunwayIO<
-    H: Hasher,
-    D: Data,
     MK: MultiKeychain,
     W: AsyncWrite + Send + Sync + 'static,
     R: AsyncRead + Send + Sync + 'static,
-    DP: DataProvider<D>,
-    FH: FinalizationHandler<D>,
+    DP: DataProvider,
+    UFH: UnitFinalizationHandler,
 > {
     pub data_provider: DP,
-    pub finalization_handler: FH,
+    pub finalization_handler: UFH,
     pub backup_write: W,
     pub backup_read: R,
-    _phantom: PhantomData<(H, D, MK::Signature)>,
+    _phantom: PhantomData<MK::Signature>,
 }
 
 impl<
-        H: Hasher,
-        D: Data,
         MK: MultiKeychain,
         W: AsyncWrite + Send + Sync + 'static,
         R: AsyncRead + Send + Sync + 'static,
-        DP: DataProvider<D>,
-        FH: FinalizationHandler<D>,
-    > RunwayIO<H, D, MK, W, R, DP, FH>
+        DP: DataProvider,
+        UFH: UnitFinalizationHandler,
+    > RunwayIO<MK, W, R, DP, UFH>
 {
     pub fn new(
         data_provider: DP,
-        finalization_handler: FH,
+        finalization_handler: UFH,
         backup_write: W,
         backup_read: R,
     ) -> Self {
@@ -705,20 +715,18 @@ impl<
     }
 }
 
-pub(crate) async fn run<H, D, US, UL, MK, DP, FH, SH>(
+pub(crate) async fn run<US, UL, MK, DP, UFH, SH>(
     config: Config,
-    runway_io: RunwayIO<H, D, MK, US, UL, DP, FH>,
+    runway_io: RunwayIO<MK, US, UL, DP, UFH>,
     keychain: MK,
     spawn_handle: SH,
-    network_io: NetworkIO<H, D, MK>,
+    network_io: NetworkIO<UFH::Hasher, DP::Output, MK>,
     mut terminator: Terminator,
 ) where
-    H: Hasher,
-    D: Data,
     US: AsyncWrite + Send + Sync + 'static,
     UL: AsyncRead + Send + Sync + 'static,
-    DP: DataProvider<D>,
-    FH: FinalizationHandler<D>,
+    DP: DataProvider,
+    UFH: UnitFinalizationHandler<Data = DP::Output>,
     MK: MultiKeychain,
     SH: SpawnHandle,
 {

@@ -7,8 +7,10 @@
 The DataProvider trait is an abstraction for a component that provides data items. `DataProvider` is parametrized with a `Data` generic type representing the type of items we would like to order. Below we give examples of what these might be.
 
 ```rust
-pub trait DataProvider<Data> {
-    async fn get_data(&mut self) -> Option<Data>;
+pub trait DataProvider {
+    type Output: Data;
+
+    async fn get_data(&mut self) -> Option<Self::Output>;
 }
 ```
 
@@ -18,7 +20,7 @@ The FinalizationHandler trait is an abstraction for a component that should hand
 
 ```rust
 pub trait FinalizationHandler<Data> {
-    fn data_finalized(&mut self, data: Data, creator: NodeIndex);
+    fn data_finalized(&mut self, data: Data);
 }
 ```
 

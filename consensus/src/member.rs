@@ -8,10 +8,10 @@ use crate::{
     },
     task_queue::TaskQueue,
     units::{UncheckedSignedUnit, Unit, UnitCoord},
-    Config, Data, DataProvider, FinalizationHandler, Hasher, MultiKeychain, Network, NodeIndex,
-    Receiver, Recipient, Round, Sender, Signature, SpawnHandle, Terminator, UncheckedSigned,
+    Config, Data, DataProvider, Hasher, MultiKeychain, Network, NodeIndex, Receiver, Recipient,
+    Round, Sender, Signature, SpawnHandle, Terminator, UncheckedSigned,
 };
-use aleph_bft_types::NodeMap;
+use aleph_bft_types::{FinalizationHandler, NodeMap, OrderedUnit, UnitFinalizationHandler};
 use codec::{Decode, Encode};
 use futures::{channel::mpsc, pin_mut, AsyncRead, AsyncWrite, FutureExt, StreamExt};
 use futures_timer::Delay;
@@ -106,36 +106,81 @@ enum TaskDetails<H: Hasher, D: Data, S: Signature> {
     },
 }
 
-#[derive(Clone)]
-pub struct LocalIO<
-    D: Data,
-    DP: DataProvider<D>,
-    FH: FinalizationHandler<D>,
-    US: AsyncWrite,
-    UL: AsyncRead,
-> {
-    data_provider: DP,
+/// This adapter allows to map an implementation of [`FinalizationHandler`] onto implementation of [`UnitFinalizationHandler`].
+pub struct FinalizationHandlerAdapter<FH, D, H> {
     finalization_handler: FH,
-    unit_saver: US,
-    unit_loader: UL,
-    _phantom: PhantomData<D>,
+    _phantom: PhantomData<(D, H)>,
 }
 
-impl<D: Data, DP: DataProvider<D>, FH: FinalizationHandler<D>, US: AsyncWrite, UL: AsyncRead>
-    LocalIO<D, DP, FH, US, UL>
+impl<FH, D, H> From<FH> for FinalizationHandlerAdapter<FH, D, H> {
+    fn from(value: FH) -> Self {
+        Self {
+            finalization_handler: value,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<D: Data, H: Hasher, FH: FinalizationHandler<D>> UnitFinalizationHandler
+    for FinalizationHandlerAdapter<FH, D, H>
+{
+    type Data = D;
+    type Hasher = H;
+
+    fn batch_finalized(&mut self, batch: Vec<OrderedUnit<Self::Data, Self::Hasher>>) {
+        for unit in batch {
+            if let Some(data) = unit.data {
+                self.finalization_handler.data_finalized(data)
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct LocalIO<DP: DataProvider, UFH: UnitFinalizationHandler, US: AsyncWrite, UL: AsyncRead> {
+    data_provider: DP,
+    finalization_handler: UFH,
+    unit_saver: US,
+    unit_loader: UL,
+}
+
+impl<
+        H: Hasher,
+        DP: DataProvider,
+        FH: FinalizationHandler<DP::Output>,
+        US: AsyncWrite,
+        UL: AsyncRead,
+    > LocalIO<DP, FinalizationHandlerAdapter<FH, DP::Output, H>, US, UL>
 {
     pub fn new(
         data_provider: DP,
         finalization_handler: FH,
         unit_saver: US,
         unit_loader: UL,
-    ) -> LocalIO<D, DP, FH, US, UL> {
-        LocalIO {
+    ) -> Self {
+        Self {
+            data_provider,
+            finalization_handler: finalization_handler.into(),
+            unit_saver,
+            unit_loader,
+        }
+    }
+}
+
+impl<DP: DataProvider, UFH: UnitFinalizationHandler, US: AsyncWrite, UL: AsyncRead>
+    LocalIO<DP, UFH, US, UL>
+{
+    pub fn new_with_unit_finalization_handler(
+        data_provider: DP,
+        finalization_handler: UFH,
+        unit_saver: US,
+        unit_loader: UL,
+    ) -> Self {
+        Self {
             data_provider,
             finalization_handler,
             unit_saver,
             unit_loader,
-            _phantom: PhantomData,
         }
     }
 }
@@ -573,19 +618,25 @@ where
 /// For a detailed description of the consensus implemented by `run_session` see
 /// [docs for devs](https://cardinal-cryptography.github.io/AlephBFT/index.html)
 /// or the [original paper](https://arxiv.org/abs/1908.05156).
+///
+/// Please note that in order to fulfill the constraint [`UnitFinalizationHandler<Data = DP::Output, Hasher
+/// = H>`] it is enough to provide implementation of [`FinalizationHandler<DP::Output>`]. We provide
+/// implementation of [`UnitFinalizationHandler<Data = DP::Output, Hasher = H>`] for anything that satisfies
+/// the trait [`FinalizationHandler<DP::Output>`] (by means of [`FinalizationHandlerAdapter`]). Implementing
+/// [`UnitFinalizationHandler`] directly is considered less stable since it exposes intrisics which might be
+/// subject to change. Implement [`FinalizationHandler<DP::Output>`] instead, unless you absolutely know
+/// what you are doing.
 pub async fn run_session<
-    H: Hasher,
-    D: Data,
-    DP: DataProvider<D>,
-    FH: FinalizationHandler<D>,
+    DP: DataProvider,
+    UFH: UnitFinalizationHandler<Data = DP::Output>,
     US: AsyncWrite + Send + Sync + 'static,
     UL: AsyncRead + Send + Sync + 'static,
-    N: Network<NetworkData<H, D, MK::Signature, MK::PartialMultisignature>> + 'static,
+    N: Network<NetworkData<UFH::Hasher, DP::Output, MK::Signature, MK::PartialMultisignature>>,
     SH: SpawnHandle,
     MK: MultiKeychain,
 >(
     config: Config,
-    local_io: LocalIO<D, DP, FH, US, UL>,
+    local_io: LocalIO<DP, UFH, US, UL>,
     network: N,
     keychain: MK,
     spawn_handle: SH,

@@ -123,7 +123,9 @@ pub struct DataProvider {
 }
 
 #[async_trait]
-impl aleph_bft::DataProvider<Data> for DataProvider {
+impl aleph_bft::DataProvider for DataProvider {
+    type Output = Data;
+
     async fn get_data(&mut self) -> Option<Data> {
         Some(*self.current_block.lock())
     }

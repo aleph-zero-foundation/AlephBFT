@@ -31,7 +31,7 @@ pub enum Recipient {
 /// We refer to the documentation https://cardinal-cryptography.github.io/AlephBFT/aleph_bft_api.html
 /// Section 3.1.2 for a discussion of the required guarantees of this trait's implementation.
 #[async_trait::async_trait]
-pub trait Network<D>: Send {
+pub trait Network<D>: Send + 'static {
     /// Send a message to a single node or everyone, depending on the value of the recipient
     /// argument.
     ///

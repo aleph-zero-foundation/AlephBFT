@@ -19,8 +19,8 @@ mod task_queue;
 mod testing;
 
 pub use aleph_bft_types::{
-    Data, DataProvider, FinalizationHandler, Hasher, IncompleteMultisignatureError, Index, Indexed,
-    Keychain, MultiKeychain, Multisigned, Network, NodeCount, NodeIndex, NodeMap, NodeSubset,
+    Data, DataProvider, Hasher, IncompleteMultisignatureError, Index, Indexed, Keychain,
+    MultiKeychain, Multisigned, Network, NodeCount, NodeIndex, NodeMap, NodeSubset,
     PartialMultisignature, PartiallyMultisigned, Recipient, Round, SessionId, Signable, Signature,
     SignatureError, SignatureSet, Signed, SpawnHandle, TaskHandle, UncheckedSigned,
 };

@@ -1,7 +1,7 @@
 use crate::{
     config::Config,
     units::{PreUnit, SignedUnit, Unit},
-    Data, DataProvider, MultiKeychain, Receiver, Round, Sender, Terminator,
+    DataProvider, MultiKeychain, Receiver, Round, Sender, Terminator,
 };
 use futures::{
     channel::{
@@ -32,9 +32,9 @@ impl<T> From<TrySendError<T>> for CreatorError {
     }
 }
 
-pub struct IO<U: Unit, D: Data, MK: MultiKeychain, DP: DataProvider<D>> {
+pub struct IO<U: Unit, MK: MultiKeychain, DP: DataProvider> {
     pub incoming_parents: Receiver<U>,
-    pub outgoing_units: Sender<SignedUnit<U::Hasher, D, MK>>,
+    pub outgoing_units: Sender<SignedUnit<U::Hasher, DP::Output, MK>>,
     pub data_provider: DP,
 }
 
@@ -106,9 +106,9 @@ async fn keep_processing_units_until<U: Unit>(
 ///
 /// We refer to the documentation https://cardinal-cryptography.github.io/AlephBFT/internals.html
 /// Section 5.1 for a discussion of this component.
-pub async fn run<U: Unit, D: Data, MK: MultiKeychain, DP: DataProvider<D>>(
+pub async fn run<U: Unit, MK: MultiKeychain, DP: DataProvider>(
     conf: Config,
-    mut io: IO<U, D, MK, DP>,
+    mut io: IO<U, MK, DP>,
     keychain: MK,
     mut starting_round: oneshot::Receiver<Option<Round>>,
     mut terminator: Terminator,
@@ -123,14 +123,9 @@ pub async fn run<U: Unit, D: Data, MK: MultiKeychain, DP: DataProvider<D>>(
     terminator.terminate_sync().await;
 }
 
-async fn read_starting_round_and_run_creator<
-    U: Unit,
-    D: Data,
-    MK: MultiKeychain,
-    DP: DataProvider<D>,
->(
+async fn read_starting_round_and_run_creator<U: Unit, MK: MultiKeychain, DP: DataProvider>(
     conf: Config,
-    io: &mut IO<U, D, MK, DP>,
+    io: &mut IO<U, MK, DP>,
     keychain: MK,
     starting_round: &mut oneshot::Receiver<Option<Round>>,
 ) {
@@ -159,9 +154,9 @@ async fn read_starting_round_and_run_creator<
     }
 }
 
-async fn run_creator<U: Unit, D: Data, MK: MultiKeychain, DP: DataProvider<D>>(
+async fn run_creator<U: Unit, MK: MultiKeychain, DP: DataProvider>(
     conf: Config,
-    io: &mut IO<U, D, MK, DP>,
+    io: &mut IO<U, MK, DP>,
     keychain: MK,
     starting_round: Round,
 ) -> anyhow::Result<(), CreatorError> {

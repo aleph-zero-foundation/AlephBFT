@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 
 use crate::{
-    units::{ControlHash, HashFor, Unit, UnitCoord, UnitWithParents, WrappedUnit},
+    units::{ControlHash, FullUnit, HashFor, Unit, UnitCoord, UnitWithParents, WrappedUnit},
     Hasher, NodeMap, SessionId,
 };
 
 mod dag;
 mod parents;
 
+use aleph_bft_types::{Data, MultiKeychain, OrderedUnit, Signed};
 use dag::Dag;
 use parents::Reconstruction as ParentReconstruction;
 
@@ -73,6 +74,34 @@ impl<U: Unit> WrappedUnit<U::Hasher> for ReconstructedUnit<U> {
 impl<U: Unit> UnitWithParents for ReconstructedUnit<U> {
     fn parents(&self) -> &NodeMap<HashFor<Self>> {
         &self.parents
+    }
+}
+
+impl<D: Data, H: Hasher, K: MultiKeychain> From<ReconstructedUnit<Signed<FullUnit<H, D>, K>>>
+    for Option<D>
+{
+    fn from(value: ReconstructedUnit<Signed<FullUnit<H, D>, K>>) -> Self {
+        value.unpack().into_signable().into()
+    }
+}
+
+impl<D: Data, H: Hasher, K: MultiKeychain> From<ReconstructedUnit<Signed<FullUnit<H, D>, K>>>
+    for OrderedUnit<D, H>
+{
+    fn from(unit: ReconstructedUnit<Signed<FullUnit<H, D>, K>>) -> Self {
+        let parents = unit.parents().values().cloned().collect();
+        let unit = unit.unpack();
+        let creator = unit.creator();
+        let round = unit.round();
+        let hash = unit.hash();
+        let data = unit.into_signable().data().clone();
+        OrderedUnit {
+            parents,
+            creator,
+            round,
+            hash,
+            data,
+        }
     }
 }
 

@@ -131,6 +131,12 @@ pub struct FullUnit<H: Hasher, D: Data> {
     hash: RwLock<Option<H::Hash>>,
 }
 
+impl<H: Hasher, D: Data> From<FullUnit<H, D>> for Option<D> {
+    fn from(value: FullUnit<H, D>) -> Self {
+        value.data
+    }
+}
+
 impl<H: Hasher, D: Data> Clone for FullUnit<H, D> {
     fn clone(&self) -> Self {
         let hash = self.hash.try_read().and_then(|guard| *guard);

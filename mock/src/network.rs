@@ -51,7 +51,7 @@ impl<D: Debug> Network<D> {
 }
 
 #[async_trait::async_trait]
-impl<D: Clone + Send + Debug> NetworkT<D> for Network<D> {
+impl<D: Clone + Send + Debug + 'static> NetworkT<D> for Network<D> {
     fn send(&self, data: D, recipient: Recipient) {
         use Recipient::*;
         match recipient {
