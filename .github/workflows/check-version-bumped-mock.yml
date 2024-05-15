@@ -1,6 +1,7 @@
 name: Version bump check for code changes in the aleph-bft-mock package
 
 on:
+  merge_group:
   pull_request:
     branches:
       - main

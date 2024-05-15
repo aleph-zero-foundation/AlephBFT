@@ -1,6 +1,7 @@
 name: Versions are aligned (consensus)
 
 on:
+  merge_group:
   pull_request:
     branches:
       - main

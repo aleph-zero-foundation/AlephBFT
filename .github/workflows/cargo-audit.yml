@@ -1,6 +1,7 @@
 name: cargo-audit
 
 on:
+  merge_group:
   pull_request:
     paths:
       - '**/Cargo.toml'
