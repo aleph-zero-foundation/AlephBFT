@@ -148,7 +148,7 @@ impl<'a, H: Hasher> RunwayStatus<'a, H> {
     fn format_missing_coords(c: &[(usize, Round)]) -> String {
         c.iter()
             .sorted()
-            .group_by(|(creator, _)| *creator)
+            .chunk_by(|(creator, _)| *creator)
             .into_iter()
             .map(|(creator, rounds)| {
                 // compress consecutive rounds into one interval to shorten logs
