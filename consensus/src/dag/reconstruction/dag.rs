@@ -145,7 +145,7 @@ mod test {
     ) -> Vec<Vec<ReconstructedUnit<TestingFullUnit>>> {
         let hashes: Vec<_> = dag.iter().map(unit_hashes).collect();
         let initial_units: Vec<_> = dag
-            .get(0)
+            .first()
             .expect("only called on nonempty dags")
             .iter()
             .map(|unit| ReconstructedUnit::initial(unit.clone()))

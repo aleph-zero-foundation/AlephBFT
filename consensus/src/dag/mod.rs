@@ -362,14 +362,14 @@ mod test {
         let forker_id = NodeIndex(3);
         let keychain = keychains.get(forker_id.0).expect("we have the keychain");
         let unit = random_full_parent_units_up_to(0, node_count, session_id)
-            .get(0)
+            .first()
             .expect("we have initial units")
             .get(forker_id.0)
             .expect("We have the forker")
             .clone();
         let unit = Signed::sign(unit, keychain);
         let mut fork = random_full_parent_units_up_to(0, node_count, session_id)
-            .get(0)
+            .first()
             .expect("we have initial units")
             .get(forker_id.0)
             .expect("We have the forker")
@@ -377,7 +377,7 @@ mod test {
         // we might have randomly created an identical "fork"
         while fork.hash() == unit.hash() {
             fork = random_full_parent_units_up_to(0, node_count, session_id)
-                .get(0)
+                .first()
                 .expect("we have initial units")
                 .get(forker_id.0)
                 .expect("We have the forker")

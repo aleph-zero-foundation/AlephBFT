@@ -224,9 +224,9 @@ mod test {
         let store = UnitStore::<WrappedSignedUnit>::new(node_count);
         let mut validator = Validator::new(UnitValidator::new(session_id, keychains[0], max_round));
         let unit = random_full_parent_units_up_to(0, node_count, session_id)
-            .get(0)
+            .first()
             .expect("we have the first round")
-            .get(0)
+            .first()
             .expect("we have the initial unit for the zeroth creator")
             .clone();
         let unit = Signed::sign(unit, &keychains[0]);
@@ -252,9 +252,9 @@ mod test {
         let mut store = UnitStore::new(node_count);
         let mut validator = Validator::new(UnitValidator::new(session_id, keychains[0], max_round));
         let unit = random_full_parent_units_up_to(0, node_count, session_id)
-            .get(0)
+            .first()
             .expect("we have the first round")
-            .get(0)
+            .first()
             .expect("we have the initial unit for the zeroth creator")
             .clone();
         let unit = Signed::sign(unit, &keychains[0]);
@@ -290,7 +290,7 @@ mod test {
         let fork = random_full_parent_units_up_to(2, node_count, session_id)
             .get(2)
             .expect("we have the requested round")
-            .get(0)
+            .first()
             .expect("we have the unit for the zeroth creator")
             .clone();
         let fork = Signed::sign(fork, &keychains[0]);
@@ -322,7 +322,7 @@ mod test {
         let fork = random_full_parent_units_up_to(2, node_count, session_id)
             .get(2)
             .expect("we have the requested round")
-            .get(0)
+            .first()
             .expect("we have the unit for the zeroth creator")
             .clone();
         let fork = Signed::sign(fork, &keychains[0]);
@@ -347,7 +347,7 @@ mod test {
         let fork = random_full_parent_units_up_to(2, node_count, session_id)
             .get(2)
             .expect("we have the requested round")
-            .get(0)
+            .first()
             .expect("we have the unit for the zeroth creator")
             .clone();
         let fork = Signed::sign(fork, &keychains[0]);
@@ -395,7 +395,7 @@ mod test {
         let fork = random_full_parent_units_up_to(2, node_count, session_id)
             .get(2)
             .expect("we have the requested round")
-            .get(0)
+            .first()
             .expect("we have the unit for the zeroth creator")
             .clone();
         let fork = Signed::sign(fork, &keychains[0]);

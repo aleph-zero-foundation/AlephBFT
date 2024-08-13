@@ -290,7 +290,7 @@ mod test {
     fn requests_single_parent() {
         let mut reconstruction = Reconstruction::new();
         let dag = random_full_parent_units_up_to(1, NodeCount(4), 43);
-        for unit in dag.get(0).expect("just created").iter().skip(1) {
+        for unit in dag.first().expect("just created").iter().skip(1) {
             reconstruction.add_unit(unit.clone());
         }
         let unit = dag
@@ -335,7 +335,7 @@ mod test {
         let node_count = NodeCount(7);
         let mut reconstruction = Reconstruction::new();
         let dag = random_full_parent_units_up_to(0, node_count, 43);
-        for unit in dag.get(0).expect("just created") {
+        for unit in dag.first().expect("just created") {
             reconstruction.add_unit(unit.clone());
         }
         let other_dag = random_full_parent_units_up_to(1, node_count, 43);
@@ -353,7 +353,7 @@ mod test {
             &Request::ParentsOf(unit_hash),
         );
         let parent_hashes: HashMap<_, _> = other_dag
-            .get(0)
+            .first()
             .expect("other dag has initial units")
             .iter()
             .map(|unit| (unit.coord(), unit.hash()))

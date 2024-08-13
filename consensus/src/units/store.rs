@@ -145,9 +145,9 @@ mod test {
         let node_count = NodeCount(7);
         let mut store = UnitStore::new(node_count);
         let unit = random_full_parent_units_up_to(0, node_count, 43)
-            .get(0)
+            .first()
             .expect("we have the first round")
-            .get(0)
+            .first()
             .expect("we have the initial unit for the zeroth creator")
             .clone();
         store.insert(unit.clone());
@@ -174,9 +174,9 @@ mod test {
         let variants: HashSet<_> = (0..15)
             .map(|_| {
                 random_full_parent_units_up_to(0, node_count, 43)
-                    .get(0)
+                    .first()
                     .expect("we have the first round")
-                    .get(0)
+                    .first()
                     .expect("we have the initial unit for the zeroth creator")
                     .clone()
             })
@@ -188,7 +188,7 @@ mod test {
         for unit in &variants {
             assert_eq!(store.unit(&unit.hash()), Some(unit));
         }
-        let canonical_unit = variants.get(0).expect("we have the unit").clone();
+        let canonical_unit = variants.first().expect("we have the unit").clone();
         assert_eq!(
             store.canonical_unit(canonical_unit.coord()),
             Some(&canonical_unit)

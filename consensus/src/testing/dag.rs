@@ -77,7 +77,7 @@ impl DagFeeder {
     ) -> DagFeeder {
         let units_map = units.iter().map(|u| (u.hash(), u.clone())).collect();
         let node_count = units
-            .get(0)
+            .first()
             .expect("we have at least one unit")
             .unit
             .control_hash()
