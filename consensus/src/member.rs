@@ -1,7 +1,7 @@
 use crate::{
     handle_task_termination,
     member::Task::{CoordRequest, ParentsRequest, RequestNewest, UnitBroadcast},
-    network,
+    network::{Hub as NetworkHub, NetworkData},
     runway::{
         self, NetworkIO, NewestUnitResponse, Request, Response, RunwayIO, RunwayNotificationIn,
         RunwayNotificationOut,
@@ -17,7 +17,6 @@ use futures::{channel::mpsc, pin_mut, AsyncRead, AsyncWrite, FutureExt, StreamEx
 use futures_timer::Delay;
 use itertools::Itertools;
 use log::{debug, error, info, trace, warn};
-use network::NetworkData;
 use rand::{prelude::SliceRandom, Rng};
 use std::{
     collections::HashSet,
@@ -659,14 +658,14 @@ pub async fn run_session<
 
     let network_handle = spawn_handle
         .spawn_essential("member/network", async move {
-            network::run(
+            NetworkHub::new(
                 network,
                 unit_messages_from_units,
                 unit_messages_for_units,
                 alert_messages_from_alerter,
                 alert_messages_for_alerter,
-                network_terminator,
             )
+            .run(network_terminator)
             .await
         })
         .fuse();
