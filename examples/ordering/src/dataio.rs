@@ -14,17 +14,19 @@ pub type Data = (NodeIndex, u32);
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default, Decode, Encode)]
 pub struct DataProvider {
     id: NodeIndex,
-    counter: u32,
-    n_data: u32,
+    starting_data_item: u32,
+    data_items: u32,
+    current_data: u32,
     stalled: bool,
 }
 
 impl DataProvider {
-    pub fn new(id: NodeIndex, counter: u32, n_data: u32, stalled: bool) -> Self {
+    pub fn new(id: NodeIndex, starting_data_item: u32, data_items: u32, stalled: bool) -> Self {
         Self {
             id,
-            counter,
-            n_data,
+            starting_data_item,
+            current_data: starting_data_item,
+            data_items,
             stalled,
         }
     }
@@ -35,7 +37,7 @@ impl DataProviderT for DataProvider {
     type Output = Data;
 
     async fn get_data(&mut self) -> Option<Data> {
-        if self.n_data == 0 {
+        if self.starting_data_item + self.data_items == self.current_data {
             if self.stalled {
                 info!("Awaiting DataProvider::get_data forever");
                 pending::<()>().await;
@@ -43,10 +45,9 @@ impl DataProviderT for DataProvider {
             info!("Providing None");
             None
         } else {
-            let data = (self.id, self.counter);
-            info!("Providing data: {}", self.counter);
-            self.counter += 1;
-            self.n_data -= 1;
+            let data = (self.id, self.current_data);
+            info!("Providing data: {}", self.current_data);
+            self.current_data += 1;
             Some(data)
         }
     }

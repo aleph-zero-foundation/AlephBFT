@@ -83,7 +83,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft-examples-ordering"
-version = "0.0.3"
+version = "0.1.0"
 dependencies = [
  "aleph-bft",
  "aleph-bft-mock",
