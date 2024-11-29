@@ -8,10 +8,11 @@ use crate::{
     },
     task_queue::TaskQueue,
     units::{UncheckedSignedUnit, Unit, UnitCoord},
-    Config, Data, DataProvider, Hasher, MultiKeychain, Network, NodeIndex, Receiver, Recipient,
-    Round, Sender, Signature, SpawnHandle, Terminator, UncheckedSigned,
+    Config, Data, DataProvider, FinalizationHandler, Hasher, MultiKeychain, Network, NodeIndex,
+    OrderedUnit, Receiver, Recipient, Round, Sender, Signature, SpawnHandle, Terminator,
+    UncheckedSigned, UnitFinalizationHandler,
 };
-use aleph_bft_types::{FinalizationHandler, NodeMap, OrderedUnit, UnitFinalizationHandler};
+use aleph_bft_types::NodeMap;
 use codec::{Decode, Encode};
 use futures::{channel::mpsc, pin_mut, AsyncRead, AsyncWrite, FutureExt, StreamExt};
 use futures_timer::Delay;

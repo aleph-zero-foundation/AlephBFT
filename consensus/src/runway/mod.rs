@@ -10,10 +10,10 @@ use crate::{
         SignedUnit, UncheckedSignedUnit, Unit, UnitCoord, UnitStore, UnitStoreStatus, Validator,
         WrappedUnit,
     },
-    Config, Data, DataProvider, Hasher, Index, Keychain, MultiKeychain, NodeIndex, Receiver, Round,
-    Sender, Signature, SpawnHandle, Terminator, UncheckedSigned,
+    Config, Data, DataProvider, Hasher, Index, Keychain, MultiKeychain, NodeIndex, Receiver,
+    Recipient, Round, Sender, Signature, SpawnHandle, Terminator, UncheckedSigned,
+    UnitFinalizationHandler,
 };
-use aleph_bft_types::{Recipient, UnitFinalizationHandler};
 use futures::{
     channel::{mpsc, oneshot},
     future::pending,

@@ -9,10 +9,9 @@ use crate::{
         ControlHash, FullUnit, PreUnit, SignedUnit as GenericSignedUnit, Unit, UnitStore,
         UnitWithParents as _, Validator,
     },
-    NodeCount, NodeIndex, NodeMap, NodeSubset, Round, Signed,
+    NodeCount, NodeIndex, NodeMap, NodeSubset, OrderedUnit, Round, Signed, UnitFinalizationHandler,
 };
 use aleph_bft_mock::{Data, Hash64, Hasher64, Keychain};
-use aleph_bft_types::{OrderedUnit, UnitFinalizationHandler};
 use log::debug;
 use parking_lot::Mutex;
 use rand::{distributions::Open01, prelude::*};

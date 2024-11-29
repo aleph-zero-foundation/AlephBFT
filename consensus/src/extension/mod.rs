@@ -1,10 +1,9 @@
-use crate::{dag::DagUnit, MultiKeychain};
+use crate::{dag::DagUnit, MultiKeychain, UnitFinalizationHandler};
 
 mod election;
 mod extender;
 mod units;
 
-use aleph_bft_types::UnitFinalizationHandler;
 use extender::Extender;
 
 /// A struct responsible for executing the Consensus protocol on a local copy of the Dag.
