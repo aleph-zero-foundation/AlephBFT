@@ -94,7 +94,7 @@ impl<U: UnitWithParents> CandidateElection<U> {
 
     fn vote(&mut self, voter: &U) -> Result<(), CandidateOutcome<U::Hasher>> {
         // If the vote is already computed we are done.
-        if self.votes.get(&voter.hash()).is_some() {
+        if self.votes.contains_key(&voter.hash()) {
             return Ok(());
         }
         // Votes for old units are never used, so we just return.

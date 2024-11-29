@@ -1,4 +1,3 @@
-#![cfg(test)]
 mod alerts;
 mod byzantine;
 mod crash;
