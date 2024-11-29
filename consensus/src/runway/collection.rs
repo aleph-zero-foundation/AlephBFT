@@ -154,6 +154,10 @@ impl<'a, MK: Keychain> Collection<'a, MK> {
         )
     }
 
+    fn index(&self) -> NodeIndex {
+        self.keychain.index()
+    }
+
     /// Process a response to a newest unit request.
     pub fn on_newest_response<H: Hasher, D: Data>(
         &mut self,
@@ -243,10 +247,10 @@ impl<'a, H: Hasher, D: Data, MK: Keychain> IO<'a, H, D, MK> {
         if self.round_for_creator.send(round).is_err() {
             error!(target: "AlephBFT-runway", "unable to send starting round to creator");
         }
-        if let Err(e) = self
-            .resolved_requests
-            .unbounded_send(Request::NewestUnit(self.collection.salt()))
-        {
+        if let Err(e) = self.resolved_requests.unbounded_send(Request::NewestUnit(
+            self.collection.index(),
+            self.collection.salt(),
+        )) {
             warn!(target: "AlephBFT-runway", "unable to send resolved request:  {}", e);
         }
         info!(target: "AlephBFT-runway", "Finished initial unit collection with status: {:?}", self.collection.status());

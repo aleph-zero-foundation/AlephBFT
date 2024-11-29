@@ -6,6 +6,7 @@ mod alerts;
 mod config;
 mod creation;
 mod dag;
+mod dissemination;
 mod extension;
 mod member;
 mod network;

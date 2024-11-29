@@ -1,10 +1,10 @@
 use crate::{
+    dissemination::{Request, Response},
     handle_task_termination,
     member::Task::{CoordRequest, ParentsRequest, RequestNewest, UnitBroadcast},
     network::{Hub as NetworkHub, NetworkData},
     runway::{
-        self, NetworkIO, NewestUnitResponse, Request, Response, RunwayIO, RunwayNotificationIn,
-        RunwayNotificationOut,
+        self, NetworkIO, NewestUnitResponse, RunwayIO, RunwayNotificationIn, RunwayNotificationOut,
     },
     task_queue::TaskQueue,
     units::{UncheckedSignedUnit, Unit, UnitCoord},
@@ -497,7 +497,7 @@ where
             RunwayNotificationOut::Request(request) => match request {
                 Request::Coord(coord) => self.on_request_coord(coord),
                 Request::Parents(u_hash) => self.on_request_parents(u_hash),
-                Request::NewestUnit(salt) => self.on_request_newest(salt),
+                Request::NewestUnit(_, salt) => self.on_request_newest(salt),
             },
             RunwayNotificationOut::Response(response, recipient) => match response {
                 Response::Coord(u) => {
@@ -552,7 +552,7 @@ where
                         Request::Parents(u_hash) => {
                             self.not_resolved_parents.remove(&u_hash);
                         },
-                        Request::NewestUnit(_) => {
+                        Request::NewestUnit(..) => {
                             self.newest_unit_resolved = true;
                         }
                     },

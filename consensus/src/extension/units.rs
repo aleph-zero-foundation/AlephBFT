@@ -86,6 +86,7 @@ mod test {
         units::{random_full_parent_reconstrusted_units_up_to, TestingDagUnit, Unit},
         NodeCount,
     };
+    use aleph_bft_mock::Keychain;
 
     #[test]
     fn initially_empty() {
@@ -99,7 +100,10 @@ mod test {
         let mut units = Units::new();
         let n_members = NodeCount(4);
         let session_id = 2137;
-        let unit = &random_full_parent_reconstrusted_units_up_to(0, n_members, session_id)[0][0];
+        let keychains = Keychain::new_vec(n_members);
+        let unit =
+            &random_full_parent_reconstrusted_units_up_to(0, n_members, session_id, &keychains)[0]
+                [0];
         units.add_unit(unit.clone());
         assert_eq!(units.highest_round(), 0);
         assert_eq!(units.in_round(0), Some(vec![unit]));
@@ -112,11 +116,13 @@ mod test {
         let n_members = NodeCount(4);
         let max_round = 43;
         let session_id = 2137;
+        let keychains = Keychain::new_vec(n_members);
         let mut heads = Vec::new();
-        for (round, round_units) in
-            random_full_parent_reconstrusted_units_up_to(max_round, n_members, session_id)
-                .into_iter()
-                .enumerate()
+        for (round, round_units) in random_full_parent_reconstrusted_units_up_to(
+            max_round, n_members, session_id, &keychains,
+        )
+        .into_iter()
+        .enumerate()
         {
             heads.push(round_units[round % n_members.0].clone());
             for unit in round_units {
@@ -138,11 +144,13 @@ mod test {
         let n_members = NodeCount(4);
         let max_round = 43;
         let session_id = 2137;
+        let keychains = Keychain::new_vec(n_members);
         let mut heads = Vec::new();
-        for (round, round_units) in
-            random_full_parent_reconstrusted_units_up_to(max_round, n_members, session_id)
-                .into_iter()
-                .enumerate()
+        for (round, round_units) in random_full_parent_reconstrusted_units_up_to(
+            max_round, n_members, session_id, &keychains,
+        )
+        .into_iter()
+        .enumerate()
         {
             heads.push(round_units[round % n_members.0].clone());
             for unit in &round_units {

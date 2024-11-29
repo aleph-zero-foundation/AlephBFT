@@ -222,6 +222,7 @@ mod test {
         },
         NodeCount,
     };
+    use aleph_bft_mock::Keychain;
 
     #[test]
     fn refuses_to_elect_without_units() {
@@ -235,9 +236,10 @@ mod test {
         let n_members = NodeCount(4);
         let max_round = 2;
         let session_id = 2137;
-        for round_units in
-            random_full_parent_reconstrusted_units_up_to(max_round, n_members, session_id)
-        {
+        let keychains = Keychain::new_vec(n_members);
+        for round_units in random_full_parent_reconstrusted_units_up_to(
+            max_round, n_members, session_id, &keychains,
+        ) {
             for unit in round_units {
                 units.add_unit(unit);
             }
@@ -252,7 +254,10 @@ mod test {
         let n_members = NodeCount(4);
         let max_round = 4;
         let session_id = 2137;
-        let dag = random_full_parent_reconstrusted_units_up_to(max_round, n_members, session_id);
+        let keychains = Keychain::new_vec(n_members);
+        let dag = random_full_parent_reconstrusted_units_up_to(
+            max_round, n_members, session_id, &keychains,
+        );
         for round_units in dag.iter().take(4) {
             for unit in round_units {
                 units.add_unit(unit.clone());
@@ -280,9 +285,10 @@ mod test {
         let n_members = NodeCount(4);
         let max_round = 4;
         let session_id = 2137;
-        for round_units in
-            random_full_parent_reconstrusted_units_up_to(max_round, n_members, session_id)
-        {
+        let keychains = Keychain::new_vec(n_members);
+        for round_units in random_full_parent_reconstrusted_units_up_to(
+            max_round, n_members, session_id, &keychains,
+        ) {
             for unit in round_units {
                 units.add_unit(unit.clone());
             }
@@ -303,9 +309,11 @@ mod test {
         let n_members = NodeCount(4);
         let max_round = 4;
         let session_id = 2137;
-        for unit in random_full_parent_reconstrusted_units_up_to(0, n_members, session_id)
-            .last()
-            .expect("just created")
+        let keychains = Keychain::new_vec(n_members);
+        for unit in
+            random_full_parent_reconstrusted_units_up_to(0, n_members, session_id, &keychains)
+                .last()
+                .expect("just created")
         {
             units.add_unit(unit.clone());
         }
@@ -332,7 +340,11 @@ mod test {
                 .into_iterator()
                 .filter(|node_id| node_id != &inactive_node)
             {
-                units.add_unit(random_reconstructed_unit_with_parents(creator, &parents));
+                units.add_unit(random_reconstructed_unit_with_parents(
+                    creator,
+                    &parents,
+                    &keychains[creator.0],
+                ));
             }
         }
         let election = RoundElection::for_round(0, &units).expect("we have enough rounds");

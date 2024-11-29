@@ -74,6 +74,7 @@ mod test {
         extension::extender::Extender, units::random_full_parent_reconstrusted_units_up_to,
         NodeCount, Round,
     };
+    use aleph_bft_mock::Keychain;
 
     #[test]
     fn easy_elections() {
@@ -81,10 +82,11 @@ mod test {
         let n_members = NodeCount(4);
         let max_round: Round = 43;
         let session_id = 2137;
+        let keychains = Keychain::new_vec(n_members);
         let mut batches = Vec::new();
-        for round_units in
-            random_full_parent_reconstrusted_units_up_to(max_round, n_members, session_id)
-        {
+        for round_units in random_full_parent_reconstrusted_units_up_to(
+            max_round, n_members, session_id, &keychains,
+        ) {
             for unit in round_units {
                 batches.append(&mut extender.add_unit(unit));
             }
