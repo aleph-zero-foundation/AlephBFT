@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  pull_request:
 
 jobs:
   publish:
@@ -11,10 +12,22 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.repository == 'Cardinal-Cryptography/AlephBFT'}}
     steps:
+      - name: Publish
+        if: ${{ github.event_name == 'push' }}
+        run:
+          echo "Publishing crates."
+
+      - name: Dry-ryn
+        if: ${{ github.event_name != 'push' }}
+        run:
+          echo "Dry-run - not publishing crates."
+
       - uses: actions/checkout@v4
+
       - uses: ./.github/actions/install-rust-toolchain
+
       - uses: katyo/publish-crates@v2
         with:
           registry-token: ${{ secrets.CRATES_IO_TOKEN }}
-          ignore-unpublished-changes: true
           publish-delay: 30000
+          dry-run: ${{ github.event_name != 'push' }}
