@@ -217,8 +217,8 @@ mod test {
             units::Units,
         },
         units::{
-            random_full_parent_reconstrusted_units_up_to, random_reconstructed_unit_with_parents,
-            TestingDagUnit, Unit,
+            minimal_reconstructed_dag_units_up_to, random_full_parent_reconstrusted_units_up_to,
+            random_reconstructed_unit_with_parents, TestingDagUnit, Unit,
         },
         NodeCount,
     };
@@ -344,6 +344,7 @@ mod test {
                     creator,
                     &parents,
                     &keychains[creator.0],
+                    round,
                 ));
             }
         }
@@ -353,6 +354,34 @@ mod test {
             Elected(head) => {
                 // This should be the second unit in order, as the first was not popular.
                 assert_eq!(head, candidate_hashes[1]);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    // TODO(A0-4563) Uncomment after changes to parent voting code
+    fn given_minimal_dag_with_orphaned_node_when_electing_then_orphaned_node_is_not_head() {
+        use ElectionResult::*;
+        let mut units = Units::new();
+        let n_members = NodeCount(14);
+        let max_round = 4;
+        let session_id = 2137;
+        let keychains = Keychain::new_vec(n_members);
+
+        let (dag, inactive_node_first_unit) =
+            minimal_reconstructed_dag_units_up_to(max_round, n_members, session_id, &keychains);
+        for round in dag {
+            for unit in round {
+                units.add_unit(unit);
+            }
+        }
+        let election = RoundElection::for_round(0, &units).expect("we have enough rounds");
+        match election {
+            Pending(_) => panic!("should have elected"),
+            Elected(head) => {
+                // This should be the second unit in order, as the first was not popular.
+                assert_ne!(head, inactive_node_first_unit.hash());
             }
         }
     }

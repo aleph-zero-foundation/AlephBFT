@@ -15,11 +15,12 @@ mod validator;
 pub(crate) use store::*;
 #[cfg(test)]
 pub use testing::{
-    create_preunits, creator_set, full_unit_to_unchecked_signed_unit, preunit_to_full_unit,
-    preunit_to_signed_unit, preunit_to_unchecked_signed_unit,
-    random_full_parent_reconstrusted_units_up_to, random_full_parent_units_up_to,
-    random_reconstructed_unit_with_parents, random_unit_with_parents, DagUnit as TestingDagUnit,
-    FullUnit as TestingFullUnit, SignedUnit as TestingSignedUnit, WrappedSignedUnit,
+    create_preunits, creator_set, full_unit_to_unchecked_signed_unit,
+    minimal_reconstructed_dag_units_up_to, preunit_to_full_unit, preunit_to_signed_unit,
+    preunit_to_unchecked_signed_unit, random_full_parent_reconstrusted_units_up_to,
+    random_full_parent_units_up_to, random_reconstructed_unit_with_parents,
+    random_unit_with_parents, DagUnit as TestingDagUnit, FullUnit as TestingFullUnit,
+    SignedUnit as TestingSignedUnit, WrappedSignedUnit,
 };
 pub use validator::{ValidationError, Validator};
 

@@ -468,7 +468,7 @@ mod test {
             .take(5)
             .cloned()
             .collect();
-        let fork = random_unit_with_parents(forker_id, &fork_parents);
+        let fork = random_unit_with_parents(forker_id, &fork_parents, 3);
         let fork = Signed::sign(fork, &keychains[forker_id.0]);
         let unit = units
             .get(3)
@@ -552,7 +552,7 @@ mod test {
             .take(5)
             .cloned()
             .collect();
-        let fork = random_unit_with_parents(forker_id, &fork_parents);
+        let fork = random_unit_with_parents(forker_id, &fork_parents, 3);
         let fork = Signed::sign(fork, &keychains[forker_id.0]);
         let unit = units
             .get(3)

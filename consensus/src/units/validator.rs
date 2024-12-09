@@ -254,7 +254,7 @@ mod tests {
             .take(4)
             .cloned()
             .collect();
-        let unit = random_unit_with_parents(creator_id, &parents);
+        let unit = random_unit_with_parents(creator_id, &parents, 1);
         let preunit = unit.as_pre_unit().clone();
         let keychain = Keychain::new(n_members, creator_id);
         let unchecked_unit = full_unit_to_unchecked_signed_unit(unit, &keychain);

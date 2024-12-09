@@ -70,6 +70,7 @@ impl<U: UnitWithParents> Extender<U> {
 
 #[cfg(test)]
 mod test {
+    use crate::units::{minimal_reconstructed_dag_units_up_to, Unit};
     use crate::{
         extension::extender::Extender, units::random_full_parent_reconstrusted_units_up_to,
         NodeCount, Round,
@@ -95,6 +96,32 @@ mod test {
         assert_eq!(batches[0].len(), 1);
         for batch in batches.iter().skip(1) {
             assert_eq!(batch.len(), n_members.0);
+        }
+    }
+
+    #[test]
+    #[ignore]
+    // TODO(A0-4563) Uncomment after changes to parent voting code
+    fn given_minimal_dag_with_orphaned_node_when_producing_batches_have_correct_length() {
+        let mut extender = Extender::new();
+        let n_members = NodeCount(4);
+        let threshold = n_members.consensus_threshold();
+        let max_round: Round = 4;
+        let session_id = 2137;
+        let keychains = Keychain::new_vec(n_members);
+        let mut batches = Vec::new();
+        let (dag, _) =
+            minimal_reconstructed_dag_units_up_to(max_round, n_members, session_id, &keychains);
+        for round in dag {
+            for unit in round {
+                batches.append(&mut extender.add_unit(unit));
+            }
+        }
+        assert_eq!(batches.len(), (max_round - 3).into());
+        assert_eq!(batches[0].len(), 1);
+        assert_eq!(batches[0][0].round(), 0);
+        for batch in batches.iter().skip(1) {
+            assert_eq!(batch.len(), threshold.0);
         }
     }
 }
