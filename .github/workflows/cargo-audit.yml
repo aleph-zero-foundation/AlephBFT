@@ -20,6 +20,11 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
 
+      - name: Install cargo audit
+        shell: bash
+        run: |
+          cargo install cargo-audit --locked
+
       - name: Run `cargo-audit`
         uses: actions-rs/audit-check@v1
         with:

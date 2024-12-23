@@ -96,7 +96,6 @@ impl<U: UnitWithParents> Dag<U> {
         }
         let missing_parents = unit
             .parents()
-            .values()
             .filter(|parent| !self.dag_units.contains(parent))
             .cloned()
             .collect();

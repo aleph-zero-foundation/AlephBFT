@@ -237,7 +237,7 @@ mod test {
             assert_eq!(units.len(), 1);
             let reconstructed_unit = units.pop().expect("just checked its there");
             assert_eq!(reconstructed_unit, ReconstructedUnit::initial(unit.clone()));
-            assert_eq!(reconstructed_unit.parents().item_count(), 0);
+            assert_eq!(reconstructed_unit.parents().count(), 0);
         }
     }
 
@@ -258,15 +258,15 @@ mod test {
                 match round {
                     0 => {
                         assert_eq!(reconstructed_unit, ReconstructedUnit::initial(unit.clone()));
-                        assert_eq!(reconstructed_unit.parents().item_count(), 0);
+                        assert_eq!(reconstructed_unit.parents().count(), 0);
                     }
                     round => {
-                        assert_eq!(reconstructed_unit.parents().item_count(), 4);
+                        assert_eq!(reconstructed_unit.parents().count(), 4);
                         let parents = dag
                             .get((round - 1) as usize)
                             .expect("the parents are there");
                         for (parent, reconstructed_parent) in
-                            parents.iter().zip(reconstructed_unit.parents().values())
+                            parents.iter().zip(reconstructed_unit.parents())
                         {
                             assert_eq!(&parent.hash(), reconstructed_parent);
                         }
@@ -371,11 +371,11 @@ mod test {
         assert!(requests.is_empty());
         assert_eq!(units.len(), 1);
         let reconstructed_unit = units.pop().expect("just checked its there");
-        assert_eq!(reconstructed_unit.parents().item_count(), 4);
+        assert_eq!(reconstructed_unit.parents().count(), 4);
         for (coord, parent_hash) in parent_hashes {
             assert_eq!(
                 Some(&parent_hash),
-                reconstructed_unit.parents().get(coord.creator())
+                reconstructed_unit.parent_for(coord.creator())
             );
         }
     }

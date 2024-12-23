@@ -57,7 +57,6 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Responder<H, D, MK> {
             .map(|unit| {
                 let parents = unit
                     .parents()
-                    .values()
                     .map(|parent_hash| {
                         units
                             .unit(parent_hash)
@@ -270,8 +269,8 @@ mod test {
         match response {
             Response::Parents(response_hash, parents) => {
                 assert_eq!(response_hash, requested_unit.hash());
-                assert_eq!(parents.len(), requested_unit.parents().size().0);
-                for (parent, parent_hash) in zip(parents, requested_unit.parents().values()) {
+                assert_eq!(parents.len(), requested_unit.parents().count());
+                for (parent, parent_hash) in zip(parents, requested_unit.parents()) {
                     assert_eq!(&parent.as_signable().hash(), parent_hash);
                 }
             }

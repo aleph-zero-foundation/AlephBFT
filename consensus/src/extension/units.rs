@@ -64,8 +64,8 @@ impl<U: UnitWithParents> Units<U> {
                 .expect("head is picked among units we have"),
         );
         while let Some(u) = queue.pop_front() {
-            for u_hash in u.parents().clone().into_values() {
-                if let Some(v) = self.units.remove(&u_hash) {
+            for u_hash in u.parents() {
+                if let Some(v) = self.units.remove(u_hash) {
                     queue.push_back(v);
                 }
             }
