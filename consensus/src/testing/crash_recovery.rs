@@ -132,11 +132,10 @@ fn verify_backup(buf: &mut &[u8]) -> HashSet<UnitCoord> {
         let unit = <UncheckedSignedUnit<Hasher64, Data, Signature>>::decode(buf).unwrap();
         let full_unit = unit.as_signable();
         let coord = full_unit.coord();
-        let parent_ids = &full_unit.as_pre_unit().control_hash().parents_mask;
+        let control_hash = &full_unit.as_pre_unit().control_hash();
 
-        for parent_id in parent_ids.elements() {
-            let parent = UnitCoord::new(coord.round() - 1, parent_id);
-            assert!(already_saved.contains(&parent));
+        for parent_coord in control_hash.parents() {
+            assert!(already_saved.contains(&parent_coord));
         }
 
         already_saved.insert(coord);

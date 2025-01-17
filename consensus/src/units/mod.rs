@@ -1,17 +1,20 @@
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
 use crate::{
-    Data, Hasher, Index, MultiKeychain, NodeCount, NodeIndex, NodeMap, NodeSubset, Round,
-    SessionId, Signable, Signed, UncheckedSigned,
+    Data, Hasher, Index, MultiKeychain, NodeCount, NodeIndex, Round, SessionId, Signable, Signed,
+    UncheckedSigned,
 };
 use codec::{Decode, Encode};
 use derivative::Derivative;
 use parking_lot::RwLock;
 
+mod control_hash;
 mod store;
 #[cfg(test)]
 mod testing;
 mod validator;
+
+pub use control_hash::{ControlHash, Error as ControlHashError};
 pub(crate) use store::*;
 #[cfg(test)]
 pub use testing::{
@@ -52,39 +55,6 @@ impl Display for UnitCoord {
     }
 }
 
-/// Combined hashes of the parents of a unit together with the set of indices of creators of the
-/// parents
-#[derive(Clone, Eq, PartialEq, Hash, Debug, Decode, Encode)]
-pub struct ControlHash<H: Hasher> {
-    pub(crate) parents_mask: NodeSubset,
-    pub(crate) combined_hash: H::Hash,
-}
-
-impl<H: Hasher> ControlHash<H> {
-    pub(crate) fn new(parent_map: &NodeMap<H::Hash>) -> Self {
-        ControlHash {
-            parents_mask: parent_map.to_subset(),
-            combined_hash: Self::combine_hashes(parent_map),
-        }
-    }
-
-    pub(crate) fn combine_hashes(parent_map: &NodeMap<H::Hash>) -> H::Hash {
-        parent_map.using_encoded(H::hash)
-    }
-
-    pub(crate) fn parents(&self) -> impl Iterator<Item = NodeIndex> + '_ {
-        self.parents_mask.elements()
-    }
-
-    pub(crate) fn n_parents(&self) -> NodeCount {
-        NodeCount(self.parents().count())
-    }
-
-    pub(crate) fn n_members(&self) -> NodeCount {
-        NodeCount(self.parents_mask.size())
-    }
-}
-
 /// The simplest type representing a unit, consisting of coordinates and a control hash
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Decode, Encode)]
 pub struct PreUnit<H: Hasher> {
@@ -98,10 +68,6 @@ impl<H: Hasher> PreUnit<H> {
             coord: UnitCoord::new(round, creator),
             control_hash,
         }
-    }
-
-    pub(crate) fn n_parents(&self) -> NodeCount {
-        self.control_hash.n_parents()
     }
 
     pub(crate) fn n_members(&self) -> NodeCount {
@@ -218,6 +184,7 @@ pub trait UnitWithParents: Unit {
     fn parents(&self) -> impl Iterator<Item = &HashFor<Self>>;
     fn direct_parents(&self) -> impl Iterator<Item = &HashFor<Self>>;
     fn parent_for(&self, index: NodeIndex) -> Option<&HashFor<Self>>;
+
     fn node_count(&self) -> NodeCount;
 }
 
@@ -274,7 +241,7 @@ pub type HashFor<U> = <<U as Unit>::Hasher as Hasher>::Hash;
 #[cfg(test)]
 pub mod tests {
     use crate::{
-        units::{random_full_parent_units_up_to, ControlHash, FullUnit, Unit},
+        units::{random_full_parent_units_up_to, FullUnit, Unit},
         Hasher, NodeCount,
     };
     use aleph_bft_mock::{Data, Hasher64};
@@ -291,15 +258,6 @@ pub mod tests {
             let hash = full_unit.using_encoded(Hasher64::hash);
             assert_eq!(full_unit.hash(), hash);
         }
-    }
-
-    #[test]
-    fn test_control_hash_codec() {
-        let ch = ControlHash::<Hasher64>::new(&vec![Some([0; 8]), None, Some([1; 8])].into());
-        let encoded = ch.encode();
-        let decoded =
-            ControlHash::decode(&mut encoded.as_slice()).expect("should decode correctly");
-        assert_eq!(decoded, ch);
     }
 
     #[test]

@@ -28,7 +28,7 @@ type Dag = GenericDag<Hasher64, Data, Keychain>;
 #[derive(Clone)]
 struct UnitWithParents {
     unit: SignedUnit,
-    parent_hashes: NodeMap<Hash64>,
+    parent_hashes: NodeMap<(Hash64, Round)>,
 }
 
 impl UnitWithParents {
@@ -36,7 +36,7 @@ impl UnitWithParents {
         round: Round,
         creator: NodeIndex,
         variant: Data,
-        parent_hashes: NodeMap<Hash64>,
+        parent_hashes: NodeMap<(Hash64, Round)>,
     ) -> Self {
         let keychain = Keychain::new(parent_hashes.size(), creator);
         let control_hash = ControlHash::new(&parent_hashes);
@@ -53,7 +53,11 @@ impl UnitWithParents {
     }
 
     fn parent_hashes(&self) -> Vec<Hash64> {
-        self.parent_hashes.values().cloned().collect()
+        self.parent_hashes
+            .values()
+            .map(|(hash, _)| hash)
+            .cloned()
+            .collect()
     }
 }
 
@@ -330,7 +334,7 @@ fn generate_random_dag(
                         let parent = dag[previous_round_index][parent_ix.0]
                             .choose(&mut rng)
                             .unwrap();
-                        parents.insert(*parent_ix, parent.hash());
+                        parents.insert(*parent_ix, (parent.hash(), r - 1));
                         curr_n_parents += 1.into();
                         if curr_n_parents == n_parents {
                             break;

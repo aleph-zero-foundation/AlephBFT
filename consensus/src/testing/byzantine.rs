@@ -107,7 +107,13 @@ impl<'a> MaliciousMember<'a> {
     fn create_if_possible(&mut self, round: Round) -> bool {
         if let Some(parents) = self.pick_parents(round) {
             debug!(target: "malicious-member", "Creating a legit unit for round {}.", round);
-            let control_hash = ControlHash::<Hasher64>::new(&parents);
+            let mut node_with_parents = NodeMap::with_size(parents.size());
+            if round > 0 {
+                for (node_index, &hash) in parents.iter() {
+                    node_with_parents.insert(node_index, (hash, round - 1));
+                }
+            }
+            let control_hash = ControlHash::<Hasher64>::new(&node_with_parents);
             let new_preunit = PreUnit::<Hasher64>::new(self.node_ix, round, control_hash);
             if round != self.forking_round {
                 let full_unit = FullUnit::new(new_preunit, Some(0), self.session_id);

@@ -21,22 +21,11 @@ pub struct ReconstructedUnit<U: Unit> {
 
 impl<U: Unit> ReconstructedUnit<U> {
     /// Returns a reconstructed unit if the parents agree with the hash, errors out otherwise.
-    pub fn with_parents(unit: U, parents: NodeMap<HashFor<U>>) -> Result<Self, U> {
-        match unit.control_hash().combined_hash
-            == ControlHash::<U::Hasher>::combine_hashes(&parents)
+    pub fn with_parents(unit: U, parents: NodeMap<(HashFor<U>, Round)>) -> Result<Self, U> {
+        match unit.control_hash().combined_hash()
+            == ControlHash::<U::Hasher>::create_control_hash(&parents)
         {
-            true => {
-                let unit_round = unit.round();
-                let mut parents_with_rounds = NodeMap::with_size(parents.size());
-                for (parent_index, hash) in parents.into_iter() {
-                    // we cannot have here round 0 units
-                    parents_with_rounds.insert(parent_index, (hash, unit_round.saturating_sub(1)));
-                }
-                Ok(ReconstructedUnit {
-                    unit,
-                    parents: parents_with_rounds,
-                })
-            }
+            true => Ok(ReconstructedUnit { unit, parents }),
             false => Err(unit),
         }
     }
@@ -249,13 +238,14 @@ impl<U: Unit> Reconstruction<U> {
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashMap;
-
     use crate::{
         dag::reconstruction::{ReconstructedUnit, Reconstruction, ReconstructionResult, Request},
         units::{random_full_parent_units_up_to, Unit, UnitCoord, UnitWithParents},
         NodeCount, NodeIndex,
     };
+    use aleph_bft_types::{NodeMap, Round};
+    use rand::Rng;
+    use std::collections::HashMap;
 
     #[test]
     fn reconstructs_initial_units() {
@@ -414,5 +404,88 @@ mod test {
             all_reconstructed.pop().expect("just checked").hash(),
             unit_hash
         )
+    }
+    #[test]
+    fn given_wrong_rounds_with_matching_hashes_when_calling_with_parents_then_err_is_returned() {
+        const MAX_ROUND: Round = 7;
+
+        let mut rng = rand::thread_rng();
+        let node_count = NodeCount(7);
+        let mut reconstruction = Reconstruction::new();
+
+        let dag = random_full_parent_units_up_to(MAX_ROUND, node_count, 43);
+        for units in &dag {
+            for unit in units {
+                let round = unit.round();
+                let ReconstructionResult { units, requests } =
+                    reconstruction.add_unit(unit.clone());
+                assert!(requests.is_empty());
+                assert_eq!(units.len(), 1);
+                match round {
+                    0 => {
+                        let mut parents_map: NodeMap<(_, _)> = NodeMap::with_size(node_count);
+                        assert!(
+                            ReconstructedUnit::with_parents(unit.clone(), parents_map.clone())
+                                .is_ok(),
+                            "Initial units should not have parents!"
+                        );
+
+                        let random_parent_index = rng.gen::<u64>() % node_count.0 as u64;
+                        parents_map.insert(
+                            NodeIndex(random_parent_index as usize),
+                            (unit.hash(), 2 as Round),
+                        );
+                        assert_eq!(
+                            ReconstructedUnit::with_parents(unit.clone(), parents_map),
+                            Err(unit.clone()),
+                            "Initial unit reconstructed with a non-empty parent!"
+                        );
+                    }
+                    round => {
+                        let mut parents_map: NodeMap<(_, _)> = NodeMap::with_size(node_count);
+                        assert_eq!(
+                            ReconstructedUnit::with_parents(unit.clone(), parents_map.clone()),
+                            Err(unit.clone()),
+                            "Non-initial rounds should have parents!"
+                        );
+
+                        let random_parent_index = rng.gen::<u64>() % node_count.0 as u64;
+                        parents_map.insert(
+                            NodeIndex(random_parent_index as usize),
+                            (unit.hash(), round as Round),
+                        );
+                        assert_eq!(
+                            ReconstructedUnit::with_parents(unit.clone(), parents_map.clone()),
+                            Err(unit.clone()),
+                            "Unit reconstructed with missing parents and wrong parent rounds!"
+                        );
+
+                        let this_unit_control_hash = unit.control_hash();
+                        let mut parents: NodeMap<(_, _)> =
+                            NodeMap::with_size(this_unit_control_hash.n_members());
+                        for (node_index, &(hash, round)) in units[0].parents.iter() {
+                            parents.insert(node_index, (hash, round));
+                        }
+                        assert!(
+                            ReconstructedUnit::with_parents(unit.clone(), parents.clone()).is_ok(),
+                            "Reconstructed unit control hash does not match unit's control hash!"
+                        );
+                        let random_parent_index = rng.gen::<u64>() % node_count.0 as u64;
+                        let random_parent_index = NodeIndex(random_parent_index as usize);
+                        let &(parent_hash, _) = parents.get(random_parent_index).unwrap();
+                        let wrong_round = match round {
+                            1 => MAX_ROUND,
+                            _ => 0,
+                        };
+                        parents_map.insert(random_parent_index, (parent_hash, wrong_round));
+                        assert_eq!(
+                            ReconstructedUnit::with_parents(unit.clone(), parents_map.clone()),
+                            Err(unit.clone()),
+                            "Unit reconstructed with one parent having wrong round!"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

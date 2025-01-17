@@ -86,13 +86,22 @@ impl<H: Hasher> Creator<H> {
     pub fn create_unit(&self, round: Round) -> Result<PreUnit<H>> {
         let parents = match round.checked_sub(1) {
             None => NodeMap::with_size(self.n_members),
-            Some(prev_round) => self
-                .round_collectors
-                .get(usize::from(prev_round))
-                .ok_or(ConstraintError::NotEnoughParents)?
-                .prospective_parents(self.node_id)?
-                .clone(),
+            Some(prev_round) => {
+                let parents = self
+                    .round_collectors
+                    .get(usize::from(prev_round))
+                    .ok_or(ConstraintError::NotEnoughParents)?
+                    .prospective_parents(self.node_id)?
+                    .clone();
+                let mut parents_with_rounds_and_hashes = NodeMap::with_size(parents.size());
+                for (parent_index, hash) in parents.into_iter() {
+                    // we cannot have here round 0 units
+                    parents_with_rounds_and_hashes.insert(parent_index, (hash, prev_round));
+                }
+                parents_with_rounds_and_hashes
+            }
         };
+
         Ok(PreUnit::new(
             self.node_id,
             round,

@@ -277,12 +277,13 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Handler<H, D, MK> {
 
 #[cfg(test)]
 mod tests {
+    use crate::units::ControlHash;
     use crate::{
         alerts::{
             handler::{Error, Handler, RmcResponse},
             Alert, AlertMessage, ForkProof, ForkingNotification,
         },
-        units::{ControlHash, FullUnit, PreUnit},
+        units::{FullUnit, PreUnit},
         PartiallyMultisigned, Recipient, Round,
     };
     use aleph_bft_mock::{Data, Hasher64, Keychain, Signature};

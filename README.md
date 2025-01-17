@@ -60,7 +60,7 @@ More details are available [in the book][reference-link-implementation-details].
 - Import AlephBFT in your crate
   ```toml
   [dependencies]
-  aleph-bft = "^0.40"
+  aleph-bft = "^0.41"
   ```
 - The main entry point is the `run_session` function, which returns a Future that runs the
   consensus algorithm.

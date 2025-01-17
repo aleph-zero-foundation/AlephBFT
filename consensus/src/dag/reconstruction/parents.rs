@@ -3,13 +3,14 @@ use crate::{
     units::{ControlHash, HashFor, Unit, UnitCoord},
     NodeIndex, NodeMap,
 };
+use aleph_bft_types::Round;
 use std::collections::{hash_map::Entry, HashMap};
 
 /// A unit in the process of reconstructing its parents.
 #[derive(Debug, PartialEq, Eq, Clone)]
 enum ReconstructingUnit<U: Unit> {
     /// We are trying to optimistically reconstruct the unit from potential parents we get.
-    Reconstructing(U, NodeMap<HashFor<U>>),
+    Reconstructing(U, NodeMap<(HashFor<U>, Round)>),
     /// We are waiting for receiving an explicit list of unit parents.
     WaitingForParents(U),
 }
@@ -29,11 +30,7 @@ impl<U: Unit> ReconstructingUnit<U> {
             round != 0,
             "We should never try to reconstruct parents of a unit of round 0."
         );
-        let coords = unit
-            .control_hash()
-            .parents()
-            .map(|parent_id| UnitCoord::new(round - 1, parent_id))
-            .collect();
+        let coords = unit.control_hash().parents().collect();
         (
             ReconstructingUnit::Reconstructing(unit, NodeMap::with_size(n_members)),
             coords,
@@ -44,14 +41,15 @@ impl<U: Unit> ReconstructingUnit<U> {
         self,
         parent_id: NodeIndex,
         parent_hash: HashFor<U>,
+        parent_round: Round,
     ) -> SingleParentReconstructionResult<U> {
         use ReconstructingUnit::*;
         use SingleParentReconstructionResult::*;
         match self {
             Reconstructing(unit, mut parents) => {
-                parents.insert(parent_id, parent_hash);
+                parents.insert(parent_id, (parent_hash, parent_round));
                 match parents.item_count() == unit.control_hash().parents().count() {
-                    // We have enought parents, just need to check the control hash matches.
+                    // We have enough parents, just need to check the control hash matches.
                     true => match ReconstructedUnit::with_parents(unit, parents) {
                         Ok(unit) => Reconstructed(unit),
                         // If the control hash doesn't match we want to get an explicit list of parents.
@@ -85,9 +83,11 @@ impl<U: Unit> ReconstructingUnit<U> {
             return Err(self);
         }
         let mut parents_map = NodeMap::with_size(control_hash.n_members());
-        for parent_id in control_hash.parents() {
-            match parents.get(&UnitCoord::new(self.as_unit().round() - 1, parent_id)) {
-                Some(parent_hash) => parents_map.insert(parent_id, *parent_hash),
+        for parent_coord in control_hash.parents() {
+            match parents.get(&parent_coord) {
+                Some(parent_hash) => {
+                    parents_map.insert(parent_coord.creator(), (*parent_hash, parent_coord.round()))
+                }
                 // The parents were inconsistent with the control hash.
                 None => return Err(self),
             }
@@ -118,10 +118,11 @@ impl<U: Unit> Reconstruction<U> {
         child_hash: HashFor<U>,
         parent_id: NodeIndex,
         parent_hash: HashFor<U>,
+        parent_round: Round,
     ) -> ReconstructionResult<U> {
         use SingleParentReconstructionResult::*;
         match self.reconstructing_units.remove(&child_hash) {
-            Some(child) => match child.reconstruct_parent(parent_id, parent_hash) {
+            Some(child) => match child.reconstruct_parent(parent_id, parent_hash, parent_round) {
                 Reconstructed(unit) => ReconstructionResult::reconstructed(unit),
                 InProgress(unit) => {
                     self.reconstructing_units.insert(child_hash, unit);
@@ -161,6 +162,7 @@ impl<U: Unit> Reconstruction<U> {
                     child_hash,
                     unit_coord.creator(),
                     unit_hash,
+                    unit_coord.round(),
                 ));
             }
         }
@@ -178,6 +180,7 @@ impl<U: Unit> Reconstruction<U> {
                             unit_hash,
                             parent_coord.creator(),
                             *parent_hash,
+                            parent_coord.round(),
                         )),
                         None => {
                             self.waiting_for_coord

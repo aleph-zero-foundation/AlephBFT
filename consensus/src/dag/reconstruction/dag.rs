@@ -121,14 +121,16 @@ mod test {
         Hasher, NodeCount, NodeIndex, NodeMap,
     };
     use aleph_bft_mock::Hasher64;
+    use aleph_bft_types::Round;
     use std::collections::HashSet;
 
     fn full_parents_to_map(
         parents: Vec<<Hasher64 as Hasher>::Hash>,
-    ) -> NodeMap<<Hasher64 as Hasher>::Hash> {
+        parent_round: Round,
+    ) -> NodeMap<(<Hasher64 as Hasher>::Hash, Round)> {
         let mut result = NodeMap::with_size(NodeCount(parents.len()));
         for (id, parent) in parents.into_iter().enumerate() {
-            result.insert(NodeIndex(id), parent);
+            result.insert(NodeIndex(id), (parent, parent_round));
         }
         result
     }
@@ -150,8 +152,8 @@ mod test {
             .map(|unit| ReconstructedUnit::initial(unit.clone()))
             .collect();
         let mut result = vec![initial_units];
-        for (units, parents) in dag.iter().skip(1).zip(hashes) {
-            let parents = full_parents_to_map(parents);
+        for ((parent_round, units), parents) in dag.iter().skip(1).enumerate().zip(hashes) {
+            let parents = full_parents_to_map(parents, parent_round as Round);
             let reconstructed = units
                 .iter()
                 .map(|unit| {

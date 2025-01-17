@@ -1,7 +1,7 @@
+use crate::units::{ControlHashError, UnitCoord};
 use crate::{
-    units::{ControlHash, FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit, Unit},
-    Data, Hasher, Keychain, NodeCount, NodeIndex, NodeMap, Round, SessionId, Signature,
-    SignatureError,
+    units::{FullUnit, PreUnit, SignedUnit, UncheckedSignedUnit, Unit},
+    Data, Hasher, Keychain, NodeCount, NodeIndex, Round, SessionId, Signature, SignatureError,
 };
 use std::{
     fmt::{Display, Formatter, Result as FmtResult},
@@ -15,10 +15,7 @@ pub enum ValidationError<H: Hasher, D: Data, S: Signature> {
     WrongSession(FullUnit<H, D>),
     RoundTooHigh(FullUnit<H, D>),
     WrongNumberOfMembers(PreUnit<H>),
-    RoundZeroWithParents(PreUnit<H>),
-    RoundZeroBadControlHash(PreUnit<H>),
-    NotEnoughParents(PreUnit<H>),
-    NotDescendantOfPreviousUnit(PreUnit<H>),
+    ParentValidationFailed(PreUnit<H>, ControlHashError<H>),
 }
 
 impl<H: Hasher, D: Data, S: Signature> Display for ValidationError<H, D, S> {
@@ -34,20 +31,10 @@ impl<H: Hasher, D: Data, S: Signature> Display for ValidationError<H, D, S> {
                 pu.n_members(),
                 pu
             ),
-            RoundZeroWithParents(pu) => write!(f, "zero round unit with parents: {:?}", pu),
-            RoundZeroBadControlHash(pu) => {
-                write!(f, "zero round unit with wrong control hash: {:?}", pu)
-            }
-            NotEnoughParents(pu) => write!(
+            ParentValidationFailed(pu, control_hash_error) => write!(
                 f,
-                "nonzero round unit with only {:?} parents: {:?}",
-                pu.n_parents(),
-                pu
-            ),
-            NotDescendantOfPreviousUnit(pu) => write!(
-                f,
-                "nonzero round unit is not descendant of its creator's previous unit: {:?}",
-                pu
+                "parent validation failed for unit: {:?}. Internal error: {}",
+                pu, control_hash_error
             ),
         }
     }
@@ -105,10 +92,6 @@ impl<K: Keychain> Validator<K> {
         self.validate_unit_parents(su)
     }
 
-    fn threshold(&self) -> NodeCount {
-        self.keychain.node_count().consensus_threshold()
-    }
-
     fn validate_unit_parents<H: Hasher, D: Data>(
         &self,
         su: SignedUnit<H, D, K>,
@@ -118,33 +101,11 @@ impl<K: Keychain> Validator<K> {
         if n_members != self.keychain.node_count() {
             return Err(ValidationError::WrongNumberOfMembers(pre_unit.clone()));
         }
-        let round = pre_unit.round();
-        let n_parents = pre_unit.n_parents();
-        match round {
-            0 => {
-                if n_parents > NodeCount(0) {
-                    return Err(ValidationError::RoundZeroWithParents(pre_unit.clone()));
-                }
-                if pre_unit.control_hash().combined_hash
-                    != ControlHash::<H>::combine_hashes(&NodeMap::with_size(n_members))
-                {
-                    return Err(ValidationError::RoundZeroBadControlHash(pre_unit.clone()));
-                }
-            }
-            // NOTE: at this point we cannot validate correctness of the control hash, in principle it could be
-            // just a random hash, but we still would not be able to deduce that by looking at the unit only.
-            _ => {
-                if n_parents < self.threshold() {
-                    return Err(ValidationError::NotEnoughParents(pre_unit.clone()));
-                }
-                let control_hash = &pre_unit.control_hash();
-                if !control_hash.parents_mask[pre_unit.creator()] {
-                    return Err(ValidationError::NotDescendantOfPreviousUnit(
-                        pre_unit.clone(),
-                    ));
-                }
-            }
-        }
+        let unit_coord = UnitCoord::new(pre_unit.round(), pre_unit.creator());
+        pre_unit
+            .control_hash
+            .validate(unit_coord)
+            .map_err(|e| ValidationError::ParentValidationFailed(pre_unit.clone(), e))?;
         Ok(su)
     }
 }
@@ -156,10 +117,12 @@ mod tests {
         units::{
             full_unit_to_unchecked_signed_unit, preunit_to_unchecked_signed_unit,
             random_full_parent_units_up_to, random_unit_with_parents, PreUnit,
+            {ControlHash, ControlHashError},
         },
         NodeCount, NodeIndex,
     };
     use aleph_bft_mock::Keychain;
+    use codec::{Decode, Encode};
 
     type Validator = GenericValidator<Keychain>;
 
@@ -191,13 +154,20 @@ mod tests {
             .as_pre_unit()
             .clone();
         let mut control_hash = preunit.control_hash().clone();
-        control_hash.combined_hash = [0, 1, 0, 1, 0, 1, 0, 1];
+        let encoded = control_hash.encode();
+        // first 8 bytes is encoded NodeMap of size 7
+        let mut borked_control_hash_bytes = encoded[0..=7].to_vec();
+        borked_control_hash_bytes.extend([0u8, 1u8, 0u8, 1u8, 0u8, 1u8, 0u8, 1u8]);
+        control_hash = ControlHash::decode(&mut borked_control_hash_bytes.as_slice())
+            .expect("should decode correctly");
         let preunit = PreUnit::new(preunit.creator(), preunit.round(), control_hash);
         let unchecked_unit =
             preunit_to_unchecked_signed_unit(preunit.clone(), session_id, &keychain);
         let other_preunit = match validator.validate_unit(unchecked_unit.clone()) {
             Ok(_) => panic!("Validated bad unit."),
-            Err(RoundZeroBadControlHash(unit)) => unit,
+            Err(ParentValidationFailed(unit, ControlHashError::RoundZeroBadControlHash(_, _))) => {
+                unit
+            }
             Err(e) => panic!("Unexpected error from validator: {:?}", e),
         };
         assert_eq!(other_preunit, preunit);
@@ -261,7 +231,10 @@ mod tests {
         let validator = Validator::new(session_id, keychain, max_round);
         let other_preunit = match validator.validate_unit(unchecked_unit) {
             Ok(_) => panic!("Validated bad unit."),
-            Err(NotEnoughParents(other_preunit)) => other_preunit,
+            Err(ParentValidationFailed(
+                other_preunit,
+                ControlHashError::NotEnoughParentsForRound(_),
+            )) => other_preunit,
             Err(e) => panic!("Unexpected error from validator: {:?}", e),
         };
         assert_eq!(other_preunit, preunit);
