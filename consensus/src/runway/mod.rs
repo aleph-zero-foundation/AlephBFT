@@ -187,6 +187,8 @@ impl<'a, H: Hasher> Display for RunwayStatus<'a, H> {
         if !self.missing_parents.is_empty() {
             write!(f, "; missing parents - {:?}", self.missing_parents)?;
         }
+        write!(f, ";reconstructed DAG: {}", self.store_status)?;
+        write!(f, ";additional information: {}", self.dag_status)?;
         write!(f, ".")?;
         Ok(())
     }
