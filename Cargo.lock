@@ -28,7 +28,7 @@ dependencies = [
 
 [[package]]
 name = "aleph-bft"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "aleph-bft-mock",
  "aleph-bft-rmc",

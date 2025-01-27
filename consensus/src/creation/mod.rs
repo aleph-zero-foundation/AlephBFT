@@ -13,6 +13,7 @@ use futures::{
 use futures_timer::Delay;
 use log::{debug, error, trace, warn};
 
+mod collector;
 mod creator;
 mod packer;
 

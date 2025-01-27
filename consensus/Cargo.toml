@@ -1,6 +1,6 @@
 [package]
 name = "aleph-bft"
-version = "0.41.1"
+version = "0.42.0"
 edition = "2021"
 authors = ["Cardinal Cryptography"]
 categories = ["algorithms", "data-structures", "cryptography", "database"]

@@ -1,55 +1,10 @@
 use crate::{
+    creation::collector::{ConstraintError, UnitsCollector},
     units::{ControlHash, PreUnit, Unit},
     Hasher, NodeCount, NodeIndex, NodeMap, Round,
 };
 use anyhow::Result;
-use thiserror::Error;
-
-#[derive(Eq, Error, Debug, PartialEq)]
-enum ConstraintError {
-    #[error("Not enough parents.")]
-    NotEnoughParents,
-    #[error("Missing own parent.")]
-    MissingOwnParent,
-}
-
-#[derive(Clone)]
-struct UnitsCollector<H: Hasher> {
-    candidates: NodeMap<H::Hash>,
-    n_candidates: NodeCount,
-}
-
-impl<H: Hasher> UnitsCollector<H> {
-    pub fn new(n_members: NodeCount) -> Self {
-        Self {
-            candidates: NodeMap::with_size(n_members),
-            n_candidates: NodeCount(0),
-        }
-    }
-
-    pub fn add_unit<U: Unit<Hasher = H>>(&mut self, unit: &U) {
-        let node_id = unit.creator();
-        let hash = unit.hash();
-
-        if self.candidates.get(node_id).is_none() {
-            self.candidates.insert(node_id, hash);
-            self.n_candidates += NodeCount(1);
-        }
-    }
-
-    pub fn prospective_parents(
-        &self,
-        node_id: NodeIndex,
-    ) -> Result<&NodeMap<H::Hash>, ConstraintError> {
-        if self.n_candidates < self.candidates.size().consensus_threshold() {
-            return Err(ConstraintError::NotEnoughParents);
-        }
-        if self.candidates.get(node_id).is_none() {
-            return Err(ConstraintError::MissingOwnParent);
-        }
-        Ok(&self.candidates)
-    }
-}
+use std::cmp;
 
 pub struct Creator<H: Hasher> {
     round_collectors: Vec<UnitsCollector<H>>,
@@ -62,7 +17,7 @@ impl<H: Hasher> Creator<H> {
         Creator {
             node_id,
             n_members,
-            round_collectors: vec![UnitsCollector::new(n_members)],
+            round_collectors: vec![UnitsCollector::new_initial(n_members)],
         }
     }
 
@@ -72,59 +27,53 @@ impl<H: Hasher> Creator<H> {
 
     // gets or initializes a unit collector for a given round (and all between if not there)
     fn get_or_initialize_collector_for_round(&mut self, round: Round) -> &mut UnitsCollector<H> {
-        let round_ix = usize::from(round);
-        if round > self.current_round() {
-            let new_size = round_ix + 1;
-            self.round_collectors
-                .resize(new_size, UnitsCollector::new(self.n_members));
-        };
-        &mut self.round_collectors[round_ix]
+        while round > self.current_round() {
+            let next_collector = UnitsCollector::from_previous(
+                self.round_collectors
+                    .last()
+                    .expect("we always have at least one"),
+            );
+            self.round_collectors.push(next_collector);
+        }
+        &mut self.round_collectors[round as usize]
     }
 
     /// To create a new unit, we need to have at least the consensus threshold of parents available in previous round.
     /// Additionally, our unit from previous round must be available.
     pub fn create_unit(&self, round: Round) -> Result<PreUnit<H>> {
-        let parents = match round.checked_sub(1) {
-            None => NodeMap::with_size(self.n_members),
-            Some(prev_round) => {
-                let parents = self
-                    .round_collectors
+        let control_hash = match round.checked_sub(1) {
+            None => ControlHash::new(&NodeMap::with_size(self.n_members)),
+            Some(prev_round) => ControlHash::new(
+                self.round_collectors
                     .get(usize::from(prev_round))
                     .ok_or(ConstraintError::NotEnoughParents)?
-                    .prospective_parents(self.node_id)?
-                    .clone();
-                let mut parents_with_rounds_and_hashes = NodeMap::with_size(parents.size());
-                for (parent_index, hash) in parents.into_iter() {
-                    // we cannot have here round 0 units
-                    parents_with_rounds_and_hashes.insert(parent_index, (hash, prev_round));
-                }
-                parents_with_rounds_and_hashes
-            }
+                    .prospective_parents(self.node_id)?,
+            ),
         };
 
-        Ok(PreUnit::new(
-            self.node_id,
-            round,
-            ControlHash::new(&parents),
-        ))
+        Ok(PreUnit::new(self.node_id, round, control_hash))
     }
 
     pub fn add_unit<U: Unit<Hasher = H>>(&mut self, unit: &U) {
-        self.get_or_initialize_collector_for_round(unit.round())
-            .add_unit(unit);
+        let start_round = unit.round();
+        let end_round = cmp::max(start_round, self.current_round());
+        for round in start_round..=end_round {
+            self.get_or_initialize_collector_for_round(round)
+                .add_unit(unit);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Creator as GenericCreator, UnitsCollector};
     use crate::{
-        creation::creator::ConstraintError,
-        units::{create_preunits, creator_set, preunit_to_full_unit, Unit},
+        creation::creator::Creator as GenericCreator,
+        units::{
+            create_preunits, creator_set, preunit_to_full_unit, random_full_parent_units_up_to,
+        },
         NodeCount, NodeIndex,
     };
     use aleph_bft_mock::Hasher64;
-    use std::collections::HashSet;
 
     type Creator = GenericCreator<Hasher64>;
 
@@ -274,71 +223,80 @@ mod tests {
     }
 
     #[test]
-    fn units_collector_successfully_computes_parents() {
-        let n_members = NodeCount(4);
-        let creators = creator_set(n_members);
-        let new_units = create_preunits(creators.iter(), 0);
-        let new_units: Vec<_> = new_units
-            .into_iter()
-            .map(|pu| preunit_to_full_unit(pu, 0))
-            .collect();
-
-        let mut units_collector = UnitsCollector::new(n_members);
-        new_units
-            .iter()
-            .for_each(|unit| units_collector.add_unit(unit));
-
-        let parents = units_collector
-            .prospective_parents(NodeIndex(0))
-            .expect("we should be able to retrieve parents");
-        assert_eq!(parents.item_count(), 4);
-
-        let new_units: HashSet<_> = new_units.iter().map(|unit| unit.hash()).collect();
-        let selected_parents = parents.values().cloned().collect();
-        assert_eq!(new_units, selected_parents);
-    }
-
-    #[test]
-    fn units_collector_returns_err_when_not_enough_parents() {
-        let n_members = NodeCount(4);
-        let creators = creator_set(n_members);
-        let new_units = create_preunits(creators.iter().take(2), 0);
-        let new_units: Vec<_> = new_units
-            .into_iter()
-            .map(|pu| preunit_to_full_unit(pu, 0))
-            .collect();
-
-        let mut units_collector = UnitsCollector::new(n_members);
-        new_units
-            .iter()
-            .for_each(|unit| units_collector.add_unit(unit));
-
-        let parents = units_collector.prospective_parents(NodeIndex(0));
+    fn creates_unit_with_ancient_parents() {
+        let n_members = NodeCount(7);
+        let mut creator = Creator::new(NodeIndex(0), n_members);
+        let units = random_full_parent_units_up_to(1, n_members, 43);
+        creator.add_units(&units[0]);
+        for unit in units[1].iter().take(5) {
+            creator.add_unit(unit);
+        }
+        let round = 2;
+        let preunit = creator
+            .create_unit(round)
+            .expect("Creation should succeed.");
+        assert_eq!(preunit.round(), round);
+        for coord in preunit.control_hash().parents().take(5) {
+            assert_eq!(coord.round(), round - 1);
+        }
         assert_eq!(
-            parents.expect_err("should be an error"),
-            ConstraintError::NotEnoughParents
+            preunit
+                .control_hash()
+                .parents()
+                .nth(5)
+                .expect("there is a sixth parent")
+                .round(),
+            round - 2
         );
     }
 
     #[test]
-    fn units_collector_returns_err_when_missing_own_parent() {
-        let n_members = NodeCount(4);
-        let creators = creator_set(n_members);
-        let new_units = create_preunits(creators.iter().take(3), 0);
-        let new_units: Vec<_> = new_units
-            .into_iter()
-            .map(|pu| preunit_to_full_unit(pu, 0))
-            .collect();
-
-        let mut units_collector = UnitsCollector::new(n_members);
-        new_units
-            .iter()
-            .for_each(|unit| units_collector.add_unit(unit));
-
-        let parents = units_collector.prospective_parents(NodeIndex(3));
+    fn creates_unit_with_ancient_parents_weird_order() {
+        let n_members = NodeCount(7);
+        let mut creator = Creator::new(NodeIndex(0), n_members);
+        let units = random_full_parent_units_up_to(1, n_members, 43);
+        for unit in units[1].iter().take(5) {
+            creator.add_unit(unit);
+        }
+        creator.add_units(&units[0]);
+        let round = 2;
+        let preunit = creator
+            .create_unit(round)
+            .expect("Creation should succeed.");
+        assert_eq!(preunit.round(), round);
+        for coord in preunit.control_hash().parents().take(5) {
+            assert_eq!(coord.round(), round - 1);
+        }
         assert_eq!(
-            parents.expect_err("should be an error"),
-            ConstraintError::MissingOwnParent
+            preunit
+                .control_hash()
+                .parents()
+                .nth(5)
+                .expect("there is a sixth parent")
+                .round(),
+            round - 2
         );
+    }
+
+    #[test]
+    fn creates_old_unit_with_best_parents() {
+        let n_members = NodeCount(7);
+        let mut creator = Creator::new(NodeIndex(0), n_members);
+        let units = random_full_parent_units_up_to(2, n_members, 43);
+        for round_units in &units {
+            for unit in round_units.iter().take(5) {
+                creator.add_unit(unit);
+            }
+        }
+        creator.add_unit(&units[0][5]);
+        let round = 1;
+        let preunit = creator
+            .create_unit(round)
+            .expect("Creation should succeed.");
+        assert_eq!(preunit.round(), round);
+        for coord in preunit.control_hash().parents().take(5) {
+            assert_eq!(coord.round(), round - 1);
+        }
+        assert!(preunit.control_hash().parents().nth(5).is_some());
     }
 }
