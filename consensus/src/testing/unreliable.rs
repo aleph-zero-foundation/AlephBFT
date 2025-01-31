@@ -5,7 +5,7 @@ use crate::{
     units::Unit,
     Index, NodeCount, NodeIndex, Round, Signed, SpawnHandle,
 };
-use aleph_bft_mock::{BadSigning, Keychain, NetworkHook, Router, Spawner};
+use aleph_bft_mock::{BadSigning, DataProvider, Keychain, NetworkHook, Router, Spawner};
 use futures::StreamExt;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -18,11 +18,16 @@ struct CorruptPacket {
 }
 
 impl NetworkHook<NetworkData> for CorruptPacket {
-    fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, recipient: NodeIndex) {
+    fn process_message(
+        &mut self,
+        mut data: NetworkData,
+        sender: NodeIndex,
+        recipient: NodeIndex,
+    ) -> Vec<(NetworkData, NodeIndex, NodeIndex)> {
         if self.recipient != recipient || self.sender != sender {
-            return;
+            return vec![(data, sender, recipient)];
         }
-        if let crate::NetworkData(NetworkDataInner::Units(UnitMessage::NewUnit(us))) = data {
+        if let crate::NetworkData(NetworkDataInner::Units(UnitMessage::NewUnit(us))) = &mut data {
             let full_unit = us.clone().into_signable();
             let index = full_unit.index();
             if full_unit.round() == self.round && full_unit.creator() == self.creator {
@@ -30,6 +35,7 @@ impl NetworkHook<NetworkData> for CorruptPacket {
                 *us = Signed::sign(full_unit, &bad_keychain).into();
             }
         }
+        vec![(data, sender, recipient)]
     }
 }
 
@@ -41,16 +47,22 @@ struct NoteRequest {
 }
 
 impl NetworkHook<NetworkData> for NoteRequest {
-    fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, _: NodeIndex) {
+    fn process_message(
+        &mut self,
+        data: NetworkData,
+        sender: NodeIndex,
+        recipient: NodeIndex,
+    ) -> Vec<(NetworkData, NodeIndex, NodeIndex)> {
         use NetworkDataInner::Units;
         use UnitMessage::RequestCoord;
         if sender == self.sender {
-            if let crate::NetworkData(Units(RequestCoord(_, co))) = data {
+            if let crate::NetworkData(Units(RequestCoord(_, co))) = &data {
                 if co.round() == self.round && co.creator() == self.creator {
                     *self.requested.lock() = true;
                 }
             }
         }
+        vec![(data, sender, recipient)]
     }
 }
 
@@ -63,7 +75,7 @@ async fn request_missing_coord() {
     let censoring_node = NodeIndex(1);
     let censoring_round = 5;
 
-    let (mut net_hub, networks) = Router::new(n_members, 1.0);
+    let (mut net_hub, networks) = Router::new(n_members);
     net_hub.add_hook(CorruptPacket {
         recipient: censored_node,
         sender: censoring_node,
@@ -90,7 +102,7 @@ async fn request_missing_coord() {
             exit_tx,
             handle,
             ..
-        } = spawn_honest_member(spawner, ix, n_members, vec![], network);
+        } = spawn_honest_member(spawner, ix, n_members, vec![], DataProvider::new(), network);
         batch_rxs.push(finalization_rx);
         exits.push(exit_tx);
         handles.push(handle);

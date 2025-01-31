@@ -36,6 +36,12 @@ impl DataProvider {
             n_data: Some(n_data),
         }
     }
+    pub fn new_range(start: usize, end: usize) -> Self {
+        Self {
+            counter: start,
+            n_data: Some(end),
+        }
+    }
 }
 
 #[async_trait]
@@ -43,13 +49,14 @@ impl DataProviderT for DataProvider {
     type Output = Data;
 
     async fn get_data(&mut self) -> Option<Data> {
+        let result = self.counter as u32;
         self.counter += 1;
         if let Some(n_data) = self.n_data {
             if n_data < self.counter {
                 return None;
             }
         }
-        Some(self.counter as u32)
+        Some(result)
     }
 }
 

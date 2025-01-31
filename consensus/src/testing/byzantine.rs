@@ -6,7 +6,9 @@ use crate::{
     Hasher, Network as NetworkT, NetworkData as NetworkDataT, NodeCount, NodeIndex, NodeMap,
     Recipient, Round, SessionId, Signed, SpawnHandle, TaskHandle,
 };
-use aleph_bft_mock::{Data, Hash64, Hasher64, Keychain, NetworkHook, Router, Spawner};
+use aleph_bft_mock::{
+    Data, DataProvider, Hash64, Hasher64, Keychain, NetworkHook, Router, Spawner,
+};
 use futures::{channel::oneshot, StreamExt};
 use log::{debug, error, trace};
 use parking_lot::Mutex;
@@ -230,7 +232,12 @@ impl AlertHook {
 }
 
 impl NetworkHook<NetworkData> for AlertHook {
-    fn update_state(&mut self, data: &mut NetworkData, sender: NodeIndex, recipient: NodeIndex) {
+    fn process_message(
+        &mut self,
+        data: NetworkData,
+        sender: NodeIndex,
+        recipient: NodeIndex,
+    ) -> Vec<(NetworkData, NodeIndex, NodeIndex)> {
         use crate::{alerts::AlertMessage::*, network::NetworkDataInner::*};
         if let crate::NetworkData(Alert(ForkAlert(_))) = data {
             *self
@@ -239,6 +246,7 @@ impl NetworkHook<NetworkData> for AlertHook {
                 .entry((sender, recipient))
                 .or_insert(0) += 1;
         }
+        vec![(data, sender, recipient)]
     }
 }
 
@@ -246,14 +254,13 @@ async fn honest_members_agree_on_batches_byzantine(
     n_members: NodeCount,
     n_honest: NodeCount,
     n_batches: usize,
-    network_reliability: f64,
 ) {
     init_log();
     let spawner = Spawner::new();
     let mut batch_rxs = Vec::new();
     let mut exits = Vec::new();
     let mut handles = Vec::new();
-    let (mut net_hub, networks) = Router::new(n_members, network_reliability);
+    let (mut net_hub, networks) = Router::new(n_members);
 
     let alert_hook = AlertHook::new();
     net_hub.add_hook(alert_hook.clone());
@@ -270,7 +277,7 @@ async fn honest_members_agree_on_batches_byzantine(
                 exit_tx,
                 handle,
                 ..
-            } = spawn_honest_member(spawner, ix, n_members, vec![], network);
+            } = spawn_honest_member(spawner, ix, n_members, vec![], DataProvider::new(), network);
             batch_rxs.push(finalization_rx);
             (exit_tx, handle)
         };
@@ -317,17 +324,17 @@ async fn honest_members_agree_on_batches_byzantine(
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn small_byzantine_one_forker() {
-    honest_members_agree_on_batches_byzantine(4.into(), 3.into(), 5, 1.0).await;
+    honest_members_agree_on_batches_byzantine(4.into(), 3.into(), 5).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn small_byzantine_two_forkers() {
-    honest_members_agree_on_batches_byzantine(7.into(), 5.into(), 5, 1.0).await;
+    honest_members_agree_on_batches_byzantine(7.into(), 5.into(), 5).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn medium_byzantine_ten_forkers() {
-    honest_members_agree_on_batches_byzantine(31.into(), 21.into(), 5, 1.0).await;
+    honest_members_agree_on_batches_byzantine(31.into(), 21.into(), 5).await;
 }

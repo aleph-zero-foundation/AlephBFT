@@ -1,4 +1,5 @@
 mod alerts;
+mod behind;
 mod byzantine;
 mod crash;
 mod crash_recovery;
@@ -67,9 +68,9 @@ pub fn spawn_honest_member(
     node_index: NodeIndex,
     n_members: NodeCount,
     units: Vec<u8>,
+    data_provider: DataProvider,
     network: impl 'static + NetworkT<NetworkData>,
 ) -> HonestMember {
-    let data_provider = DataProvider::new();
     let (finalization_handler, finalization_rx) = FinalizationHandler::new();
     let config = gen_config(node_index, n_members, gen_delay_config());
     let (exit_tx, exit_rx) = oneshot::channel();

@@ -80,7 +80,40 @@ pub struct Peer<D> {
 }
 
 pub trait NetworkHook<D>: Send {
-    fn update_state(&mut self, data: &mut D, sender: NodeIndex, recipient: NodeIndex);
+    fn process_message(
+        &mut self,
+        data: D,
+        sender: NodeIndex,
+        recipient: NodeIndex,
+    ) -> Vec<(D, NodeIndex, NodeIndex)>;
+}
+
+pub struct UnreliableHook {
+    reliability: f64,
+}
+
+impl UnreliableHook {
+    // reliability - a number in the range [0, 1], 1.0 means perfect reliability, 0.0 means no message gets through
+    pub fn new(reliability: f64) -> Self {
+        UnreliableHook { reliability }
+    }
+}
+
+impl<D> NetworkHook<D> for UnreliableHook {
+    fn process_message(
+        &mut self,
+        data: D,
+        sender: NodeIndex,
+        recipient: NodeIndex,
+    ) -> Vec<(D, NodeIndex, NodeIndex)> {
+        let rand_sample = rand::random::<f64>();
+        if rand_sample > self.reliability {
+            debug!("Simulated network fail.");
+            Vec::new()
+        } else {
+            vec![(data, sender, recipient)]
+        }
+    }
 }
 
 type ReconnectReceiver<D> = UnboundedReceiver<(NodeIndex, oneshot::Sender<Network<D>>)>;
@@ -91,7 +124,6 @@ pub struct Router<D: Debug> {
     peer_list: Vec<NodeIndex>,
     hook_list: RefCell<Vec<Box<dyn NetworkHook<D>>>>,
     peer_reconnect_rx: ReconnectReceiver<D>,
-    reliability: f64,
 }
 
 impl<D: Debug> Debug for Router<D> {
@@ -99,7 +131,6 @@ impl<D: Debug> Debug for Router<D> {
         f.debug_struct("Router")
             .field("peers", &self.peer_list)
             .field("hook count", &self.hook_list.borrow().len())
-            .field("reliability", &self.reliability)
             .finish()
     }
 }
@@ -107,8 +138,7 @@ impl<D: Debug> Debug for Router<D> {
 type RouterWithNetworks<D> = (Router<D>, Vec<(Network<D>, ReconnectSender<D>)>);
 
 impl<D: Debug> Router<D> {
-    // reliability - a number in the range [0, 1], 1.0 means perfect reliability, 0.0 means no message gets through
-    pub fn new(n_members: NodeCount, reliability: f64) -> RouterWithNetworks<D> {
+    pub fn new(n_members: NodeCount) -> RouterWithNetworks<D> {
         let peer_list = n_members.into_iterator().collect();
         let (reconnect_tx, peer_reconnect_rx) = unbounded();
         let mut router = Router {
@@ -116,7 +146,6 @@ impl<D: Debug> Router<D> {
             peer_list,
             hook_list: RefCell::new(Vec::new()),
             peer_reconnect_rx,
-            reliability,
         };
         let mut networks = Vec::new();
         for ix in n_members.into_iterator() {
@@ -152,10 +181,6 @@ impl<D: Debug> Router<D> {
     pub fn peer_list(&self) -> Vec<NodeIndex> {
         self.peer_list.clone()
     }
-
-    pub fn reliability(&self) -> f64 {
-        self.reliability
-    }
 }
 
 impl<D: Debug> Future for Router<D> {
@@ -168,8 +193,8 @@ impl<D: Debug> Future for Router<D> {
             loop {
                 // this call is responsible for waking this Future
                 match peer.rx.poll_next_unpin(cx) {
-                    Poll::Ready(Some(msg)) => {
-                        buffer.push((*peer_id, msg));
+                    Poll::Ready(Some((data, recipient))) => {
+                        buffer.push((data, *peer_id, recipient));
                     }
                     Poll::Ready(None) => {
                         disconnected_peers.push(*peer_id);
@@ -200,17 +225,16 @@ impl<D: Debug> Future for Router<D> {
                 }
             }
         }
-        for (sender, (mut data, recipient)) in buffer {
-            let rand_sample = rand::random::<f64>();
-            if rand_sample > this.reliability {
-                debug!("Simulated network fail.");
-                continue;
+        let mut new_buffer = Vec::new();
+        for hook in this.hook_list.borrow_mut().iter_mut() {
+            for (data, sender, recipient) in buffer {
+                new_buffer.append(&mut hook.process_message(data, sender, recipient));
             }
-
+            buffer = new_buffer;
+            new_buffer = Vec::new();
+        }
+        for (data, sender, recipient) in buffer {
             if let Some(peer) = this.peers.borrow().get(&recipient) {
-                for hook in this.hook_list.borrow_mut().iter_mut() {
-                    hook.update_state(&mut data, sender, recipient)
-                }
                 peer.tx.unbounded_send((data, sender)).ok();
             }
         }

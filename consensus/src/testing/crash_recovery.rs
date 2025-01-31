@@ -3,7 +3,7 @@ use crate::{
     units::{UncheckedSignedUnit, Unit, UnitCoord},
     NodeCount, NodeIndex, SpawnHandle, TaskHandle,
 };
-use aleph_bft_mock::{Data, Hasher64, Router, Signature, Spawner};
+use aleph_bft_mock::{Data, DataProvider, Hasher64, Router, Signature, Spawner};
 use codec::Decode;
 use futures::{
     channel::{mpsc, oneshot},
@@ -67,7 +67,14 @@ fn connect_nodes(
                 saved_state,
                 exit_tx,
                 handle,
-            } = spawn_honest_member(*spawner, ix, n_members, vec![], network);
+            } = spawn_honest_member(
+                *spawner,
+                ix,
+                n_members,
+                vec![],
+                DataProvider::new(),
+                network,
+            );
             (
                 ix,
                 NodeData {
@@ -109,7 +116,14 @@ async fn reconnect_nodes(
             saved_state,
             exit_tx,
             handle,
-        } = spawn_honest_member(*spawner, *node_id, n_members, saved_units.clone(), network);
+        } = spawn_honest_member(
+            *spawner,
+            *node_id,
+            n_members,
+            saved_units.clone(),
+            DataProvider::new(),
+            network,
+        );
         reconnected_nodes.push((
             *node_id,
             NodeData {
@@ -166,7 +180,7 @@ async fn crashed_nodes_recover(n_members: NodeCount, n_batches: usize) {
 
     let n_kill = (n_members - n_members.consensus_threshold()) + 1.into();
     let spawner = Spawner::new();
-    let (net_hub, networks) = Router::new(n_members, 1.0);
+    let (net_hub, networks) = Router::new(n_members);
     spawner.spawn("network-hub", net_hub);
 
     let mut node_data = connect_nodes(&spawner, n_members, networks);
@@ -239,7 +253,7 @@ async fn saves_units_properly() {
     let n_batches = 2;
     let n_members = NodeCount(4);
     let spawner = Spawner::new();
-    let (net_hub, networks) = Router::new(n_members, 1.0);
+    let (net_hub, networks) = Router::new(n_members);
     spawner.spawn("network-hub", net_hub);
 
     let mut node_data = connect_nodes(&spawner, n_members, networks);

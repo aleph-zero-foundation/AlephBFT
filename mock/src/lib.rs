@@ -11,5 +11,6 @@ pub use dataio::{Data, DataProvider, FinalizationHandler, Loader, Saver, Stalled
 pub use hasher::{Hash64, Hasher64};
 pub use network::{
     Network, NetworkHook, NetworkReceiver, NetworkSender, Peer, ReconnectSender, Router,
+    UnreliableHook,
 };
 pub use spawner::Spawner;
