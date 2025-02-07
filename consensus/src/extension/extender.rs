@@ -70,7 +70,7 @@ impl<U: UnitWithParents> Extender<U> {
 
 #[cfg(test)]
 mod test {
-    use crate::units::{minimal_reconstructed_dag_units_up_to, Unit};
+    use crate::units::{minimal_reconstructed_dag_units_up_to, Unit, UnitWithParents};
     use crate::{
         extension::extender::Extender, units::random_full_parent_reconstrusted_units_up_to,
         NodeCount, Round,
@@ -104,7 +104,7 @@ mod test {
         let mut extender = Extender::new();
         let n_members = NodeCount(4);
         let threshold = n_members.consensus_threshold();
-        let max_round: Round = 4;
+        let max_round: Round = 11;
         let session_id = 2137;
         let keychains = Keychain::new_vec(n_members);
         let mut batches = Vec::new();
@@ -119,7 +119,11 @@ mod test {
         assert_eq!(batches[0].len(), 1);
         assert_eq!(batches[0][0].round(), 0);
         for batch in batches.iter().skip(1) {
-            assert_eq!(batch.len(), threshold.0);
+            assert!(batch.len() == threshold.0 || batch.len() == n_members.0);
+            if batch.len() == n_members.0 {
+                // the batch that should have ancient unit
+                assert!(batch.iter().any(|unit| unit.parents().count() == 0));
+            }
         }
     }
 }

@@ -251,7 +251,7 @@ pub fn minimal_reconstructed_dag_units_up_to(
             .choose_multiple(&mut rng, threshold)
             .into_iter()
             .collect();
-        if r == round {
+        if r == round / 2 {
             let ancestor_unit = dag
                 .first()
                 .expect("first round present")
