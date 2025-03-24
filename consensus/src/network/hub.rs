@@ -1,7 +1,6 @@
 use crate::{
     alerts::AlertMessage,
-    member::UnitMessage,
-    network::{NetworkData, NetworkDataInner},
+    network::{NetworkData, NetworkDataInner, UnitMessage},
     Data, Hasher, Network, PartialMultisignature, Receiver, Recipient, Sender, Signature,
     Terminator,
 };

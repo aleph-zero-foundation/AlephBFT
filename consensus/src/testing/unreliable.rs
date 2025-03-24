@@ -1,6 +1,6 @@
 use crate::{
-    member::UnitMessage,
     network::NetworkDataInner,
+    network::UnitMessage,
     testing::{init_log, spawn_honest_member, HonestMember, NetworkData},
     units::Unit,
     Index, NodeCount, NodeIndex, Round, Signed, SpawnHandle,
@@ -27,7 +27,7 @@ impl NetworkHook<NetworkData> for CorruptPacket {
         if self.recipient != recipient || self.sender != sender {
             return vec![(data, sender, recipient)];
         }
-        if let crate::NetworkData(NetworkDataInner::Units(UnitMessage::NewUnit(us))) = &mut data {
+        if let crate::NetworkData(NetworkDataInner::Units(UnitMessage::Unit(us))) = &mut data {
             let full_unit = us.clone().into_signable();
             let index = full_unit.index();
             if full_unit.round() == self.round && full_unit.creator() == self.creator {
@@ -54,9 +54,9 @@ impl NetworkHook<NetworkData> for NoteRequest {
         recipient: NodeIndex,
     ) -> Vec<(NetworkData, NodeIndex, NodeIndex)> {
         use NetworkDataInner::Units;
-        use UnitMessage::RequestCoord;
+        use UnitMessage::CoordRequest;
         if sender == self.sender {
-            if let crate::NetworkData(Units(RequestCoord(_, co))) = &data {
+            if let crate::NetworkData(Units(CoordRequest(_, co))) = &data {
                 if co.round() == self.round && co.creator() == self.creator {
                     *self.requested.lock() = true;
                 }

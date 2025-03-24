@@ -1,12 +1,12 @@
-use crate::{
-    alerts::AlertMessage, member::UnitMessage, Data, Hasher, PartialMultisignature, Signature,
-};
+use crate::{alerts::AlertMessage, Data, Hasher, PartialMultisignature, Signature};
 use codec::{Decode, Encode};
 use std::fmt::Debug;
 
 mod hub;
+mod unit;
 
 pub use hub::Hub;
+pub use unit::UnitMessage;
 
 #[derive(Clone, Eq, PartialEq, Debug, Decode, Encode)]
 pub(crate) enum NetworkDataInner<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> {
@@ -43,8 +43,10 @@ impl<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> NetworkData<H,
 mod tests {
     use crate::{
         alerts::AlertMessage,
-        member::UnitMessage,
-        network::NetworkDataInner::{Alert, Units},
+        network::{
+            NetworkDataInner::{Alert, Units},
+            UnitMessage,
+        },
         units::{ControlHash, FullUnit, PreUnit, UncheckedSignedUnit, UnitCoord},
         Hasher, NodeIndex, Round, Signed,
     };
@@ -74,101 +76,75 @@ mod tests {
 
     #[test]
     fn decoding_network_data_units_new_unit() {
-        use UnitMessage::NewUnit;
+        use UnitMessage::Unit;
 
         let uu = test_unchecked_unit(5.into(), 43, 1729);
         let included_data = uu.as_signable().included_data();
-        let nd = TestNetworkData::new(Units(NewUnit(uu.clone())));
+        let nd = TestNetworkData::new(Units(Unit(uu.clone())));
         let decoded = TestNetworkData::decode(&mut &nd.encode()[..]);
-        assert!(decoded.is_ok(), "Bug in encode/decode for NewUnit");
+        assert!(decoded.is_ok(), "Bug in encode/decode for Unit");
         let decoded = decoded.unwrap();
         assert_eq!(
             decoded.included_data(),
             included_data,
             "data decoded incorrectly"
         );
-        if let Units(NewUnit(decoded_unchecked)) = decoded.0 {
+        if let Units(Unit(decoded_unchecked)) = decoded.0 {
             assert_eq!(
                 uu.as_signable(),
                 decoded_unchecked.as_signable(),
                 "decoded should equal encoded"
             );
         } else {
-            panic!("Decoded NewUnit as something else");
+            panic!("Decoded Unit as something else");
         }
     }
 
     #[test]
     fn decoding_network_data_units_request_coord() {
-        use UnitMessage::RequestCoord;
+        use UnitMessage::CoordRequest;
 
         let ni = 7.into();
         let uc = UnitCoord::new(3, 13.into());
-        let nd = TestNetworkData::new(Units(RequestCoord(ni, uc)));
+        let nd = TestNetworkData::new(Units(CoordRequest(ni, uc)));
         let decoded = TestNetworkData::decode(&mut &nd.encode()[..]);
-        assert!(decoded.is_ok(), "Bug in encode/decode for RequestCoord");
+        assert!(decoded.is_ok(), "Bug in encode/decode for CoordRequest");
         let decoded = decoded.unwrap();
         assert!(
             decoded.included_data().is_empty(),
             "data returned from a coord request"
         );
-        if let Units(RequestCoord(dni, duc)) = decoded.0 {
+        if let Units(CoordRequest(dni, duc)) = decoded.0 {
             assert!(ni == dni && uc == duc, "decoded should equal encoded");
         } else {
-            panic!("Decoded RequestCoord as something else");
-        }
-    }
-
-    #[test]
-    fn decoding_network_data_units_response_coord() {
-        use UnitMessage::ResponseCoord;
-
-        let uu = test_unchecked_unit(5.into(), 43, 1729);
-        let included_data = uu.as_signable().included_data();
-        let nd = TestNetworkData::new(Units(ResponseCoord(uu.clone())));
-        let decoded = TestNetworkData::decode(&mut &nd.encode()[..]);
-        assert!(decoded.is_ok(), "Bug in encode/decode for ResponseCoord");
-        let decoded = decoded.unwrap();
-        assert_eq!(
-            decoded.included_data(),
-            included_data,
-            "data decoded incorrectly"
-        );
-        if let Units(ResponseCoord(decoded_unchecked)) = decoded.0 {
-            assert_eq!(
-                uu.as_signable(),
-                decoded_unchecked.as_signable(),
-                "decoded should equal encoded"
-            );
-        } else {
-            panic!("Decoded ResponseCoord as something else");
+            panic!("Decoded CoordRequest as something else");
         }
     }
 
     #[test]
     fn decoding_network_data_units_request_parents() {
-        use UnitMessage::RequestParents;
+        use UnitMessage::ParentsRequest;
 
         let ni = 7.into();
         let h = 43.using_encoded(Hasher64::hash);
-        let nd = TestNetworkData::new(Units(RequestParents(ni, h)));
+        let nd = TestNetworkData::new(Units(ParentsRequest(ni, h)));
         let decoded = TestNetworkData::decode(&mut &nd.encode()[..]);
-        assert!(decoded.is_ok(), "Bug in encode/decode for RequestParents");
+        assert!(decoded.is_ok(), "Bug in encode/decode for ParentsRequest");
         let decoded = decoded.unwrap();
         assert!(
             decoded.included_data().is_empty(),
             "data returned from a parent request"
         );
-        if let Units(RequestParents(dni, dh)) = decoded.0 {
+        if let Units(ParentsRequest(dni, dh)) = decoded.0 {
             assert!(ni == dni && h == dh, "decoded should equal encoded");
         } else {
-            panic!("Decoded RequestParents as something else");
+            panic!("Decoded ParentsRequest as something else");
         }
     }
 
     #[test]
     fn decoding_network_data_units_response_parents() {
-        use UnitMessage::ResponseParents;
+        use UnitMessage::ParentsResponse;
 
         let h = 43.using_encoded(Hasher64::hash);
         let p1 = test_unchecked_unit(5.into(), 43, 1729);
@@ -183,16 +159,16 @@ mod tests {
             .collect();
         let parents = vec![p1, p2, p3];
 
-        let nd = TestNetworkData::new(Units(ResponseParents(h, parents.clone())));
+        let nd = TestNetworkData::new(Units(ParentsResponse(h, parents.clone())));
         let decoded = TestNetworkData::decode(&mut &nd.encode()[..]);
-        assert!(decoded.is_ok(), "Bug in encode/decode for ResponseParents");
+        assert!(decoded.is_ok(), "Bug in encode/decode for ParentsResponse");
         let decoded = decoded.unwrap();
         assert_eq!(
             decoded.included_data(),
             included_data,
             "data decoded incorrectly"
         );
-        if let Units(ResponseParents(dh, dparents)) = decoded.0 {
+        if let Units(ParentsResponse(dh, dparents)) = decoded.0 {
             assert_eq!(h, dh, "decoded should equal encoded");
             assert_eq!(
                 parents.len(),
@@ -207,7 +183,7 @@ mod tests {
                 );
             }
         } else {
-            panic!("Decoded ResponseParents as something else");
+            panic!("Decoded ParentsResponse as something else");
         }
     }
 

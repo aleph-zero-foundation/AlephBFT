@@ -131,7 +131,7 @@ impl<D: Data, H: Hasher, K: MultiKeychain> From<ReconstructedUnit<Signed<FullUni
 }
 
 /// What we need to request to reconstruct units.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub enum Request<H: Hasher> {
     /// We need a unit at this coordinate.
     Coord(UnitCoord),

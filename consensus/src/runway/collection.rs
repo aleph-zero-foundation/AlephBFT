@@ -1,5 +1,5 @@
 use crate::{
-    runway::Request,
+    dissemination::DisseminationRequest,
     units::{UncheckedSignedUnit, Unit, ValidationError, Validator},
     Data, Hasher, Keychain, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Signable,
     Signature, SignatureError, UncheckedSigned,
@@ -70,11 +70,6 @@ impl<H: Hasher, D: Data, S: Signature> NewestUnitResponse<H, D, S> {
             Some(u) => u.as_signable().included_data(),
             None => Vec::new(),
         }
-    }
-
-    /// Who requested this response.
-    pub fn requester(&self) -> NodeIndex {
-        self.requester
     }
 }
 
@@ -223,7 +218,7 @@ type ResponsesFromNetwork<H, D, MK> = UncheckedSigned<
 pub struct IO<'a, H: Hasher, D: Data, MK: Keychain> {
     round_for_creator: oneshot::Sender<Round>,
     responses_from_network: Receiver<ResponsesFromNetwork<H, D, MK>>,
-    resolved_requests: Sender<Request<H>>,
+    resolved_requests: Sender<DisseminationRequest<H>>,
     collection: Collection<'a, MK>,
 }
 
@@ -232,7 +227,7 @@ impl<'a, H: Hasher, D: Data, MK: Keychain> IO<'a, H, D, MK> {
     pub fn new(
         round_for_creator: oneshot::Sender<Round>,
         responses_from_network: Receiver<ResponsesFromNetwork<H, D, MK>>,
-        resolved_requests: Sender<Request<H>>,
+        resolved_requests: Sender<DisseminationRequest<H>>,
         collection: Collection<'a, MK>,
     ) -> Self {
         IO {
@@ -247,10 +242,13 @@ impl<'a, H: Hasher, D: Data, MK: Keychain> IO<'a, H, D, MK> {
         if self.round_for_creator.send(round).is_err() {
             error!(target: "AlephBFT-runway", "unable to send starting round to creator");
         }
-        if let Err(e) = self.resolved_requests.unbounded_send(Request::NewestUnit(
-            self.collection.index(),
-            self.collection.salt(),
-        )) {
+        if let Err(e) = self
+            .resolved_requests
+            .unbounded_send(DisseminationRequest::NewestUnit(
+                self.collection.index(),
+                self.collection.salt(),
+            ))
+        {
             warn!(target: "AlephBFT-runway", "unable to send resolved request:  {}", e);
         }
         info!(target: "AlephBFT-runway", "Finished initial unit collection with status: {:?}", self.collection.status());

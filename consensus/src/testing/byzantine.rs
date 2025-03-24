@@ -1,6 +1,6 @@
 use crate::{
-    member::UnitMessage::NewUnit,
     network::NetworkDataInner::Units,
+    network::UnitMessage,
     testing::{init_log, spawn_honest_member, HonestMember, Network, NetworkData},
     units::{ControlHash, FullUnit, PreUnit, SignedUnit, Unit, UnitCoord},
     Hasher, Network as NetworkT, NetworkData as NetworkDataT, NodeCount, NodeIndex, NodeMap,
@@ -46,7 +46,7 @@ impl<'a> MaliciousMember<'a> {
     }
 
     fn unit_to_data(su: SignedUnit<Hasher64, Data, Keychain>) -> NetworkData {
-        NetworkDataT(Units(NewUnit(su.into())))
+        NetworkDataT(Units(UnitMessage::Unit(su.into())))
     }
 
     fn threshold(&self) -> NodeCount {
@@ -148,7 +148,7 @@ impl<'a> MaliciousMember<'a> {
 
     fn on_network_data(&mut self, data: NetworkData) {
         // We ignore all messages except those carrying new units.
-        if let NetworkDataT(Units(NewUnit(unchecked))) = data {
+        if let NetworkDataT(Units(UnitMessage::Unit(unchecked))) = data {
             trace!(target: "malicious-member", "New unit received {:?}.", &unchecked);
             match unchecked.check(self.keychain) {
                 Ok(su) => self.on_unit_received(su),
