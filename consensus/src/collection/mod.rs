@@ -1,8 +1,9 @@
 use crate::{
-    dissemination::DisseminationRequest,
+    config::DelaySchedule,
+    dissemination::{Addressed, DisseminationMessage},
     units::{UncheckedSignedUnit, Unit, ValidationError, Validator},
-    Data, Hasher, Keychain, NodeCount, NodeIndex, NodeMap, Receiver, Round, Sender, Signable,
-    Signature, SignatureError, UncheckedSigned,
+    Data, Hasher, Keychain, NodeCount, NodeIndex, NodeMap, Receiver, Recipient, Round, Sender,
+    Signable, Signature, SignatureError, UncheckedSigned,
 };
 use codec::{Decode, Encode};
 use futures::{channel::oneshot, FutureExt, StreamExt};
@@ -15,6 +16,8 @@ use std::{
     hash::{Hash, Hasher as _},
     time::Duration,
 };
+
+const LOG_TARGET: &str = "AlephBFT-collection";
 
 /// Salt uniquely identifying an initial unit collection instance.
 pub type Salt = u64;
@@ -134,19 +137,16 @@ pub struct Collection<'a, MK: Keychain> {
 impl<'a, MK: Keychain> Collection<'a, MK> {
     /// Create a new collection instance ready to collect responses.
     /// The returned salt should be used to initiate newest unit requests.
-    pub fn new(keychain: &'a MK, validator: &'a Validator<MK>) -> (Self, Salt) {
+    pub fn new(keychain: &'a MK, validator: &'a Validator<MK>) -> Self {
         let salt = generate_salt();
         let mut collected_starting_rounds = NodeMap::with_size(keychain.node_count());
         collected_starting_rounds.insert(keychain.index(), 0);
-        (
-            Collection {
-                keychain,
-                validator,
-                collected_starting_rounds,
-                salt,
-            },
+        Collection {
+            keychain,
+            validator,
+            collected_starting_rounds,
             salt,
-        )
+        }
     }
 
     fn index(&self) -> NodeIndex {
@@ -178,7 +178,7 @@ impl<'a, MK: Keychain> Collection<'a, MK> {
             .get(response.responder)
             .unwrap_or(&round);
         if current_round != round {
-            debug!(target: "AlephBFT-runway", "Node {} responded with starting unit {}, but now says {}", response.responder.0, current_round, round);
+            debug!(target: LOG_TARGET, "Node {} responded with starting unit {}, but now says {}", response.responder.0, current_round, round);
         }
         self.collected_starting_rounds
             .insert(response.responder, max(current_round, round));
@@ -192,6 +192,25 @@ impl<'a, MK: Keychain> Collection<'a, MK> {
 
     fn threshold(&self) -> NodeCount {
         self.collected_starting_rounds.size().consensus_threshold()
+    }
+
+    fn missing_responders(&self) -> Vec<Recipient> {
+        self.collected_starting_rounds
+            .to_subset()
+            .complement()
+            .elements()
+            .map(Recipient::Node)
+            .collect()
+    }
+
+    /// Returns a request addressed to the appropriate nodes.
+    pub fn prepare_request<H: Hasher, D: Data>(
+        &self,
+    ) -> Addressed<DisseminationMessage<H, D, MK::Signature>> {
+        Addressed::new(
+            DisseminationMessage::NewestUnitRequest(self.index(), self.salt()),
+            self.missing_responders(),
+        )
     }
 
     /// The current status of the collection.
@@ -218,8 +237,9 @@ type ResponsesFromNetwork<H, D, MK> = UncheckedSigned<
 pub struct IO<'a, H: Hasher, D: Data, MK: Keychain> {
     round_for_creator: oneshot::Sender<Round>,
     responses_from_network: Receiver<ResponsesFromNetwork<H, D, MK>>,
-    resolved_requests: Sender<DisseminationRequest<H>>,
+    requests_for_network: Sender<Addressed<DisseminationMessage<H, D, MK::Signature>>>,
     collection: Collection<'a, MK>,
+    request_delay: DelaySchedule,
 }
 
 impl<'a, H: Hasher, D: Data, MK: Keychain> IO<'a, H, D, MK> {
@@ -227,35 +247,37 @@ impl<'a, H: Hasher, D: Data, MK: Keychain> IO<'a, H, D, MK> {
     pub fn new(
         round_for_creator: oneshot::Sender<Round>,
         responses_from_network: Receiver<ResponsesFromNetwork<H, D, MK>>,
-        resolved_requests: Sender<DisseminationRequest<H>>,
+        requests_for_network: Sender<Addressed<DisseminationMessage<H, D, MK::Signature>>>,
         collection: Collection<'a, MK>,
+        request_delay: DelaySchedule,
     ) -> Self {
         IO {
             round_for_creator,
             responses_from_network,
-            resolved_requests,
+            requests_for_network,
             collection,
+            request_delay,
         }
     }
 
     fn finish(self, round: Round) {
         if self.round_for_creator.send(round).is_err() {
-            error!(target: "AlephBFT-runway", "unable to send starting round to creator");
+            error!(target: LOG_TARGET, "unable to send starting round to creator");
         }
-        if let Err(e) = self
-            .resolved_requests
-            .unbounded_send(DisseminationRequest::NewestUnit(
-                self.collection.index(),
-                self.collection.salt(),
-            ))
-        {
-            warn!(target: "AlephBFT-runway", "unable to send resolved request:  {}", e);
-        }
-        info!(target: "AlephBFT-runway", "Finished initial unit collection with status: {:?}", self.collection.status());
+        info!(target: LOG_TARGET, "Finished initial unit collection with status: {:?}", self.collection.status());
     }
 
     fn status_report(&self) {
-        info!(target: "AlephBFT-runway", "Initial unit collection status report: status - {:?}, collected starting rounds - {}", self.collection.status(), self.collection.collected_starting_rounds);
+        info!(target: LOG_TARGET, "Initial unit collection status report: status - {:?}, collected starting rounds - {}", self.collection.status(), self.collection.collected_starting_rounds);
+    }
+
+    fn send_request(&self) {
+        if let Err(e) = self
+            .requests_for_network
+            .unbounded_send(self.collection.prepare_request())
+        {
+            warn!(target: LOG_TARGET, "unable to send request:  {}", e);
+        }
     }
 
     /// Run the initial unit collection until it sends the initial round.
@@ -267,14 +289,18 @@ impl<'a, H: Hasher, D: Data, MK: Keychain> IO<'a, H, D, MK> {
         let status_ticker_delay = Duration::from_secs(10);
         let mut status_ticker = Delay::new(status_ticker_delay).fuse();
 
+        let mut request_counter = 0;
+        let mut request_ticker = Delay::new((self.request_delay)(request_counter)).fuse();
+        self.send_request();
+
         loop {
             futures::select! {
                 response = self.responses_from_network.next() => {
                     let response = match response {
                         Some(response) => response,
                         None => {
-                            warn!(target: "AlephBFT-runway", "Response channel closed.");
-                            info!(target: "AlephBFT-runway", "Finished initial unit collection with status: {:?}", self.collection.status());
+                            warn!(target: LOG_TARGET, "Response channel closed.");
+                            info!(target: LOG_TARGET, "Finished initial unit collection with status: {:?}", self.collection.status());
                             return;
                         }
                     };
@@ -288,19 +314,24 @@ impl<'a, H: Hasher, D: Data, MK: Keychain> IO<'a, H, D, MK> {
                             self.finish(round);
                             return;
                         },
-                        Err(e) => warn!(target: "AlephBFT-runway", "Received wrong newest unit response: {}", e),
+                        Err(e) => warn!(target: LOG_TARGET, "Received wrong newest unit response: {}", e),
                     }
                 },
                 _ = catch_up_delay => match self.collection.status() {
                     Pending => {
                         delay_passed = true;
-                        debug!(target: "AlephBFT-runway", "Catch up delay passed.");
+                        debug!(target: LOG_TARGET, "Catch up delay passed.");
                         self.status_report();
                     },
                     Ready(round) | Finished(round)  => {
                         self.finish(round);
                         return;
                     },
+                },
+                _ = &mut request_ticker => {
+                    request_counter += 1;
+                    request_ticker = Delay::new((self.request_delay)(request_counter)).fuse();
+                    self.send_request();
                 },
                 _ = &mut status_ticker => {
                     self.status_report();
@@ -315,10 +346,11 @@ impl<'a, H: Hasher, D: Data, MK: Keychain> IO<'a, H, D, MK> {
 mod tests {
     use super::{
         Collection as GenericCollection, Error, NewestUnitResponse as GenericNewestUnitResponse,
-        Salt, Status::*,
+        Status::*,
     };
     use crate::{
         creation::Creator as GenericCreator,
+        dissemination::DisseminationMessage,
         units::{
             FullUnit as GenericFullUnit, PreUnit as GenericPreUnit,
             UncheckedSignedUnit as GenericUncheckedSignedUnit, Validator as GenericValidator,
@@ -347,9 +379,12 @@ mod tests {
 
     fn create_responses<'a, R: Iterator<Item = (&'a Keychain, Option<UncheckedSignedUnit>)>>(
         presponses: R,
-        salt: Salt,
-        requester: NodeIndex,
+        request: DisseminationMessage<Hasher64, Data, Signature>,
     ) -> Vec<UncheckedSignedNewestUnitResponse> {
+        let (requester, salt) = match request {
+            DisseminationMessage::NewestUnitRequest(requester, salt) => (requester, salt),
+            _ => panic!("Cannot create newest unit response for a non-request."),
+        };
         let mut result = Vec::new();
         for (keychain, maybe_unit) in presponses {
             let response = NewestUnitResponse::new(requester, keychain.index(), maybe_unit, salt);
@@ -376,67 +411,78 @@ mod tests {
         let max_round = 2;
         let keychain = Keychain::new(n_members, creator_id);
         let validator = Validator::new(session_id, keychain, max_round);
-        let (collection, _) = Collection::new(&keychain, &validator);
+        let collection = Collection::new(&keychain, &validator);
         assert_eq!(collection.status(), Pending);
+        assert_eq!(
+            collection
+                .prepare_request::<Hasher64, Data>()
+                .recipients()
+                .len(),
+            n_members.0 - 1
+        );
     }
 
     #[test]
     fn pending_with_too_few_messages() {
         let n_members = NodeCount(7);
-        let creator_id = NodeIndex(0);
         let session_id = 0;
         let max_round = 2;
         let keychains = keychain_set(n_members);
         let keychain = &keychains[0];
         let validator = Validator::new(session_id, *keychain, max_round);
-        let (mut collection, salt) = Collection::new(keychain, &validator);
-        let responses = create_responses(
-            keychains.iter().skip(1).take(3).zip(repeat(None)),
-            salt,
-            creator_id,
-        );
+        let mut collection = Collection::new(keychain, &validator);
+        let request = collection.prepare_request().message().clone();
+        let responses =
+            create_responses(keychains.iter().skip(1).take(3).zip(repeat(None)), request);
         for response in responses {
             assert_eq!(collection.on_newest_response(response), Ok(Pending));
         }
         assert_eq!(collection.status(), Pending);
+        assert_eq!(
+            collection
+                .prepare_request::<Hasher64, Data>()
+                .recipients()
+                .len(),
+            3
+        );
     }
 
     #[test]
     fn pending_with_repeated_messages() {
         let n_members = NodeCount(7);
-        let creator_id = NodeIndex(0);
         let session_id = 0;
         let max_round = 2;
         let keychains = keychain_set(n_members);
         let keychain = &keychains[0];
         let validator = Validator::new(session_id, *keychain, max_round);
-        let (mut collection, salt) = Collection::new(keychain, &validator);
-        let responses = create_responses(
-            repeat(&keychains[1]).take(43).zip(repeat(None)),
-            salt,
-            creator_id,
-        );
+        let mut collection = Collection::new(keychain, &validator);
+        let request = collection.prepare_request().message().clone();
+        let responses = create_responses(repeat(&keychains[1]).take(43).zip(repeat(None)), request);
         for response in responses {
             assert_eq!(collection.on_newest_response(response), Ok(Pending));
         }
         assert_eq!(collection.status(), Pending);
+        assert_eq!(
+            collection
+                .prepare_request::<Hasher64, Data>()
+                .recipients()
+                .len(),
+            5
+        );
     }
 
     #[test]
     fn ready_with_just_enough_messages() {
         let n_members = NodeCount(7);
-        let creator_id = NodeIndex(0);
         let session_id = 0;
         let max_round = 2;
         let keychains = keychain_set(n_members);
         let keychain = &keychains[0];
         let validator = Validator::new(session_id, *keychain, max_round);
-        let (mut collection, salt) = Collection::new(keychain, &validator);
-        let responses = create_responses(
-            keychains.iter().skip(1).take(4).zip(repeat(None)),
-            salt,
-            creator_id,
-        );
+        let mut collection = Collection::new(keychain, &validator);
+        let request = collection.prepare_request().message().clone();
+        let responses =
+            create_responses(keychains.iter().skip(1).take(4).zip(repeat(None)), request);
         for response in responses.iter().take(3) {
             assert_eq!(collection.on_newest_response(response.clone()), Ok(Pending));
         }
@@ -445,6 +491,13 @@ mod tests {
             Ok(Ready(0))
         );
         assert_eq!(collection.status(), Ready(0));
+        assert_eq!(
+            collection
+                .prepare_request::<Hasher64, Data>()
+                .recipients()
+                .len(),
+            2
+        );
     }
 
     #[test]
@@ -457,7 +510,8 @@ mod tests {
         let keychain = &keychains[0];
         let creator = Creator::new(creator_id, n_members);
         let validator = Validator::new(session_id, *keychain, max_round);
-        let (mut collection, salt) = Collection::new(keychain, &validator);
+        let mut collection = Collection::new(keychain, &validator);
+        let request = collection.prepare_request().message().clone();
         let preunit = creator.create_unit(0).expect("Creation should succeed.");
         let unit = preunit_to_unchecked_signed_unit(preunit, session_id, keychain);
         let responses = create_responses(
@@ -465,8 +519,7 @@ mod tests {
                 .iter()
                 .skip(1)
                 .zip(repeat(None).take(5).chain(once(Some(unit)))),
-            salt,
-            creator_id,
+            request,
         );
         for response in responses.iter().take(3) {
             assert_eq!(collection.on_newest_response(response.clone()), Ok(Pending));
@@ -487,24 +540,31 @@ mod tests {
     #[test]
     fn detects_salt_mismatch() {
         let n_members = NodeCount(7);
-        let creator_id = NodeIndex(0);
         let session_id = 0;
         let max_round = 2;
         let keychains = keychain_set(n_members);
         let keychain = &keychains[0];
         let validator = Validator::new(session_id, *keychain, max_round);
-        let (mut collection, salt) = Collection::new(keychain, &validator);
-        let other_salt = salt + 1;
+        let mut collection = Collection::new(keychain, &validator);
+        let request = collection
+            .prepare_request::<Hasher64, Data>()
+            .message()
+            .clone();
+        let wrong_salt_request = match request {
+            DisseminationMessage::NewestUnitRequest(requester, salt) => {
+                DisseminationMessage::NewestUnitRequest(requester, salt + 1)
+            }
+            _ => unreachable!("Just created the above variant."),
+        };
         let responses = create_responses(
             keychains.iter().skip(1).zip(repeat(None)),
-            other_salt,
-            creator_id,
+            wrong_salt_request,
         );
         for response in responses {
-            assert_eq!(
+            assert!(matches!(
                 collection.on_newest_response(response),
-                Err(Error::SaltMismatch(salt, other_salt))
-            );
+                Err(Error::SaltMismatch(_, _))
+            ));
         }
         assert_eq!(collection.status(), Pending);
     }
@@ -520,14 +580,11 @@ mod tests {
         let keychain = &keychains[0];
         let creator = Creator::new(creator_id, n_members);
         let validator = Validator::new(session_id, *keychain, max_round);
-        let (mut collection, salt) = Collection::new(keychain, &validator);
+        let mut collection = Collection::new(keychain, &validator);
+        let request = collection.prepare_request().message().clone();
         let preunit = creator.create_unit(0).expect("Creation should succeed.");
         let unit = preunit_to_unchecked_signed_unit(preunit, wrong_session_id, keychain);
-        let responses = create_responses(
-            keychains.iter().skip(1).zip(repeat(Some(unit))),
-            salt,
-            creator_id,
-        );
+        let responses = create_responses(keychains.iter().skip(1).zip(repeat(Some(unit))), request);
         for response in responses {
             match collection.on_newest_response(response) {
                 Err(Error::InvalidUnit(_)) => (),
@@ -540,7 +597,6 @@ mod tests {
     #[test]
     fn detects_foreign_unit() {
         let n_members = NodeCount(7);
-        let creator_id = NodeIndex(0);
         let other_creator_id = NodeIndex(1);
         let session_id = 0;
         let max_round = 2;
@@ -548,14 +604,11 @@ mod tests {
         let keychain = &keychains[0];
         let creator = Creator::new(other_creator_id, n_members);
         let validator = Validator::new(session_id, *keychain, max_round);
-        let (mut collection, salt) = Collection::new(keychain, &validator);
+        let mut collection = Collection::new(keychain, &validator);
+        let request = collection.prepare_request().message().clone();
         let preunit = creator.create_unit(0).expect("Creation should succeed.");
         let unit = preunit_to_unchecked_signed_unit(preunit, session_id, &keychains[1]);
-        let responses = create_responses(
-            keychains.iter().skip(1).zip(repeat(Some(unit))),
-            salt,
-            creator_id,
-        );
+        let responses = create_responses(keychains.iter().skip(1).zip(repeat(Some(unit))), request);
         for response in responses {
             assert_eq!(
                 collection.on_newest_response(response),

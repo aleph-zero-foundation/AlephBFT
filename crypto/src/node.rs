@@ -237,6 +237,12 @@ impl NodeSubset {
             .filter_map(|(i, b)| if b { Some(i.into()) } else { None })
     }
 
+    pub fn complement(&self) -> NodeSubset {
+        let mut result = self.0.clone();
+        result.negate();
+        NodeSubset(result)
+    }
+
     pub fn len(&self) -> usize {
         self.elements().count()
     }

@@ -1,7 +1,7 @@
 use crate::{
+    collection::{NewestUnitResponse, Salt},
     dag::{DagUnit, Request},
-    dissemination::{DisseminationRequest, DisseminationResponse},
-    runway::{NewestUnitResponse, Salt},
+    dissemination::DisseminationResponse,
     units::{UnitCoord, UnitStore, UnitWithParents, WrappedUnit},
     Data, Hasher, MultiKeychain, NodeIndex, Signed,
 };
@@ -91,17 +91,24 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Responder<H, D, MK> {
     /// aren't able to help.
     pub fn handle_request(
         &self,
-        request: DisseminationRequest<H>,
+        request: Request<H>,
         units: &UnitStore<DagUnit<H, D, MK>>,
     ) -> Result<DisseminationResponse<H, D, MK::Signature>, Error<H>> {
-        use DisseminationRequest::*;
+        use Request::*;
         match request {
-            Unit(unit_request) => match unit_request {
-                Request::Coord(coord) => self.on_request_coord(coord, units),
-                Request::ParentsOf(hash) => self.on_request_parents(hash, units),
-            },
-            NewestUnit(node_id, salt) => Ok(self.on_request_newest(node_id, salt, units)),
+            Coord(coord) => self.on_request_coord(coord, units),
+            ParentsOf(hash) => self.on_request_parents(hash, units),
         }
+    }
+
+    /// Handle an incoming request for the newest unit of a given node we know of.
+    pub fn handle_newest_unit_request(
+        &self,
+        requester: NodeIndex,
+        salt: Salt,
+        units: &UnitStore<DagUnit<H, D, MK>>,
+    ) -> DisseminationResponse<H, D, MK::Signature> {
+        self.on_request_newest(requester, salt, units)
     }
 }
 
@@ -111,7 +118,7 @@ mod test {
         dag::Request,
         dissemination::{
             responder::{Error, Responder},
-            DisseminationRequest, DisseminationResponse,
+            DisseminationResponse,
         },
         units::{
             random_full_parent_reconstrusted_units_up_to, TestingDagUnit, Unit, UnitCoord,
@@ -142,7 +149,7 @@ mod test {
     fn empty_fails_to_respond_to_coords() {
         let (responder, store, _) = setup();
         let coord = UnitCoord::new(0, NodeIndex(1));
-        let request = Request::Coord(coord).into();
+        let request = Request::Coord(coord);
         match responder.handle_request(request, &store) {
             Ok(response) => panic!("Unexpected response: {:?}.", response),
             Err(err) => assert_eq!(err, Error::NoCanonicalAt(coord)),
@@ -160,7 +167,7 @@ mod test {
                 .last()
                 .expect("the round has at least one unit")
                 .hash();
-        let request = Request::ParentsOf(hash).into();
+        let request = Request::ParentsOf(hash);
         match responder.handle_request(request, &store) {
             Ok(response) => panic!("Unexpected response: {:?}.", response),
             Err(err) => assert_eq!(err, Error::UnknownUnit(hash)),
@@ -171,10 +178,7 @@ mod test {
     fn empty_newest_responds_with_no_units() {
         let (responder, store, keychains) = setup();
         let requester = NodeIndex(1);
-        let request = DisseminationRequest::NewestUnit(requester, rand::random());
-        let response = responder
-            .handle_request(request, &store)
-            .expect("newest unit requests always get a response");
+        let response = responder.handle_newest_unit_request(requester, rand::random(), &store);
         match response {
             DisseminationResponse::NewestUnit(newest_unit_response) => {
                 let checked_newest_unit_response = newest_unit_response
@@ -205,7 +209,7 @@ mod test {
                 store.insert(unit.clone());
             }
         }
-        let request = Request::Coord(coord).into();
+        let request = Request::Coord(coord);
         let response = responder
             .handle_request(request, &store)
             .expect("should successfully respond");
@@ -237,7 +241,7 @@ mod test {
                 store.insert(unit.clone());
             }
         }
-        let request = Request::Coord(coord).into();
+        let request = Request::Coord(coord);
         match responder.handle_request(request, &store) {
             Ok(response) => panic!("Unexpected response: {:?}.", response),
             Err(err) => assert_eq!(err, Error::NoCanonicalAt(coord)),
@@ -261,7 +265,7 @@ mod test {
             .last()
             .expect("the round has at least one unit")
             .clone();
-        let request = Request::ParentsOf(requested_unit.hash()).into();
+        let request = Request::ParentsOf(requested_unit.hash());
         let response = responder
             .handle_request(request, &store)
             .expect("should successfully respond");
@@ -295,7 +299,7 @@ mod test {
                 .last()
                 .expect("the round has at least one unit")
                 .hash();
-        let request = Request::ParentsOf(hash).into();
+        let request = Request::ParentsOf(hash);
         match responder.handle_request(request, &store) {
             Ok(response) => panic!("Unexpected response: {:?}.", response),
             Err(err) => assert_eq!(err, Error::UnknownUnit(hash)),
@@ -314,10 +318,7 @@ mod test {
             }
         }
         let requester = NodeIndex(1);
-        let request = DisseminationRequest::NewestUnit(requester, rand::random());
-        let response = responder
-            .handle_request(request, &store)
-            .expect("newest unit requests always get a response");
+        let response = responder.handle_newest_unit_request(requester, rand::random(), &store);
         match response {
             DisseminationResponse::NewestUnit(newest_unit_response) => {
                 newest_unit_response

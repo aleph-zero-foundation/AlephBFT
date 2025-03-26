@@ -1,6 +1,6 @@
 use crate::{
     dag::Request as ReconstructionRequest,
-    dissemination::{Addressed, DisseminationMessage, DisseminationRequest, DisseminationTask},
+    dissemination::{Addressed, DisseminationMessage, DisseminationTask},
     handle_task_termination,
     network::{Hub as NetworkHub, NetworkData, UnitMessage},
     runway::{self, NetworkIO, RunwayIO, RunwayNotificationOut},
@@ -161,14 +161,12 @@ where
         use DisseminationTask::*;
         let mut count_coord_request: usize = 0;
         let mut count_parents_request: usize = 0;
-        let mut count_request_newest: usize = 0;
         let mut count_rebroadcast: usize = 0;
         for task in self.task_queue.iter().map(|st| &st.task) {
             match task {
                 Request(ReconstructionRequest::Coord(_)) => count_coord_request += 1,
                 Request(ReconstructionRequest::ParentsOf(_)) => count_parents_request += 1,
                 Broadcast(_) => count_rebroadcast += 1,
-                RequestNewest(_) => count_request_newest += 1,
             }
         }
         let long_time_pending_tasks: Vec<_> = self
@@ -180,8 +178,8 @@ where
         write!(f, "task queue content: ")?;
         write!(
             f,
-            "CoordRequest - {}, ParentsRequest - {}, UnitBroadcast - {}, RequestNewest - {}",
-            count_coord_request, count_parents_request, count_rebroadcast, count_request_newest,
+            "CoordRequest - {}, ParentsRequest - {}, UnitBroadcast - {}",
+            count_coord_request, count_parents_request, count_rebroadcast,
         )?;
         if !self.not_resolved_coords.is_empty() {
             write!(
@@ -228,13 +226,12 @@ where
     task_queue: TaskQueue<RepeatableTask<H, D, S>>,
     not_resolved_parents: HashSet<H::Hash>,
     not_resolved_coords: HashSet<UnitCoord>,
-    newest_unit_resolved: bool,
     peers: Vec<Recipient>,
     unit_messages_for_network: Sender<(UnitMessage<H, D, S>, Recipient)>,
     unit_messages_from_network: Receiver<UnitMessage<H, D, S>>,
     notifications_for_runway: Sender<DisseminationMessage<H, D, S>>,
     notifications_from_runway: Receiver<RunwayNotificationOut<H, D, S>>,
-    resolved_requests: Receiver<DisseminationRequest<H>>,
+    resolved_requests: Receiver<ReconstructionRequest<H>>,
     exiting: bool,
     top_units: NodeMap<Round>,
 }
@@ -251,7 +248,7 @@ where
         unit_messages_from_network: Receiver<UnitMessage<H, D, S>>,
         notifications_for_runway: Sender<DisseminationMessage<H, D, S>>,
         notifications_from_runway: Receiver<RunwayNotificationOut<H, D, S>>,
-        resolved_requests: Receiver<DisseminationRequest<H>>,
+        resolved_requests: Receiver<ReconstructionRequest<H>>,
     ) -> Self {
         let n_members = config.n_members();
         let peers = (0..n_members.0)
@@ -265,7 +262,6 @@ where
             task_queue: TaskQueue::new(),
             not_resolved_parents: HashSet::new(),
             not_resolved_coords: HashSet::new(),
-            newest_unit_resolved: false,
             peers,
             unit_messages_for_network,
             unit_messages_from_network,
@@ -322,12 +318,6 @@ where
             .schedule_now(RepeatableTask::new(DisseminationTask::Request(
                 ReconstructionRequest::ParentsOf(u_hash),
             )));
-        self.trigger_tasks();
-    }
-
-    fn on_request_newest(&mut self, salt: u64) {
-        self.task_queue
-            .schedule_now(RepeatableTask::new(DisseminationTask::RequestNewest(salt)));
         self.trigger_tasks();
     }
 
@@ -396,14 +386,9 @@ where
         use DisseminationTask::*;
         match task {
             Request(request) => {
-                DisseminationMessage::Request(self.index(), (*request).clone().into()).into()
+                DisseminationMessage::Request(self.index(), (*request).clone()).into()
             }
             Broadcast(unit) => DisseminationMessage::Unit(unit.clone()).into(),
-            RequestNewest(salt) => DisseminationMessage::Request(
-                self.index(),
-                DisseminationRequest::NewestUnit(self.index(), *salt),
-            )
-            .into(),
         }
     }
 
@@ -421,7 +406,6 @@ where
                 ))
             }
             Broadcast(_) => vec![Recipient::Everyone],
-            RequestNewest(_) => vec![Recipient::Everyone],
         }
     }
 
@@ -434,7 +418,6 @@ where
             Request(ReconstructionRequest::ParentsOf(hash)) => {
                 self.not_resolved_parents.contains(hash)
             }
-            RequestNewest(_) => !self.newest_unit_resolved,
             Broadcast(unit) => {
                 Some(&unit.as_signable().round())
                     == self.top_units.get(unit.as_signable().creator())
@@ -464,24 +447,20 @@ where
             Request(ReconstructionRequest::ParentsOf(_)) => {
                 (self.config.delay_config().parent_request_delay)(counter)
             }
-            RequestNewest(_) => (self.config.delay_config().newest_request_delay)(counter),
         }
     }
 
     fn on_unit_message_from_units(&mut self, message: RunwayNotificationOut<H, D, S>) {
+        use ReconstructionRequest::*;
+        use RunwayNotificationOut::*;
         match message {
-            RunwayNotificationOut::NewSelfUnit(u) => self.on_create(u),
-            RunwayNotificationOut::NewAnyUnit(u) => self.on_unit_discovered(u),
-            RunwayNotificationOut::Request(request) => match request {
-                DisseminationRequest::Unit(ReconstructionRequest::Coord(coord)) => {
-                    self.on_request_coord(coord)
-                }
-                DisseminationRequest::Unit(ReconstructionRequest::ParentsOf(u_hash)) => {
-                    self.on_request_parents(u_hash)
-                }
-                DisseminationRequest::NewestUnit(_, salt) => self.on_request_newest(salt),
+            NewSelfUnit(u) => self.on_create(u),
+            NewAnyUnit(u) => self.on_unit_discovered(u),
+            Request(request) => match request {
+                Coord(coord) => self.on_request_coord(coord),
+                ParentsOf(u_hash) => self.on_request_parents(u_hash),
             },
-            RunwayNotificationOut::Message(message) => self.send_unit_message(message.into()),
+            Message(message) => self.send_unit_message(message.into()),
         }
     }
 
@@ -514,15 +493,12 @@ where
 
                 event = self.resolved_requests.next() => match event {
                     Some(request) => match request {
-                        DisseminationRequest::Unit(ReconstructionRequest::Coord(coord)) => {
+                        ReconstructionRequest::Coord(coord) => {
                             self.not_resolved_coords.remove(&coord);
                         },
-                        DisseminationRequest::Unit(ReconstructionRequest::ParentsOf(u_hash)) => {
+                        ReconstructionRequest::ParentsOf(u_hash) => {
                             self.not_resolved_parents.remove(&u_hash);
                         },
-                        DisseminationRequest::NewestUnit(..) => {
-                            self.newest_unit_resolved = true;
-                        }
                     },
                     None => {
                         error!(target: "AlephBFT-member", "{:?} Resolved-requests stream from Runway closed.", self.index());
@@ -781,18 +757,6 @@ mod tests {
             &DisseminationTask::Request(ReconstructionRequest::ParentsOf(Hasher64::hash(&[0x0]))),
             10,
         );
-
-        assert_eq!(delay, Duration::from_millis(133));
-    }
-
-    #[test]
-    fn delay_for_newest_request() {
-        let mut delay_config = gen_delay_config();
-        delay_config.newest_request_delay = Arc::new(|t| Duration::from_millis(123 + t as u64));
-
-        let member = mock_member(NodeIndex(7), NodeCount(20), delay_config);
-
-        let delay = member.delay(&DisseminationTask::RequestNewest(12345), 10);
 
         assert_eq!(delay, Duration::from_millis(133));
     }

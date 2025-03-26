@@ -3,6 +3,7 @@
 //! gives appropriate access to the set of available data that we need to make consensus on.
 
 mod alerts;
+mod collection;
 mod config;
 mod creation;
 mod dag;

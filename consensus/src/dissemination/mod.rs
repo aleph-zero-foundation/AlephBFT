@@ -1,7 +1,7 @@
 use crate::{
+    collection::{NewestUnitResponse, Salt},
     dag::Request as ReconstructionRequest,
     network::UnitMessage,
-    runway::{NewestUnitResponse, Salt},
     units::UncheckedSignedUnit,
     Data, Hasher, NodeIndex, Recipient, Signature, UncheckedSigned,
 };
@@ -57,21 +57,6 @@ impl<T> Addressed<T> {
     }
 }
 
-/// Possible requests for information from other nodes.
-#[derive(Eq, PartialEq, Debug, Clone)]
-pub enum DisseminationRequest<H: Hasher> {
-    /// A request for unit information in normal operation.
-    Unit(ReconstructionRequest<H>),
-    /// Request for what the specified node thinks about our newest unit.
-    NewestUnit(NodeIndex, Salt),
-}
-
-impl<H: Hasher> From<ReconstructionRequest<H>> for DisseminationRequest<H> {
-    fn from(request: ReconstructionRequest<H>) -> Self {
-        DisseminationRequest::Unit(request)
-    }
-}
-
 /// Responses to requests.
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum DisseminationResponse<H: Hasher, D: Data, S: Signature> {
@@ -89,9 +74,11 @@ pub enum DisseminationMessage<H: Hasher, D: Data, S: Signature> {
     /// Unit, either broadcast or in response to a coord request.
     Unit(UncheckedSignedUnit<H, D, S>),
     /// Request coming from the specified node for something.
-    Request(NodeIndex, DisseminationRequest<H>),
+    Request(NodeIndex, ReconstructionRequest<H>),
     /// Response to a parent request.
     ParentsResponse(H::Hash, Vec<UncheckedSignedUnit<H, D, S>>),
+    /// Initial unit collection request.
+    NewestUnitRequest(NodeIndex, Salt),
     /// Response to initial unit collection.
     NewestUnitResponse(UncheckedSigned<NewestUnitResponse<H, D, S>, S>),
 }
@@ -104,15 +91,13 @@ impl<H: Hasher, D: Data, S: Signature> From<UnitMessage<H, D, S>>
         match message {
             UnitMessage::Unit(u) => Unit(u),
             UnitMessage::CoordRequest(node_id, coord) => {
-                Request(node_id, ReconstructionRequest::Coord(coord).into())
+                Request(node_id, ReconstructionRequest::Coord(coord))
             }
             UnitMessage::ParentsRequest(node_id, hash) => {
-                Request(node_id, ReconstructionRequest::ParentsOf(hash).into())
+                Request(node_id, ReconstructionRequest::ParentsOf(hash))
             }
             UnitMessage::ParentsResponse(h, units) => ParentsResponse(h, units),
-            UnitMessage::NewestRequest(node_id, salt) => {
-                Request(node_id, DisseminationRequest::NewestUnit(node_id, salt))
-            }
+            UnitMessage::NewestRequest(node_id, salt) => NewestUnitRequest(node_id, salt),
             UnitMessage::NewestResponse(response) => NewestUnitResponse(response),
         }
     }
@@ -125,17 +110,14 @@ impl<H: Hasher, D: Data, S: Signature> From<DisseminationMessage<H, D, S>>
         use DisseminationMessage::*;
         match message {
             Unit(u) => UnitMessage::Unit(u),
-            Request(node_id, DisseminationRequest::Unit(ReconstructionRequest::Coord(coord))) => {
+            Request(node_id, ReconstructionRequest::Coord(coord)) => {
                 UnitMessage::CoordRequest(node_id, coord)
             }
-            Request(
-                node_id,
-                DisseminationRequest::Unit(ReconstructionRequest::ParentsOf(hash)),
-            ) => UnitMessage::ParentsRequest(node_id, hash),
-            ParentsResponse(h, units) => UnitMessage::ParentsResponse(h, units),
-            Request(node_id, DisseminationRequest::NewestUnit(_, salt)) => {
-                UnitMessage::NewestRequest(node_id, salt)
+            Request(node_id, ReconstructionRequest::ParentsOf(hash)) => {
+                UnitMessage::ParentsRequest(node_id, hash)
             }
+            ParentsResponse(h, units) => UnitMessage::ParentsResponse(h, units),
+            NewestUnitRequest(node_id, salt) => UnitMessage::NewestRequest(node_id, salt),
             NewestUnitResponse(response) => UnitMessage::NewestResponse(response),
         }
     }
