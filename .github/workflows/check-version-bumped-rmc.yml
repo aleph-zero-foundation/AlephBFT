@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   main:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: GIT | Checkout
         uses: actions/checkout@v4

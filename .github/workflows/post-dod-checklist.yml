@@ -2,7 +2,7 @@ name: Post DoD checklist
 on: [pull_request_target]
 jobs:
   run:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: wow-actions/auto-comment@v1
         with:

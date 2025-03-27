@@ -20,7 +20,7 @@ jobs:
   pr:
     name: pull_request
     if: "github.event_name == 'pull_request'"
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     needs: lint
     steps:
       - name: checkout the source code
@@ -39,7 +39,7 @@ jobs:
   master:
     name: push
     if: "github.event_name == 'push'"
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     needs: lint
     steps:
       - name: checkout the source code
@@ -57,7 +57,7 @@ jobs:
           args: '--lib'
   lint:
     name: lint
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     steps:
       - name: checkout the source code
         uses: actions/checkout@v4
