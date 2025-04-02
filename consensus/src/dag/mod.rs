@@ -203,6 +203,11 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Dag<H, D, MK> {
         result
     }
 
+    /// The store of units currently being processed by this dag.
+    pub fn processing_units(&self) -> &UnitStore<SignedUnit<H, D, MK>> {
+        self.validator.processing_units()
+    }
+
     /// Notify the dag that a unit has finished processing and can be cleared from the cache.
     pub fn finished_processing(&mut self, hash: &H::Hash) {
         self.validator.finished_processing(hash);

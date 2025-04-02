@@ -18,7 +18,7 @@ pub type RecipientCountSchedule = Arc<dyn Fn(usize) -> usize + Sync + Send + 'st
 /// Configuration of several parameters related to delaying various tasks.
 #[derive(Clone)]
 pub struct DelayConfig {
-    /// Tick frequency of the Member. Governs internal task queue of the Member.
+    /// Tick frequency of the request task queue, impacts how often tasks are send out.
     pub tick_interval: Duration,
     /// Minimum frequency of broadcast of top known units. Units have to be at least this old to be
     /// rebroadcast at all.

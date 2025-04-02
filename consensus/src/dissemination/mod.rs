@@ -10,7 +10,7 @@ mod responder;
 mod task;
 
 pub use responder::Responder;
-pub use task::DisseminationTask;
+pub use task::{Manager as TaskManager, ManagerStatus as TaskManagerStatus};
 
 /// Some form of message with the intended recipients.
 #[derive(Eq, PartialEq, Debug, Clone)]
@@ -31,6 +31,11 @@ impl<T> Addressed<T> {
     /// Message with the single specified recipient.
     pub fn addressed_to(message: T, node_id: NodeIndex) -> Self {
         Addressed::new(message, vec![Recipient::Node(node_id)])
+    }
+
+    /// Message that should be broadcast.
+    pub fn broadcast(message: T) -> Self {
+        Addressed::new(message, vec![Recipient::Everyone])
     }
 
     /// All the recipients of this message.

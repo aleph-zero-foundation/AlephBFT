@@ -162,6 +162,11 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Validator<H, D, MK> {
         Ok(unit)
     }
 
+    /// The store of units currently being processed.
+    pub fn processing_units(&self) -> &UnitStore<SignedUnit<H, D, MK>> {
+        &self.processing_units
+    }
+
     /// Signal that a unit finished processing and thus it's copy no longer has to be kept for fork detection.
     /// NOTE: This is only a memory optimization, if the units stay there forever everything still works.
     pub fn finished_processing(&mut self, unit: &H::Hash) {
