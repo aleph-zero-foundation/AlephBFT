@@ -9,6 +9,7 @@ mod creation;
 mod dag;
 mod dissemination;
 mod extension;
+mod interface;
 mod member;
 mod network;
 mod runway;
@@ -30,7 +31,8 @@ pub use aleph_bft_types::{
 pub use config::{
     create_config, default_config, default_delay_config, exponential_slowdown, Config, DelayConfig,
 };
-pub use member::{run_session, LocalIO};
+pub use interface::LocalIO;
+pub use member::run_session;
 pub use network::NetworkData;
 pub use terminator::{handle_task_termination, Terminator};
 
