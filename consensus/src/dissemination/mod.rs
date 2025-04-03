@@ -12,6 +12,8 @@ mod task;
 pub use responder::Responder;
 pub use task::{Manager as TaskManager, ManagerStatus as TaskManagerStatus};
 
+const LOG_TARGET: &str = "AlephBFT-dissemination";
+
 /// Some form of message with the intended recipients.
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub struct Addressed<T> {

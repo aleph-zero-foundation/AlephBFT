@@ -1,13 +1,14 @@
 use crate::{
     config::{DelaySchedule, RecipientCountSchedule},
     dag::{DagUnit, Request},
-    dissemination::{Addressed, DisseminationMessage, ReconstructionRequest},
+    dissemination::{Addressed, DisseminationMessage, ReconstructionRequest, LOG_TARGET},
     task_queue::TaskQueue,
     units::{SignedUnit, Unit, UnitCoord, UnitStore, WrappedUnit},
     Data, DelayConfig, Hasher, MultiKeychain, NodeCount, NodeIndex, NodeMap, Recipient, Round,
     Signature,
 };
 use itertools::Itertools;
+use log::trace;
 use rand::{prelude::SliceRandom, Rng};
 use std::{
     collections::HashSet,
@@ -103,6 +104,26 @@ impl<H: Hasher> ManagerStatus<H> {
             long_time_pending_tasks,
         }
     }
+
+    fn longest_pending_tasks(&self) -> Vec<&RepeatableTask<H>> {
+        const ITEMS_PRINT_LIMIT: usize = 10;
+        self.long_time_pending_tasks
+            .iter()
+            .fold(Vec::new(), |mut highest, task| {
+                if let Some(index) = highest
+                    .iter()
+                    .position(|ancient_task| ancient_task.counter < task.counter)
+                {
+                    highest.insert(index, task);
+                } else if highest.len() < ITEMS_PRINT_LIMIT {
+                    highest.push(task);
+                }
+                if highest.len() > ITEMS_PRINT_LIMIT {
+                    highest.pop();
+                }
+                highest
+            })
+    }
 }
 
 impl<H: Hasher> Display for ManagerStatus<H> {
@@ -113,23 +134,15 @@ impl<H: Hasher> Display for ManagerStatus<H> {
             "CoordRequest - {}, ParentsRequest - {}, UnitBroadcast - {}",
             self.coord_request_count, self.parent_request_count, self.rebroadcast_count,
         )?;
-        const ITEMS_PRINT_LIMIT: usize = 10;
         if !self.long_time_pending_tasks.is_empty() {
-            write!(f, "; pending tasks with counter >= 5 -")?;
-            write!(f, " {}", {
-                self.long_time_pending_tasks
-                    .iter()
-                    .take(ITEMS_PRINT_LIMIT)
-                    .join(", ")
+            write!(
+                f,
+                "; {} pending tasks with counter >= 5,",
+                self.long_time_pending_tasks.len()
+            )?;
+            write!(f, "longest pending: {}", {
+                self.longest_pending_tasks().iter().join(", ")
             })?;
-
-            if let Some(remaining) = self
-                .long_time_pending_tasks
-                .len()
-                .checked_sub(ITEMS_PRINT_LIMIT)
-            {
-                write!(f, " and {remaining} more")?
-            }
         }
         Ok(())
     }
@@ -265,19 +278,28 @@ impl<H: Hasher> Manager<H> {
         stored_units: &UnitStore<DagUnit<H, D, MK>>,
         processing_units: &UnitStore<SignedUnit<H, D, MK>>,
     ) -> Vec<Addressed<DisseminationMessage<H, D, MK::Signature>>> {
+        trace!(target: LOG_TARGET, "Checking for due tasks.");
         use TaskDetails::*;
         let mut result = Vec::new();
         while let Some(mut task) = self.task_queue.pop_due_task() {
+            trace!(target: LOG_TARGET, "Triggering due task: {:?}", task);
             match self.task_details(&task, stored_units, processing_units) {
-                Cancel => (),
-                Delay(delay) => self.task_queue.schedule_in(task, delay),
+                Cancel => {
+                    trace!(target: LOG_TARGET, "Task outdated, dropped.");
+                }
+                Delay(delay) => {
+                    trace!(target: LOG_TARGET, "Task pending verification, delayed by {:?}.", delay);
+                    self.task_queue.schedule_in(task, delay)
+                }
                 Perform { message, delay } => {
+                    trace!(target: LOG_TARGET, "Executing task by sending {:?}, and rescheduling it delayed by {:?}.", message, delay);
                     result.push(message);
                     task.counter += 1;
                     self.task_queue.schedule_in(task, delay)
                 }
             }
         }
+        trace!(target: LOG_TARGET, "Task resulted in sending {} messages.", result.len());
         result
     }
 
@@ -289,11 +311,13 @@ impl<H: Hasher> Manager<H> {
         stored_units: &UnitStore<DagUnit<H, D, MK>>,
         processing_units: &UnitStore<SignedUnit<H, D, MK>>,
     ) -> Vec<Addressed<DisseminationMessage<H, D, MK::Signature>>> {
+        trace!(target: LOG_TARGET, "Handling newly created request: {:?}", request);
         if let Request::Coord(coord) = request {
             if !self.missing_coords.insert(coord) {
                 return Vec::new();
             }
         }
+        trace!(target: LOG_TARGET, "Scheduling newly created request: {:?}", request);
         self.task_queue
             .schedule_now(RepeatableTask::new(DisseminationTask::Request(request)));
         self.trigger_tasks(stored_units, processing_units)
@@ -305,6 +329,7 @@ impl<H: Hasher> Manager<H> {
         &mut self,
         unit: &DagUnit<H, D, MK>,
     ) -> Option<Addressed<DisseminationMessage<H, D, MK::Signature>>> {
+        trace!(target: LOG_TARGET, "New unit with hash {:?} at {}.", unit.hash(), unit.coord());
         let hash = unit.hash();
         let round = unit.round();
         let creator = unit.creator();
@@ -321,6 +346,7 @@ impl<H: Hasher> Manager<H> {
             RepeatableTask::new(DisseminationTask::Broadcast(hash)),
             self.broadcast_delay(),
         );
+        trace!(target: LOG_TARGET, "Scheduled broadcast for unit with hash {:?}.", unit.hash());
         match creator == self.index() {
             true => Some(Addressed::broadcast(DisseminationMessage::Unit(
                 unit.clone().unpack().into(),
