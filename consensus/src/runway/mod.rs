@@ -1,7 +1,7 @@
 use crate::{
     alerts::{Alert, ForkingNotification, NetworkMessage},
-    collection::{Collection, NewestUnitResponse, IO as CollectionIO},
-    config::{DelayConfig, DelaySchedule},
+    collection::{initial_unit_collection, CollectionResponse},
+    config::DelayConfig,
     creation,
     dag::{Dag, DagResult, DagStatus, DagUnit, Request as ReconstructionRequest},
     dissemination::{Addressed, DisseminationMessage, Responder, TaskManager, TaskManagerStatus},
@@ -9,12 +9,12 @@ use crate::{
     handle_task_termination,
     units::{SignedUnit, UncheckedSignedUnit, Unit, UnitStore, UnitStoreStatus, Validator},
     Config, Data, DataProvider, Hasher, Index, Keychain, MultiKeychain, NodeIndex, Receiver,
-    Recipient, Round, Sender, SpawnHandle, Terminator, UncheckedSigned, UnitFinalizationHandler,
+    Recipient, Sender, SpawnHandle, Terminator, UnitFinalizationHandler,
 };
 use futures::{
     channel::{mpsc, oneshot},
     future::pending,
-    pin_mut, AsyncRead, AsyncWrite, Future, FutureExt, StreamExt,
+    pin_mut, AsyncRead, AsyncWrite, FutureExt, StreamExt,
 };
 use futures_timer::Delay;
 use log::{debug, error, info, trace, warn};
@@ -26,11 +26,6 @@ use std::{
 };
 
 use crate::backup::{BackupLoader, BackupSaver};
-
-type CollectionResponse<H, D, MK> = UncheckedSigned<
-    NewestUnitResponse<H, D, <MK as Keychain>::Signature>,
-    <MK as Keychain>::Signature,
->;
 
 type AddressedDisseminationMessage<FH, MK> = Addressed<
     DisseminationMessage<
@@ -423,38 +418,6 @@ pub(crate) struct NetworkIO<H: Hasher, D: Data, MK: MultiKeychain> {
     pub(crate) unit_messages_from_network: Receiver<DisseminationMessage<H, D, MK::Signature>>,
 }
 
-#[cfg(feature = "initial_unit_collection")]
-fn initial_unit_collection<'a, H: Hasher, D: Data, MK: MultiKeychain>(
-    keychain: &'a MK,
-    validator: &'a Validator<MK>,
-    messages_for_network: Sender<Addressed<DisseminationMessage<H, D, MK::Signature>>>,
-    unit_collection_sender: oneshot::Sender<Round>,
-    responses_from_runway: Receiver<CollectionResponse<H, D, MK>>,
-    request_delay: DelaySchedule,
-) -> Result<impl Future<Output = ()> + 'a, ()> {
-    let collection = Collection::new(keychain, validator);
-
-    let collection = CollectionIO::new(
-        unit_collection_sender,
-        responses_from_runway,
-        messages_for_network,
-        collection,
-        request_delay,
-    );
-    Ok(collection.run())
-}
-
-#[cfg(not(feature = "initial_unit_collection"))]
-fn trivial_start(
-    starting_round_sender: oneshot::Sender<Round>,
-) -> Result<impl Future<Output = ()>, ()> {
-    if let Err(e) = starting_round_sender.send(0) {
-        error!(target: "AlephBFT-runway", "Unable to send the starting round: {}", e);
-        return Err(());
-    }
-    Ok(async {})
-}
-
 pub struct RunwayIO<
     MK: MultiKeychain,
     W: AsyncWrite + Send + Sync + 'static,
@@ -617,7 +580,6 @@ pub(crate) async fn run<US, UL, MK, DP, UFH, SH>(
         .fuse();
     pin_mut!(backup_loading_handle);
 
-    #[cfg(feature = "initial_unit_collection")]
     let starting_round_handle = match initial_unit_collection(
         &keychain,
         &validator,
@@ -626,11 +588,6 @@ pub(crate) async fn run<US, UL, MK, DP, UFH, SH>(
         responses_from_runway,
         config.delay_config().newest_request_delay.clone(),
     ) {
-        Ok(handle) => handle.fuse(),
-        Err(_) => return,
-    };
-    #[cfg(not(feature = "initial_unit_collection"))]
-    let starting_round_handle = match trivial_start(unit_collections_sender) {
         Ok(handle) => handle.fuse(),
         Err(_) => return,
     };
