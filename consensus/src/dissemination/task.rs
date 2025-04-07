@@ -28,6 +28,10 @@ pub enum DisseminationTask<H: Hasher> {
 enum TaskDetails<H: Hasher, D: Data, S: Signature> {
     Cancel,
     Delay(Duration),
+    BetterInstead {
+        better_request: Request<H>,
+        delay: Duration,
+    },
     Perform {
         message: Addressed<DisseminationMessage<H, D, S>>,
         delay: Duration,
@@ -205,6 +209,43 @@ impl<H: Hasher> Manager<H> {
             .collect()
     }
 
+    fn coord_request_details<D: Data, MK: MultiKeychain>(
+        &mut self,
+        coord: UnitCoord,
+        counter: usize,
+        stored_units: &UnitStore<DagUnit<H, D, MK>>,
+        processing_units: &UnitStore<SignedUnit<H, D, MK>>,
+    ) -> TaskDetails<H, D, MK::Signature> {
+        use Request::*;
+        use TaskDetails::*;
+        if stored_units.canonical_unit(coord).is_some() {
+            self.missing_coords.remove(&coord);
+            return Cancel;
+        }
+        let delay = (self.coord_request_delay)(counter);
+        if processing_units.canonical_unit(coord).is_some() {
+            return Delay(delay);
+        }
+        let top_round_for_creator = stored_units.top_round_for(coord.creator()).unwrap_or(0);
+        const FUTURE_REQUEST_LIMIT: Round = 10;
+        if coord.round().saturating_sub(top_round_for_creator) > FUTURE_REQUEST_LIMIT {
+            return BetterInstead {
+                better_request: Coord(UnitCoord::new(
+                    top_round_for_creator + FUTURE_REQUEST_LIMIT / 2,
+                    coord.creator(),
+                )),
+                delay,
+            };
+        }
+        Perform {
+            message: Addressed::new(
+                DisseminationMessage::Request(self.index(), Coord(coord)),
+                self.random_peers((self.coord_request_recipients)(counter)),
+            ),
+            delay,
+        }
+    }
+
     fn request_details<D: Data, MK: MultiKeychain>(
         &mut self,
         request: &Request<H>,
@@ -215,22 +256,9 @@ impl<H: Hasher> Manager<H> {
         use Request::*;
         use TaskDetails::*;
         match request {
-            Coord(coord) => match stored_units.canonical_unit(*coord) {
-                Some(_) => {
-                    self.missing_coords.remove(coord);
-                    Cancel
-                }
-                None => match processing_units.canonical_unit(*coord) {
-                    Some(_) => Delay((self.coord_request_delay)(counter)),
-                    None => Perform {
-                        message: Addressed::new(
-                            DisseminationMessage::Request(self.index(), request.clone()),
-                            self.random_peers((self.coord_request_recipients)(counter)),
-                        ),
-                        delay: (self.coord_request_delay)(counter),
-                    },
-                },
-            },
+            Coord(coord) => {
+                self.coord_request_details(*coord, counter, stored_units, processing_units)
+            }
             ParentsOf(hash) => match stored_units.unit(hash) {
                 Some(_) => Cancel,
                 None => Perform {
@@ -291,6 +319,14 @@ impl<H: Hasher> Manager<H> {
                     trace!(target: LOG_TARGET, "Task pending verification, delayed by {:?}.", delay);
                     self.task_queue.schedule_in(task, delay)
                 }
+                BetterInstead {
+                    better_request,
+                    delay,
+                } => {
+                    trace!(target: LOG_TARGET, "Requesting {:?} instead of executing task, original delayed by {:?}.", better_request, delay);
+                    self.add_request(better_request);
+                    self.task_queue.schedule_in(task, delay)
+                }
                 Perform { message, delay } => {
                     trace!(target: LOG_TARGET, "Executing task by sending {:?}, and rescheduling it delayed by {:?}.", message, delay);
                     result.push(message);
@@ -299,28 +335,21 @@ impl<H: Hasher> Manager<H> {
                 }
             }
         }
-        trace!(target: LOG_TARGET, "Task resulted in sending {} messages.", result.len());
+        trace!(target: LOG_TARGET, "Due tasks resulted in sending {} messages.", result.len());
         result
     }
 
-    /// Add a request to be performed according to the appropriate schedule. Returns all the
-    /// messages that should be sent now.
-    pub fn add_request<D: Data, MK: MultiKeychain>(
-        &mut self,
-        request: Request<H>,
-        stored_units: &UnitStore<DagUnit<H, D, MK>>,
-        processing_units: &UnitStore<SignedUnit<H, D, MK>>,
-    ) -> Vec<Addressed<DisseminationMessage<H, D, MK::Signature>>> {
+    /// Add a request to be performed according to the appropriate schedule.
+    pub fn add_request(&mut self, request: Request<H>) {
         trace!(target: LOG_TARGET, "Handling newly created request: {:?}", request);
         if let Request::Coord(coord) = request {
             if !self.missing_coords.insert(coord) {
-                return Vec::new();
+                return;
             }
         }
         trace!(target: LOG_TARGET, "Scheduling newly created request: {:?}", request);
         self.task_queue
             .schedule_now(RepeatableTask::new(DisseminationTask::Request(request)));
-        self.trigger_tasks(stored_units, processing_units)
     }
 
     /// Add a unit that should potentially be broadcast. Returns a message for immediate broadcast
@@ -366,7 +395,9 @@ mod tests {
         dag::Request,
         dissemination::{task::Manager, DisseminationMessage},
         testing::gen_delay_config,
-        units::{random_full_parent_reconstrusted_units_up_to, Unit, UnitStore, WrappedUnit},
+        units::{
+            random_full_parent_reconstrusted_units_up_to, Unit, UnitCoord, UnitStore, WrappedUnit,
+        },
         NodeCount, NodeIndex, Recipient,
     };
     use aleph_bft_mock::{Hasher64, Keychain};
@@ -529,7 +560,8 @@ mod tests {
         let mut store = UnitStore::new(node_count);
         store.insert(unit_to_make_typing_easier);
         let processing_store = UnitStore::new(node_count);
-        let mut messages = manager.add_request(Request::Coord(coord), &store, &processing_store);
+        manager.add_request(Request::Coord(coord));
+        let mut messages = manager.trigger_tasks(&store, &processing_store);
         assert_eq!(messages.len(), 1);
         let message = messages.pop().expect("just checked");
         assert_eq!(
@@ -563,6 +595,74 @@ mod tests {
     }
 
     #[test]
+    fn requests_ancient_coord_when_far_behind() {
+        let node_ix = NodeIndex(7);
+        let node_count = NodeCount(20);
+        let delay_config = gen_delay_config();
+        let mut manager = Manager::new(node_ix, node_count, delay_config.clone());
+
+        let session_id = 43;
+        let keychains: Vec<_> = node_count
+            .into_iterator()
+            .map(|node_id| Keychain::new(node_count, node_id))
+            .collect();
+
+        let units =
+            random_full_parent_reconstrusted_units_up_to(0, node_count, session_id, &keychains)
+                .pop()
+                .expect("just created initial round");
+        let unit_to_make_typing_easier = units[1].clone();
+
+        let mut store = UnitStore::new(node_count);
+        store.insert(unit_to_make_typing_easier);
+        let processing_store = UnitStore::new(node_count);
+        manager.add_request(Request::Coord(UnitCoord::new(2137, NodeIndex(0))));
+        let mut messages = manager.trigger_tasks(&store, &processing_store);
+        assert_eq!(messages.len(), 1);
+        let message = messages.pop().expect("just checked");
+        assert_eq!(
+            message.recipients().len(),
+            (delay_config.coord_request_recipients)(0)
+        );
+        match message.message() {
+            DisseminationMessage::Request(requesting_node, request) => {
+                assert_eq!(requesting_node, &node_ix);
+                match request {
+                    Request::Coord(coord) => {
+                        assert_eq!(coord.creator(), NodeIndex(0));
+                        assert!(coord.round() < 100);
+                    }
+                    r => panic!("Unexpected request: {:?}", r),
+                }
+            }
+            m => panic!("Unexpected message: {:?}", m),
+        }
+
+        assert!(manager.trigger_tasks(&store, &processing_store).is_empty());
+        sleep((delay_config.coord_request_delay)(0));
+        let mut messages = manager.trigger_tasks(&store, &processing_store);
+        assert_eq!(messages.len(), 1);
+        let message = messages.pop().expect("just checked");
+        assert_eq!(
+            message.recipients().len(),
+            (delay_config.coord_request_recipients)(1)
+        );
+        match message.message() {
+            DisseminationMessage::Request(requesting_node, request) => {
+                assert_eq!(requesting_node, &node_ix);
+                match request {
+                    Request::Coord(coord) => {
+                        assert_eq!(coord.creator(), NodeIndex(0));
+                        assert!(coord.round() < 100);
+                    }
+                    r => panic!("Unexpected request: {:?}", r),
+                }
+            }
+            m => panic!("Unexpected message: {:?}", m),
+        }
+    }
+
+    #[test]
     fn stops_requesting_coord_when_has_unit() {
         let node_ix = NodeIndex(7);
         let node_count = NodeCount(20);
@@ -586,7 +686,8 @@ mod tests {
         let mut store = UnitStore::new(node_count);
         store.insert(unit_to_make_typing_easier);
         let processing_store = UnitStore::new(node_count);
-        let mut messages = manager.add_request(Request::Coord(coord), &store, &processing_store);
+        manager.add_request(Request::Coord(coord));
+        let mut messages = manager.trigger_tasks(&store, &processing_store);
         assert_eq!(messages.len(), 1);
         let message = messages.pop().expect("just checked");
         assert_eq!(
@@ -630,7 +731,8 @@ mod tests {
         let mut store = UnitStore::new(node_count);
         store.insert(unit_to_make_typing_easier);
         let processing_store = UnitStore::new(node_count);
-        let mut messages = manager.add_request(Request::ParentsOf(hash), &store, &processing_store);
+        manager.add_request(Request::ParentsOf(hash));
+        let mut messages = manager.trigger_tasks(&store, &processing_store);
         assert_eq!(messages.len(), 1);
         let message = messages.pop().expect("just checked");
         assert_eq!(
@@ -687,7 +789,8 @@ mod tests {
         let mut store = UnitStore::new(node_count);
         store.insert(unit_to_make_typing_easier);
         let processing_store = UnitStore::new(node_count);
-        let mut messages = manager.add_request(Request::ParentsOf(hash), &store, &processing_store);
+        manager.add_request(Request::ParentsOf(hash));
+        let mut messages = manager.trigger_tasks(&store, &processing_store);
         assert_eq!(messages.len(), 1);
         let message = messages.pop().expect("just checked");
         assert_eq!(

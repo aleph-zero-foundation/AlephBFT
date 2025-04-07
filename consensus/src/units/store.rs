@@ -32,6 +32,7 @@ impl Display for UnitStoreStatus {
 pub struct UnitStore<U: Unit> {
     by_hash: HashMap<HashFor<U>, U>,
     canonical_units: NodeMap<HashMap<Round, HashFor<U>>>,
+    top_row: NodeMap<Round>,
 }
 
 impl<U: Unit> UnitStore<U> {
@@ -41,9 +42,11 @@ impl<U: Unit> UnitStore<U> {
         for node_id in node_count.into_iterator() {
             canonical_units.insert(node_id, HashMap::new());
         }
+        let top_row = NodeMap::with_size(node_count);
         UnitStore {
             by_hash: HashMap::new(),
             canonical_units,
+            top_row,
         }
     }
 
@@ -64,24 +67,48 @@ impl<U: Unit> UnitStore<U> {
         self.by_hash.get(hash).expect("we have all canonical units")
     }
 
-    /// Insert a unit. If no other unit with this coord is in the store it becomes canonical.
-    pub fn insert(&mut self, unit: U) {
-        let unit_hash = unit.hash();
+    fn maybe_set_canonical(&mut self, unit: &U) {
         let unit_coord = unit.coord();
         if self.canonical_unit(unit_coord).is_none() {
             self.mut_hashes_by(unit_coord.creator())
-                .insert(unit.coord().round(), unit_hash);
+                .insert(unit.round(), unit.hash());
+            // the top row is only cached information for optimization purposes
+            if self
+                .top_row
+                .get(unit.creator())
+                .map(|max_round| unit.round() > *max_round)
+                .unwrap_or(true)
+            {
+                self.top_row.insert(unit_coord.creator(), unit.round());
+            }
         }
+    }
+
+    /// Insert a unit. If no other unit with this coord is in the store it becomes canonical.
+    pub fn insert(&mut self, unit: U) {
+        self.maybe_set_canonical(&unit);
+        let unit_hash = unit.hash();
         self.by_hash.insert(unit_hash, unit);
+    }
+
+    fn maybe_unset_canonical(&mut self, unit: &U) {
+        let creator_hashes = self.mut_hashes_by(unit.creator());
+        if creator_hashes.get(&unit.round()) != Some(&unit.hash()) {
+            return;
+        }
+        creator_hashes.remove(&unit.round());
+        if self.top_row.get(unit.creator()) == Some(&unit.round()) {
+            match self.hashes_by(unit.creator()).keys().max().copied() {
+                Some(max_round) => self.top_row.insert(unit.creator(), max_round),
+                None => self.top_row.delete(unit.creator()),
+            }
+        }
     }
 
     /// Remove a unit with a given hash. Notably if you remove a unit another might become canonical in its place in the future.
     pub fn remove(&mut self, hash: &HashFor<U>) {
         if let Some(unit) = self.by_hash.remove(hash) {
-            let creator_hashes = self.mut_hashes_by(unit.creator());
-            if creator_hashes.get(&unit.round()) == Some(&unit.hash()) {
-                creator_hashes.remove(&unit.round());
-            }
+            self.maybe_unset_canonical(&unit);
         }
     }
 
@@ -106,17 +133,16 @@ impl<U: Unit> UnitStore<U> {
         self.by_hash.get(hash)
     }
 
+    /// The highest known round for the given creator.
+    pub fn top_round_for(&self, creator: NodeIndex) -> Option<Round> {
+        self.top_row.get(creator).copied()
+    }
+
     /// The status summary of this store.
     pub fn status(&self) -> UnitStoreStatus {
-        let mut top_row = NodeMap::with_size(self.canonical_units.size());
-        for (creator, units) in self.canonical_units.iter() {
-            if let Some(round) = units.keys().max() {
-                top_row.insert(creator, *round);
-            }
-        }
         UnitStoreStatus {
             size: self.by_hash.len(),
-            top_row,
+            top_row: self.top_row.clone(),
         }
     }
 }
@@ -138,6 +164,7 @@ mod test {
             .canonical_unit(UnitCoord::new(0, NodeIndex(0)))
             .is_none());
         assert!(store.canonical_units(NodeIndex(0)).next().is_none());
+        assert!(store.top_round_for(NodeIndex(0)).is_none());
     }
 
     #[test]
@@ -153,6 +180,7 @@ mod test {
         store.insert(unit.clone());
         assert_eq!(store.unit(&unit.hash()), Some(&unit));
         assert_eq!(store.canonical_unit(unit.coord()), Some(&unit));
+        assert_eq!(store.top_round_for(unit.creator()), Some(unit.round()));
         {
             // in block to drop the iterator
             let mut canonical_units = store.canonical_units(unit.creator());
@@ -163,6 +191,7 @@ mod test {
         assert_eq!(store.unit(&unit.hash()), None);
         assert_eq!(store.canonical_unit(unit.coord()), None);
         assert_eq!(store.canonical_units(unit.creator()).next(), None);
+        assert_eq!(store.top_round_for(unit.creator()), None);
     }
 
     #[test]

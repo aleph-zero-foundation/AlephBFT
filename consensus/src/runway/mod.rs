@@ -259,9 +259,10 @@ where
     }
 
     fn on_reconstruction_request(&mut self, request: ReconstructionRequest<UFH::Hasher>) {
-        for message in
-            self.task_manager
-                .add_request(request, &self.store, self.dag.processing_units())
+        self.task_manager.add_request(request);
+        for message in self
+            .task_manager
+            .trigger_tasks(&self.store, self.dag.processing_units())
         {
             self.send_message_for_network(message);
         }

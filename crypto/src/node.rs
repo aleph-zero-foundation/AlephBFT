@@ -166,6 +166,10 @@ impl<T> NodeMap<T> {
         self.0[node_id.0] = Some(value)
     }
 
+    pub fn delete(&mut self, node_id: NodeIndex) {
+        self.0[node_id.0] = None
+    }
+
     pub fn to_subset(&self) -> NodeSubset {
         NodeSubset(self.0.iter().map(Option::is_some).collect())
     }

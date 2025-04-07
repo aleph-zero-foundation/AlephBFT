@@ -102,6 +102,7 @@ async fn keep_processing_units_until<U: Unit>(
 /// - one of U's parents is the (r-1)-round unit by U's creator,
 /// - U has > floor(2*N/3) parents.
 /// - U will appear in the channel only if all U's parents appeared there before
+///
 /// The currently implemented strategy creates the unit U according to a delay schedule and when enough
 /// candidates for parents are available for all the above constraints to be satisfied.
 ///

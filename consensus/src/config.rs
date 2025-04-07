@@ -165,7 +165,7 @@ pub fn default_config(
 /// Creates a [`DelayConfig`] with default parameters, suggested by the creators of this package.
 pub fn default_delay_config() -> DelayConfig {
     DelayConfig {
-        tick_interval: Duration::from_millis(10),
+        tick_interval: Duration::from_millis(20),
         unit_rebroadcast_interval_min: Duration::from_millis(15000),
         unit_rebroadcast_interval_max: Duration::from_millis(20000),
         unit_creation_delay: default_unit_creation_delay(),
@@ -185,13 +185,14 @@ fn default_unit_creation_delay() -> DelaySchedule {
     })
 }
 
-/// 0, 50, 1000, 3000, 6000, 9000, ...
+/// 200, 1000, 3000, 6000, 9000, ...
+/// Note that the first request always gets send immediately, so these are delays for _after_ a
+/// request is sent for the nth time.
 fn default_coord_request_delay() -> DelaySchedule {
     Arc::new(|t| match t {
-        0 => Duration::from_millis(0),
-        1 => Duration::from_millis(50),
-        2 => Duration::from_millis(1000),
-        _ => Duration::from_millis(3000 * (t as u64 - 2)),
+        0 => Duration::from_millis(200),
+        1 => Duration::from_millis(1000),
+        _ => Duration::from_millis(3000 * (t as u64 - 1)),
     })
 }
 
