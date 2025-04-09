@@ -170,7 +170,8 @@ impl<'a, MK: Keychain> Collection<'a, MK> {
 
 /// A runnable wrapper around initial unit collection.
 pub struct IO<'a, H: Hasher, D: Data, MK: Keychain> {
-    round_for_creator: oneshot::Sender<Round>,
+    round_for_creator: oneshot::Sender<Option<Round>>,
+    round_from_backup: Round,
     responses_from_network: Receiver<CollectionResponse<H, D, MK>>,
     requests_for_network: Sender<Addressed<DisseminationMessage<H, D, MK::Signature>>>,
     collection: Collection<'a, MK>,
@@ -180,7 +181,8 @@ pub struct IO<'a, H: Hasher, D: Data, MK: Keychain> {
 impl<'a, H: Hasher, D: Data, MK: Keychain> IO<'a, H, D, MK> {
     /// Create the IO instance for the specified collection and channels associated with it.
     pub fn new(
-        round_for_creator: oneshot::Sender<Round>,
+        round_for_creator: oneshot::Sender<Option<Round>>,
+        round_from_backup: Round,
         responses_from_network: Receiver<CollectionResponse<H, D, MK>>,
         requests_for_network: Sender<Addressed<DisseminationMessage<H, D, MK::Signature>>>,
         collection: Collection<'a, MK>,
@@ -188,6 +190,7 @@ impl<'a, H: Hasher, D: Data, MK: Keychain> IO<'a, H, D, MK> {
     ) -> Self {
         IO {
             round_for_creator,
+            round_from_backup,
             responses_from_network,
             requests_for_network,
             collection,
@@ -195,7 +198,33 @@ impl<'a, H: Hasher, D: Data, MK: Keychain> IO<'a, H, D, MK> {
         }
     }
 
+    fn starting_round(&self, round_from_collection: Round) -> Option<Round> {
+        if self.round_from_backup < round_from_collection {
+            // Our newest unit doesn't appear in the backup. This indicates a serious issue, for example
+            // a different node running with the same pair of keys. It's safer not to continue.
+            error!(
+                target: LOG_TARGET, "Backup state behind unit collection state. Next round inferred from: collection: {:?}, backup: {:?}",
+                round_from_collection,
+                self.round_from_backup,
+            );
+            return None;
+        };
+
+        if round_from_collection < self.round_from_backup {
+            // Our newest unit didn't reach any peer, but it resides in our backup. One possible reason
+            // is that our node was taken down after saving the unit, but before broadcasting it.
+            warn!(
+                target: LOG_TARGET, "Backup state ahead of than unit collection state. Next round inferred from: collection: {:?}, backup: {:?}",
+                self.round_from_backup,
+                round_from_collection,
+            );
+        }
+
+        Some(self.round_from_backup)
+    }
+
     fn finish(self, round: Round) {
+        let round = self.starting_round(round);
         if self.round_for_creator.send(round).is_err() {
             error!(target: LOG_TARGET, "unable to send starting round to creator");
         }

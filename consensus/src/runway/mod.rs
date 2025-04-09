@@ -478,6 +478,31 @@ pub(crate) async fn run<US, UL, MK, DP, UFH, SH>(
         backup_read,
         _phantom: _,
     } = runway_io;
+    let index = keychain.index();
+    let session_id = config.session_id();
+    let (units_from_backup, starting_round_from_backup) =
+        match BackupLoader::new(backup_read, index, session_id)
+            .load_backup()
+            .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                error!(target: "AlephBFT-runway", "Error loading units from backup: {}.", e);
+                return;
+            }
+        };
+    info!(
+        target: "AlephBFT-runway",
+        "Loaded {:?} units from backup. Able to continue from round: {:?}.",
+        units_from_backup.len(),
+        starting_round_from_backup,
+    );
+    // This is immensely silly, but will be here only for one commit.
+    let (loaded_data_tx, loaded_data_rx) = oneshot::channel();
+    if loaded_data_tx.send(units_from_backup).is_err() {
+        error!(target: "AlephBFT-runway", "Error sending loaded units.");
+        return;
+    }
 
     let (new_units_for_runway, new_units_from_creation) = mpsc::unbounded();
 
@@ -557,34 +582,15 @@ pub(crate) async fn run<US, UL, MK, DP, UFH, SH>(
         })
         .fuse();
 
-    let index = keychain.index();
     let validator = Validator::new(config.session_id(), keychain.clone(), config.max_round());
     let (responses_for_collection, responses_from_runway) = mpsc::unbounded();
-    let (unit_collections_sender, unit_collection_result) = oneshot::channel();
-    let (loaded_data_tx, loaded_data_rx) = oneshot::channel();
-    let session_id = config.session_id();
-
-    let backup_loading_handle = spawn_handle
-        .spawn_essential("runway/loading", {
-            let mut backup_loader = BackupLoader::new(backup_read, index, session_id);
-            async move {
-                backup_loader
-                    .run(
-                        loaded_data_tx,
-                        starting_round_sender,
-                        unit_collection_result,
-                    )
-                    .await
-            }
-        })
-        .fuse();
-    pin_mut!(backup_loading_handle);
 
     let starting_round_handle = match initial_unit_collection(
         &keychain,
         &validator,
         network_io.unit_messages_for_network.clone(),
-        unit_collections_sender,
+        starting_round_sender,
+        starting_round_from_backup,
         responses_from_runway,
         config.delay_config().newest_request_delay.clone(),
     ) {
@@ -638,9 +644,6 @@ pub(crate) async fn run<US, UL, MK, DP, UFH, SH>(
             },
             _ = starting_round_handle => {
                 debug!(target: "AlephBFT-runway", "{:?} Starting round task terminated.", index);
-            },
-            _ = backup_loading_handle => {
-                debug!(target: "AlephBFT-runway", "{:?} Backup loading task terminated.", index);
             },
             _ = terminator.get_exit().fuse() => {
                 break;

@@ -85,7 +85,8 @@ pub fn initial_unit_collection<'a, H: Hasher, D: Data, MK: MultiKeychain>(
     keychain: &'a MK,
     validator: &'a Validator<MK>,
     messages_for_network: Sender<Addressed<DisseminationMessage<H, D, MK::Signature>>>,
-    starting_round_sender: oneshot::Sender<Round>,
+    starting_round_sender: oneshot::Sender<Option<Round>>,
+    starting_round_from_backup: Round,
     responses_from_network: Receiver<CollectionResponse<H, D, MK>>,
     request_delay: DelaySchedule,
 ) -> Result<impl Future<Output = ()> + 'a, ()> {
@@ -93,6 +94,7 @@ pub fn initial_unit_collection<'a, H: Hasher, D: Data, MK: MultiKeychain>(
 
     let collection = IO::new(
         starting_round_sender,
+        starting_round_from_backup,
         responses_from_network,
         messages_for_network,
         collection,
@@ -107,11 +109,12 @@ pub fn initial_unit_collection(
     _keychain: &'a MK,
     _validator: &'a Validator<MK>,
     _messages_for_network: Sender<Addressed<DisseminationMessage<H, D, MK::Signature>>>,
-    starting_round_sender: oneshot::Sender<Round>,
+    starting_round_sender: oneshot::Sender<Option<Round>>,
+    starting_round_from_backup: Round,
     _responses_from_network: Receiver<CollectionResponse<H, D, MK>>,
     _request_delay: DelaySchedule,
 ) -> Result<impl Future<Output = ()>, ()> {
-    if let Err(e) = starting_round_sender.send(0) {
+    if let Err(e) = starting_round_sender.send(Some(starting_round_from_backup)) {
         error!(target: LOG_TARGET, "Unable to send the starting round: {}", e);
         return Err(());
     }
