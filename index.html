@@ -183,7 +183,7 @@ The goal of a consensus protocol, is to ensure consistency of the decisions, eve
 <ol>
 <li>The output streams of any two nodes <code>out_i</code> and <code>out_j</code> are consistent, in the sense that at any given time one is a prefix of another. Moreover, none of the streams gets &quot;stuck&quot;, they keep producing items until the protocol is shut down. So, intuitively, all the streams produce the same items, but just at possibly different paces.</li>
 <li>Each item in the output stream is &quot;available&quot; to at least half the honest (= not malicious) nodes in the committee.</li>
-<li>Roughly speaking, most of the data items &quot;proposed&quot; by honest nodes (i.e., data coming from <code>in</code> streams of honest nodes) eventually land in the output stream.</li>
+<li>Roughly speaking, all of the data items &quot;proposed&quot; by honest nodes (i.e., data coming from <code>in</code> streams of honest nodes) eventually land in the output stream.</li>
 </ol>
 
                     </main>

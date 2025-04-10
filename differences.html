@@ -172,7 +172,6 @@
 <li>The specifics of alerts are different in the AlephBFT implementation -- in particular they do not require to freeze the protocol at any moment and are generally simpler.</li>
 <li>AlephBFT uses its own variant of Reliable Broadcast -- see the section <a href="reliable_broadcast.html##reliable-broadcast">Reliable Broadcast</a>.</li>
 <li>Differences in the use of randomness -- see <a href="how_alephbft_does_it.html#24-randomness-in-alephbft">Randomness in AlephBFT</a>.</li>
-<li>The parent choice rule for units in the paper is different: it allows parents from older rounds as well, not only the previous round. The reason why the paper allows older rounds is to guarantee a theoretical censorship resistance property in the asynchronous setting. In practice this is irrelevant and getting rid of that makes the protocol simpler and more efficient.</li>
 <li>The main version in the paper uses a full list of parent hashes instead of control hashes -- the latter is described in the Appendix as an optimization.</li>
 <li>The paper's Appendix proposes the use of random gossip as a method of disseminating units -- AlephBFT uses repeated broadcast + a request/response mechanism instead, which according to our experience performs much better in practice.</li>
 </ol>
