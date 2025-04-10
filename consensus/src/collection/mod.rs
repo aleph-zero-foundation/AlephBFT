@@ -1,6 +1,6 @@
 use crate::{
     config::DelaySchedule,
-    dissemination::{Addressed, DisseminationMessage},
+    network::UnitMessageTo,
     units::{UncheckedSignedUnit, Validator},
     Data, Hasher, Keychain, MultiKeychain, NodeIndex, Receiver, Round, Sender, Signable, Signature,
     UncheckedSigned,
@@ -84,7 +84,7 @@ pub type CollectionResponse<H, D, MK> = UncheckedSigned<
 pub fn initial_unit_collection<'a, H: Hasher, D: Data, MK: MultiKeychain>(
     keychain: &'a MK,
     validator: &'a Validator<MK>,
-    messages_for_network: Sender<Addressed<DisseminationMessage<H, D, MK::Signature>>>,
+    messages_for_network: Sender<UnitMessageTo<H, D, MK::Signature>>,
     starting_round_sender: oneshot::Sender<Option<Round>>,
     starting_round_from_backup: Round,
     responses_from_network: Receiver<CollectionResponse<H, D, MK>>,
@@ -108,7 +108,7 @@ pub fn initial_unit_collection<'a, H: Hasher, D: Data, MK: MultiKeychain>(
 pub fn initial_unit_collection(
     _keychain: &'a MK,
     _validator: &'a Validator<MK>,
-    _messages_for_network: Sender<Addressed<DisseminationMessage<H, D, MK::Signature>>>,
+    _messages_for_network: Sender<UnitMessageTo<H, D, MK::Signature>>,
     starting_round_sender: oneshot::Sender<Option<Round>>,
     starting_round_from_backup: Round,
     _responses_from_network: Receiver<CollectionResponse<H, D, MK>>,

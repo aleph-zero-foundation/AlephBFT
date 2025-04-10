@@ -146,7 +146,7 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Service<H, D, MK> {
         }
     }
 
-    fn handle_alert_from_runway(&mut self, alert: Alert<H, D, MK::Signature>) {
+    fn handle_alert_from_consensus(&mut self, alert: Alert<H, D, MK::Signature>) {
         trace!(target: LOG_TARGET, "Handling alert {:?}.", alert);
         let (message, recipient, hash) = self.handler.on_own_alert(alert.clone());
         self.send_message_for_network(message, recipient);
@@ -175,7 +175,7 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Service<H, D, MK> {
                     }
                 },
                 alert = self.alerts_from_units.next() => match alert {
-                    Some(alert) => self.handle_alert_from_runway(alert),
+                    Some(alert) => self.handle_alert_from_consensus(alert),
                     None => {
                         error!(target: LOG_TARGET, "Alert stream closed.");
                         break;

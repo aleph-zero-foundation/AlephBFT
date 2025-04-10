@@ -93,7 +93,7 @@ for further details.
 
 Note that if the number of properly working nodes is less or equal than two times the number of faulty nodes, they will be unable to advance the protocol on their own.
 
-The script will try to start nodes at predefined IP addresses, `127.0.0.1:100XX`, where `XX` denotes the node id. If the port is unavailable, the node will log an error and keep trying to aquire it, waiting 10 seconds between consecutive attempts.
+The script will try to start nodes at predefined IP addresses, `127.0.0.1:100XX`, where `XX` denotes the node id. If the port is unavailable, the node will log an error and keep trying to acquire it, waiting 10 seconds between consecutive attempts.
 
 Running this script will result in generating log files `node0.log, node1.log, ...` corresponding to subsequent nodes.
 A directory called `aleph-bft-examples-ordering-backup` will be created to store data required by the crash recovery mechanism, and the logs from subsequent runs will be appended to existing log files.
@@ -133,55 +133,10 @@ There are many unit tests and several integration tests that may be run by stand
 `cargo test --lib` or `cargo test --lib --skip medium` if you want to run just small tests.
 Alternatively, you may run the `run_local_pipeline.sh` script.
 
-### Fuzzing
-
-We provide fuzzing tests that try to crash the whole application by creating arbitrary data for the network layer
-and feeding it into the `member` implementation. To run those tests you need to install `afl` and `cargo-fuzz`.
-`cargo-fuzz` requires you to use a nightly Rust toolchain. `afl` differs from `cargo-fuzz` in that it requires
-so called corpus data to operate, i.e. some non-empty data set that do not crash the application.
-Both tools are using LLVM's instrumentation capabilities in order to guide the fuzzing process basing on code-coverage statistics.
-
-```sh
-cargo install cargo-fuzz
-cargo install afl
-```
-
-#### cargo-fuzz/libfuzzer
-
-```sh
-cargo fuzz run --features="libfuzz" fuzz_target
-```
-
-#### afl
-
-You will need to generate some `seed` data first in order to run it.
-
-```sh
-# create some random input containing network data from a locally executed test
-mkdir afl_in
-cargo build --bin gen_fuzz
-./target/debug/gen_fuzz >./afl_in/seed
-```
-
-You might need to reconfigure your operating system in order to proceed -
-in such a case follow the instructions printed by the afl tool in your terminal.
-
-```sh
-cargo afl build --features="afl-fuzz" --bin fuzz_target_afl
-cargo afl fuzz -i afl_in -o afl_out target/debug/fuzz_target_afl
-```
-
-The `gen_fuzz` binary is also able to verify data for the afl tool.
-
-```sh
-cargo build --bin gen_fuzz
-./target/debug/gen_fuzz | ./target/debug/gen_fuzz --check-fuzz
-```
-
 ### Code Coverage
 
 You may generate the code coverage summary using the `gen_cov_data.sh` script and then a detailed
-raport for every file with `cov_report.sh`. Make sure to first install all the required
+report for every file with `cov_report.sh`. Make sure to first install all the required
 tools with `install_cov_tools.sh`.
 
 ### Resources

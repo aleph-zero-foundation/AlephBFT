@@ -15,20 +15,20 @@ const LOG_TARGET: &str = "AlephBFT-backup-saver";
 /// It waits for items to appear on its receivers, and writes them to backup.
 /// It announces a successful write through an appropriate response sender.
 pub struct BackupSaver<H: Hasher, D: Data, MK: MultiKeychain, W: AsyncWrite> {
-    units_from_runway: Receiver<DagUnit<H, D, MK>>,
-    responses_for_runway: Sender<DagUnit<H, D, MK>>,
+    units_from_consensus: Receiver<DagUnit<H, D, MK>>,
+    responses_for_consensus: Sender<DagUnit<H, D, MK>>,
     backup: Pin<Box<W>>,
 }
 
 impl<H: Hasher, D: Data, MK: MultiKeychain, W: AsyncWrite> BackupSaver<H, D, MK, W> {
     pub fn new(
-        units_from_runway: Receiver<DagUnit<H, D, MK>>,
-        responses_for_runway: Sender<DagUnit<H, D, MK>>,
+        units_from_consensus: Receiver<DagUnit<H, D, MK>>,
+        responses_for_consensus: Sender<DagUnit<H, D, MK>>,
         backup: W,
     ) -> BackupSaver<H, D, MK, W> {
         BackupSaver {
-            units_from_runway,
-            responses_for_runway,
+            units_from_consensus,
+            responses_for_consensus,
             backup: Box::pin(backup),
         }
     }
@@ -43,7 +43,7 @@ impl<H: Hasher, D: Data, MK: MultiKeychain, W: AsyncWrite> BackupSaver<H, D, MK,
         let mut terminator_exit = false;
         loop {
             futures::select! {
-                unit = self.units_from_runway.next() => {
+                unit = self.units_from_consensus.next() => {
                     let item = match unit {
                         Some(unit) => unit,
                         None => {
@@ -55,8 +55,8 @@ impl<H: Hasher, D: Data, MK: MultiKeychain, W: AsyncWrite> BackupSaver<H, D, MK,
                         error!(target: LOG_TARGET, "couldn't save item to backup: {:?}", e);
                         break;
                     }
-                    if self.responses_for_runway.unbounded_send(item).is_err() {
-                        error!(target: LOG_TARGET, "couldn't respond with saved unit to runway");
+                    if self.responses_for_consensus.unbounded_send(item).is_err() {
+                        error!(target: LOG_TARGET, "couldn't respond with saved unit to consensus");
                         break;
                     }
                 },
@@ -101,14 +101,14 @@ mod tests {
     }
 
     fn prepare_saver() -> PrepareSaverResponse<impl futures::Future> {
-        let (units_for_saver, units_from_runway) = mpsc::unbounded();
-        let (units_for_runway, units_from_saver) = mpsc::unbounded();
+        let (units_for_saver, units_from_consensus) = mpsc::unbounded();
+        let (units_for_consensus, units_from_saver) = mpsc::unbounded();
         let (exit_tx, exit_rx) = oneshot::channel();
         let backup = Saver::new();
 
         let task = {
             let mut saver: TestBackupSaver =
-                BackupSaver::new(units_from_runway, units_for_runway, backup);
+                BackupSaver::new(units_from_consensus, units_for_consensus, backup);
 
             async move {
                 saver.run(Terminator::create_root(exit_rx, "saver")).await;

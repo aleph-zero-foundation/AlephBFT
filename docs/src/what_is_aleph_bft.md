@@ -22,4 +22,4 @@ AlephBFT guarantees (as long as at most `(N-1)/3` nodes act maliciously) that ea
 
 1. The output streams of any two nodes `out_i` and `out_j` are consistent, in the sense that at any given time one is a prefix of another. Moreover, none of the streams gets "stuck", they keep producing items until the protocol is shut down. So, intuitively, all the streams produce the same items, but just at possibly different paces.
 2. Each item in the output stream is "available" to at least half the honest (= not malicious) nodes in the committee.
-3. Roughly speaking, most of the data items "proposed" by honest nodes (i.e., data coming from `in` streams of honest nodes) eventually land in the output stream.
+3. Roughly speaking, all of the data items "proposed" by honest nodes (i.e., data coming from `in` streams of honest nodes) eventually land in the output stream.

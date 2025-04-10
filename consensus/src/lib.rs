@@ -1,18 +1,17 @@
-//! Implements the Aleph BFT Consensus protocol as a "finality gadget". The [Member] struct
+//! Implements the Aleph BFT Consensus protocol as a "finality gadget". The [run_session] function
 //! requires access to a network layer, a cryptographic primitive, and a data provider that
 //! gives appropriate access to the set of available data that we need to make consensus on.
 
 mod alerts;
 mod collection;
 mod config;
+mod consensus;
 mod creation;
 mod dag;
 mod dissemination;
 mod extension;
 mod interface;
-mod member;
 mod network;
-mod runway;
 mod terminator;
 mod units;
 
@@ -31,8 +30,8 @@ pub use aleph_bft_types::{
 pub use config::{
     create_config, default_config, default_delay_config, exponential_slowdown, Config, DelayConfig,
 };
+pub use consensus::run_session;
 pub use interface::LocalIO;
-pub use member::run_session;
 pub use network::NetworkData;
 pub use terminator::{handle_task_termination, Terminator};
 

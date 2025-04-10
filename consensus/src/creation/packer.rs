@@ -4,7 +4,7 @@ use crate::{
 };
 
 /// The component responsible for packing Data into PreUnits,
-/// and signing the outcome, thus creating SignedUnits that are sent back to Runway.
+/// and signing the outcome, thus creating SignedUnits that are sent back to consensus.
 pub struct Packer<MK: MultiKeychain> {
     keychain: MK,
     session_id: SessionId,

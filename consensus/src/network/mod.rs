@@ -1,4 +1,4 @@
-use crate::{alerts::AlertMessage, Data, Hasher, PartialMultisignature, Signature};
+use crate::{alerts::AlertMessage, Data, Hasher, PartialMultisignature, Recipient, Signature};
 use codec::{Decode, Encode};
 use std::fmt::Debug;
 
@@ -7,6 +7,8 @@ mod unit;
 
 pub use hub::Hub;
 pub use unit::UnitMessage;
+
+pub type UnitMessageTo<H, D, S> = (UnitMessage<H, D, S>, Recipient);
 
 #[derive(Clone, Eq, PartialEq, Debug, Decode, Encode)]
 pub(crate) enum NetworkDataInner<H: Hasher, D: Data, S: Signature, MS: PartialMultisignature> {

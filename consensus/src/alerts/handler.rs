@@ -216,7 +216,7 @@ impl<H: Hasher, D: Data, MK: MultiKeychain> Handler<H, D, MK> {
 
         // A response to a valid fork alert.
         // It should be handled by starting RMC on the contained hash
-        // and sending the contained notification (if present) to runway.
+        // and sending the contained notification (if present) to consensus.
         Ok((maybe_notification, hash_for_rmc))
     }
 

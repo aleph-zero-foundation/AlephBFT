@@ -2,6 +2,7 @@ use crate::{
     collection::{generate_salt, CollectionResponse, NewestUnitResponse, Salt, LOG_TARGET},
     config::DelaySchedule,
     dissemination::{Addressed, DisseminationMessage},
+    network::UnitMessageTo,
     units::{Unit, ValidationError, Validator},
     Data, Hasher, Keychain, NodeCount, NodeIndex, NodeMap, Receiver, Recipient, Round, Sender,
     Signature, SignatureError, UncheckedSigned,
@@ -173,7 +174,7 @@ pub struct IO<'a, H: Hasher, D: Data, MK: Keychain> {
     round_for_creator: oneshot::Sender<Option<Round>>,
     round_from_backup: Round,
     responses_from_network: Receiver<CollectionResponse<H, D, MK>>,
-    requests_for_network: Sender<Addressed<DisseminationMessage<H, D, MK::Signature>>>,
+    requests_for_network: Sender<UnitMessageTo<H, D, MK::Signature>>,
     collection: Collection<'a, MK>,
     request_delay: DelaySchedule,
 }
@@ -184,7 +185,7 @@ impl<'a, H: Hasher, D: Data, MK: Keychain> IO<'a, H, D, MK> {
         round_for_creator: oneshot::Sender<Option<Round>>,
         round_from_backup: Round,
         responses_from_network: Receiver<CollectionResponse<H, D, MK>>,
-        requests_for_network: Sender<Addressed<DisseminationMessage<H, D, MK::Signature>>>,
+        requests_for_network: Sender<UnitMessageTo<H, D, MK::Signature>>,
         collection: Collection<'a, MK>,
         request_delay: DelaySchedule,
     ) -> Self {
@@ -236,11 +237,14 @@ impl<'a, H: Hasher, D: Data, MK: Keychain> IO<'a, H, D, MK> {
     }
 
     fn send_request(&self) {
-        if let Err(e) = self
-            .requests_for_network
-            .unbounded_send(self.collection.prepare_request())
-        {
-            warn!(target: LOG_TARGET, "unable to send request:  {}", e);
+        let request = self.collection.prepare_request();
+        for recipient in request.recipients() {
+            if let Err(e) = self
+                .requests_for_network
+                .unbounded_send((request.message().clone().into(), recipient.clone()))
+            {
+                warn!(target: LOG_TARGET, "unable to send request:  {}", e);
+            }
         }
     }
 
