@@ -2,7 +2,10 @@ use crate::{
     alerts::{Handler as AlertHandler, Service as AlertService, IO as AlertIO},
     backup::{BackupLoader, BackupSaver},
     collection::initial_unit_collection,
-    consensus::service::{Config as ServiceConfig, Service},
+    consensus::{
+        handler::Consensus,
+        service::{Service, IO as ConsensusIO},
+    },
     creation, handle_task_termination,
     interface::LocalIO,
     network::{Hub as NetworkHub, NetworkData},
@@ -16,6 +19,7 @@ use futures::{
 };
 use log::{debug, error, info};
 
+mod handler;
 mod service;
 
 const LOG_TARGET: &str = "AlephBFT-consensus";
@@ -185,13 +189,16 @@ pub async fn run_session<
     pin_mut!(starting_round_handle);
     debug!(target: LOG_TARGET, "Initial unit collection spawned.");
 
-    //TODO: just put the Service here
     debug!(target: LOG_TARGET, "Spawning consensus service.");
+    let consensus = Consensus::new(
+        keychain.clone(),
+        validator.clone(),
+        finalization_handler,
+        config.delay_config().clone(),
+    );
     let service_handle = spawn_handle
         .spawn_essential("consensus/service", {
-            let service_config = ServiceConfig {
-                delay_config: config.delay_config().clone(),
-                finalization_handler,
+            let consensus_io = ConsensusIO {
                 backup_units_for_saver,
                 backup_units_from_saver,
                 alerts_for_alerter,
@@ -203,9 +210,7 @@ pub async fn run_session<
                 new_units_from_creator,
             };
             let service_terminator = terminator.add_offspring_connection("service");
-            let validator = validator.clone();
-            let keychain = keychain.clone();
-            let service = Service::new(service_config, keychain, validator);
+            let service = Service::new(consensus, consensus_io);
 
             async move { service.run(loaded_units, service_terminator).await }
         })
