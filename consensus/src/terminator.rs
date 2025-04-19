@@ -80,7 +80,7 @@ impl Terminator {
         if !self.parent_exit.is_terminated() {
             debug!(
                 target: self.component_name,
-                "Terminator has not recieved exit from parent: synchronization canceled.",
+                "Terminator has not received exit from parent: synchronization canceled.",
             );
             return;
         }
@@ -104,7 +104,7 @@ impl Terminator {
             offspring_receivers.push((receiver, name));
         }
 
-        // Make sure that all descendants recieved exit and won't be communicating with other components
+        // Make sure that all descendants received exit and won't be communicating with other components
         for (receiver, name) in offspring_receivers {
             if receiver.await.is_err() {
                 debug!(
@@ -143,7 +143,7 @@ impl Terminator {
             } else {
                 debug!(
                     target: self.component_name,
-                    "Terminator recieved shutdown permission from parent component."
+                    "Terminator received shutdown permission from parent component."
                 );
             }
         }
