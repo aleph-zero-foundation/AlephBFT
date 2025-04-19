@@ -104,7 +104,7 @@ impl<U: UnitWithParents> CandidateElection<U> {
         let relative_round = voter.round() - self.round;
         let vote = match relative_round {
             0 => unreachable!("just checked that voter and election rounds are not equal"),
-            // Direct descendands vote for, all other units of that round against.
+            // Direct descendants vote for, all other units of that round against.
             1 => voter.parent_for(self.candidate_creator) == Some(&self.candidate_hash),
             // Otherwise we compute the vote based on the parents' votes.
             _ => {

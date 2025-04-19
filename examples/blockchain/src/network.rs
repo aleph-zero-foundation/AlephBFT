@@ -173,7 +173,7 @@ impl NetworkManager {
 
     fn reset_dns(&mut self, n: &NodeIndex) {
         if !self.bootnodes.contains(n) {
-            error!("Reseting address of node {}", n.0);
+            error!("Resetting address of node {}", n.0);
             self.addresses.remove(n);
         }
     }

@@ -199,7 +199,7 @@ The main idea here is that we cannot afford to store an arbitrary amount of unit
 
 **`ForkAlert(sender, forker, proof, units)`**
 
-where `sender` is the node index of the sender, `forker` is the node index of a forking node, `proof` is a pair of units created by forker that constitute a fork and `units` is simply some list of forker's units. Such a message is brodcast by `sender` to all other nodes:
+where `sender` is the node index of the sender, `forker` is the node index of a forking node, `proof` is a pair of units created by forker that constitute a fork and `units` is simply some list of forker's units. Such a message is broadcast by `sender` to all other nodes:
 
 1. The broadcast is performed using a **Reliable Broadcast** primitive. Roughly speaking, this means that the node does not simply multicast this message to all the nodes but runs a specialized protocol that guarantees that all the nodes receive this message (if the sender is honest) and receive the exact same version of this message (even if the sender is **dishonest**). We give more details on the AlephBFT's implementation of reliable broadcast in the [Reliable Broadcast](reliable_broadcast.md##6-reliable-broadcast) section.
 2. The intuitive meaning of such an alert is that: "I, `sender`, am aware that `forker` forked and I attach a `proof` of that. Moreover, before I realized this fact, I accepted the following list of units from `forker` to my local copy of the Dag. Please accept these units as well."
