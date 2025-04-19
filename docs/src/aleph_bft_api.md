@@ -77,7 +77,7 @@ These traits are optional. If you do not want to recover crashes mid session or 
 
 [`std::io::Write`](https://doc.rust-lang.org/std/io/trait.Write.html#) should provide a way of writing data generated during session which should be backed up. **`flush` method should block until the written data is backed up.**
 
-[`std::io::Read`](https://doc.rust-lang.org/std/io/trait.Read.html#) should provide a way of retreiving backups of all data generated during session by this member in case of crash. **`std::io::Read` should have a copy of all data so that writing to `std::io::Write` has no effect on reading.**
+[`std::io::Read`](https://doc.rust-lang.org/std/io/trait.Read.html#) should provide a way of retrieving backups of all data generated during session by this member in case of crash. **`std::io::Read` should have a copy of all data so that writing to `std::io::Write` has no effect on reading.**
 
 ### 3.2 Examples
 
